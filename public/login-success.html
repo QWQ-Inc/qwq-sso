@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录成功 - 统一登录系统</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── 夜间模式（默认） ── */
+    :root {
+      --bg: #111111;
+      --surface: #1A1A1A;
+      --surface2: #242424;
+      --border: rgba(255,255,255,0.1);
+      --accent: #CCEE44;
+      --accent2: #ECFFAF;
+      --text: #F2F2F0;
+      --text-muted: #888880;
+      --success: #5CB85C;
+      --card-shadow: 0 24px 60px rgba(0,0,0,0.7);
+    }
+
+    /* ── 白日模式 ── */
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #F0F0EC;
+        --surface: #FFFFFF;
+        --surface2: #ECFFAF;
+        --border: rgba(0,0,0,0.12);
+        --accent: #5A8A00;
+        --accent2: #7AAA00;
+        --text: #111110;
+        --text-muted: #555548;
+        --success: #3D8C3D;
+        --card-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+      }
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body::before { display: none; }
+
+    .layout {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 440px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 48px 36px;
+      text-align: center;
+      box-shadow: var(--card-shadow);
+    }
+
+    .success-icon {
+      width: 72px; height: 72px;
+      background: rgba(52,211,153,0.12);
+      border: 2px solid rgba(52,211,153,0.3);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px;
+      margin: 0 auto 24px;
+      animation: popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+
+    @keyframes popIn {
+      from { transform: scale(0.5); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .sub {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+
+    .user-info {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 14px 16px;
+      text-align: left;
+      margin-bottom: 24px;
+    }
+
+    .avatar {
+      width: 42px; height: 42px;
+      border-radius: 3px;
+      background: var(--accent2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .user-info .name {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .user-info .meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px;
+      border-radius: 3px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+      border: none;
+    }
+
+    .btn-outline {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .btn-outline:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(120,100,255,0.3);
+    }
+
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <div class="card">
+    <div class="success-icon">✓</div>
+    <h1>登录成功</h1>
+    <p class="sub" id="welcome-msg">欢迎回来！</p>
+
+    <div class="user-info" id="user-info-box" style="display:none;">
+      <div class="avatar" id="user-avatar">👤</div>
+      <div>
+        <div class="name" id="user-name-display">-</div>
+        <div class="meta" id="user-meta-display">-</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-outline" id="back-btn" style="display:none;" onclick="window.location.href='/login.html'">← 返回登录</button>
+      <button class="btn btn-primary" id="goto-btn" onclick="window.location.href='/dashboard.html'">立即进入 →</button>
+    </div>
+
+    <div style="margin-top:20px;text-align:center;">
+      <div id="token-status" style="font-size:13px;color:var(--text-muted);margin-bottom:6px;">正在验证 Token…</div>
+      <div id="countdown" style="font-size:12px;color:var(--text-muted);">5 秒后自动跳转…</div>
+    </div>
+
+    <div style="margin-top:24px; text-align:center;">
+      <button class="btn btn-outline" style="width:auto; padding:8px 20px; font-size:13px;" onclick="logout()">退出登录</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token') || localStorage.getItem('sso_token') || '';
+  const nameFromUrl = params.get('name') || '';
+
+  // 站内相对回跳地址（第三方登录接 OIDC 授权时用）
+  function safeNext() {
+    const n = params.get('next');
+    if (!n || !n.startsWith('/') || n.startsWith('//')) return null;
+    return n;
+  }
+
+  if (token) localStorage.setItem('sso_token', token);
+
+  // 有 next 就跳过这个中间页，直接回到原流程（授权页）——
+  // 第三方登录经服务端回调到这里，token 已存进 localStorage，authorize.html 即可读到
+  const _next = token ? safeNext() : null;
+
+  if (_next) {
+    window.location.replace(_next);
+  } else if (token) {
+    // 解析 JWT payload（仅用于欢迎语/有效期展示，不再把整段 token 显示在页面上）
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const name = payload.name || nameFromUrl || payload.email || payload.phone || '用户';
+      const iat = new Date(payload.iat * 1000);
+      const exp = new Date(payload.exp * 1000);
+      const ttl = Math.round((payload.exp - payload.iat) / 3600);
+      document.getElementById('welcome-msg').textContent = `欢迎，${name}！`;
+      document.getElementById('user-name-display').textContent = name;
+      document.getElementById('user-meta-display').textContent =
+        `签发：${iat.toLocaleString()} · 有效至：${exp.toLocaleString()} · 有效期 ${ttl}h`;
+      document.getElementById('user-info-box').style.display = 'flex';
+      const first = name.charAt(0).toUpperCase();
+      document.getElementById('user-avatar').textContent = first;
+    } catch(e) {}
+
+    // 自动跳转 dashboard（5秒）
+    let countdown = 5;
+    const countEl = document.getElementById('countdown');
+    const statusEl = document.getElementById('token-status');
+
+    // 立即验证 token 有效性
+    fetch('/api/user/me', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json().then(d => ({ ok: r.ok, data: d })))
+      .then(({ ok, data }) => {
+        if (ok) {
+          statusEl.textContent = '✓ Token 验证通过，即将进入系统';
+          statusEl.style.color = '#5CB85C';
+        } else {
+          statusEl.textContent = '✗ Token 验证失败：' + (data.error || '未知错误');
+          statusEl.style.color = '#EF4444';
+          clearInterval(timer);
+          countEl.textContent = '请返回登录页重新登录';
+          document.getElementById('goto-btn').style.display = 'none';
+          document.getElementById('back-btn').style.display = '';
+        }
+      })
+      .catch(() => {
+        statusEl.textContent = '⚠ 网络错误，无法验证';
+        statusEl.style.color = '#F59E0B';
+      });
+
+    const timer = setInterval(() => {
+      countdown--;
+      if (countEl) countEl.textContent = countdown + ' 秒后自动跳转…';
+      if (countdown <= 0) {
+        clearInterval(timer);
+        window.location.href = '/dashboard.html';
+      }
+    }, 1000);
+  }
+
+  function logout() {
+    localStorage.removeItem('sso_token');
+    localStorage.removeItem('sso_user');
+    window.location.href = '/login.html';
+  }
+</script>
+__FOOTER_HTML__
+</body>
+</html>
