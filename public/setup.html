@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>安装向导 — 统一登录系统</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F4F4F0;--sf:#fff;--sf2:#ECFFAF;--sf3:#F6FFDA;
+  --bd:#E0E0D8;--bd2:#CACAC0;
+  --ac:#5A8A00;--ac2:#7AAA00;--ac3:#ECFFAF;
+  --tx:#111110;--txm:#555548;--txd:#AAAAAA;
+  --ok:#3D8C3D;--err:#CC2222;--warn:#B85A00;
+}
+html,body{min-height:100%;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;-webkit-font-smoothing:antialiased;}
+
+/* ── 布局 ── */
+.layout{min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:40px 20px 60px;}
+.container{width:100%;max-width:680px;}
+
+/* ── 顶部品牌 ── */
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:28px;}
+.brand-icon{width:34px;height:34px;border-radius:3px;background:var(--ac2);display:flex;align-items:center;justify-content:center;font-size:16px;}
+.brand-name{font-size:16px;font-weight:700;}
+.brand-sub{font-size:12px;color:var(--txd);margin-left:4px;}
+
+/* ── 步骤条 ── */
+.steps{display:flex;align-items:center;margin-bottom:28px;gap:0;}
+.step{display:flex;align-items:center;gap:8px;flex:1;}
+.step:last-child{flex:0;}
+.step-circle{width:28px;height:28px;border-radius:50%;border:2px solid var(--bd);background:var(--sf);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--txd);flex-shrink:0;transition:all .3s;}
+.step.done .step-circle{background:var(--ac);border-color:var(--ac);color:#fff;}
+.step.active .step-circle{background:var(--ac2);border-color:var(--ac2);color:#fff;box-shadow:0 0 0 4px var(--ac3);}
+.step-label{font-size:11px;font-weight:600;color:var(--txd);white-space:nowrap;transition:color .3s;}
+.step.active .step-label,.step.done .step-label{color:var(--tx);}
+.step-line{flex:1;height:2px;background:var(--bd);margin:0 8px;transition:background .3s;}
+.step.done + .step > .step-line,
+.step-line.done{background:var(--ac);}
+.step-connector{flex:1;height:2px;background:var(--bd);margin:0 8px;transition:background .3s;}
+.step-connector.done{background:var(--ac);}
+
+/* ── 卡片 ── */
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:3px;overflow:hidden;margin-bottom:12px;}
+.card-header{padding:18px 22px 16px;border-bottom:1px solid var(--bd);}
+.card-header h2{font-size:16px;font-weight:700;margin-bottom:4px;}
+.card-header p{font-size:12px;color:var(--txm);line-height:1.6;}
+.card-body{padding:22px;}
+
+/* ── 表单元素 ── */
+.form-row{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
+.form-row:last-child{margin-bottom:0;}
+.form-row label{font-size:10px;font-weight:700;color:var(--txd);letter-spacing:.7px;text-transform:uppercase;}
+.form-row label span.req{color:var(--err);margin-left:2px;}
+.form-row input,.form-row select,.form-row textarea{
+  width:100%;padding:0 12px;height:38px;
+  background:var(--sf2);border:1px solid var(--bd);border-radius:2px;
+  color:var(--tx);font-size:13px;outline:none;font-family:inherit;
+  appearance:none;transition:border-color .15s;
+}
+.form-row textarea{height:auto;padding:10px 12px;resize:vertical;}
+.form-row input:focus,.form-row select:focus,.form-row textarea:focus{border-color:var(--ac2);}
+.form-row input::placeholder,.form-row textarea::placeholder{color:var(--txd);font-size:12px;}
+.form-row .hint{font-size:11px;color:var(--txd);line-height:1.5;}
+.form-row .hint a{color:var(--ac);text-decoration:none;}
+.form-row .hint a:hover{text-decoration:underline;}
+.form-row input.err{border-color:var(--err);}
+.form-row input.ok{border-color:var(--ok);}
+
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px;}
+.form-grid .form-row{margin-bottom:14px;}
+
+/* 密码强度 */
+.pw-bars{display:flex;gap:4px;margin-top:4px;}
+.pw-bar{flex:1;height:3px;border-radius:2px;background:var(--bd);transition:background .25s;}
+
+/* select 箭头 */
+select{
+  background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23666660' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;
+  padding-right:32px !important;cursor:pointer;
+}
+
+/* ── 功能开关 ── */
+.feat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.feat-item{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--bd);border-radius:2px;cursor:pointer;transition:all .15s;background:var(--sf);}
+.feat-item:hover{border-color:var(--ac);}
+.feat-item.checked{border-color:var(--ac);background:var(--sf3);}
+.feat-item input[type=checkbox]{display:none;}
+.feat-check{width:18px;height:18px;border-radius:2px;border:2px solid var(--bd);flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;transition:all .15s;}
+.feat-item.checked .feat-check{background:var(--ac);border-color:var(--ac);}
+.feat-item.checked .feat-check::after{content:'✓';color:#fff;font-size:11px;font-weight:700;}
+.feat-icon{font-size:18px;flex-shrink:0;line-height:1.2;}
+.feat-info .feat-name{font-size:12px;font-weight:700;color:var(--tx);}
+.feat-info .feat-desc{font-size:11px;color:var(--txm);margin-top:2px;line-height:1.4;}
+.feat-badge{font-size:9px;font-weight:700;padding:1px 5px;border-radius:2px;margin-left:5px;vertical-align:middle;}
+.feat-badge.note{background:#FFF3E0;color:var(--warn);}
+
+/* ── 分组标题 ── */
+.section-title{font-size:11px;font-weight:700;color:var(--txd);letter-spacing:.6px;text-transform:uppercase;margin-bottom:10px;margin-top:18px;padding-bottom:6px;border-bottom:1px solid var(--bd);}
+.section-title:first-child{margin-top:0;}
+
+/* ── 折叠配置区 ── */
+.collapsible{overflow:hidden;transition:max-height .3s ease;max-height:0;}
+.collapsible.open{max-height:600px;}
+
+/* ── 按钮 ── */
+.btn-row{display:flex;gap:10px;justify-content:flex-end;padding:16px 22px;border-top:1px solid var(--bd);background:var(--bg);}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:2px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--bd);background:var(--sf);color:var(--txm);font-family:inherit;transition:all .15s;}
+.btn:hover{background:var(--sf2);border-color:var(--ac);}
+.btn.primary{background:var(--ac);border-color:var(--ac);color:#fff;}
+.btn.primary:hover{background:var(--ac2);border-color:var(--ac2);}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+
+/* ── 提示 ── */
+.tip{font-size:12px;padding:10px 14px;border-radius:2px;margin-bottom:14px;display:none;line-height:1.6;}
+.tip.show{display:block;}
+.tip.err{background:rgba(204,34,34,.07);color:var(--err);border:1px solid rgba(204,34,34,.2);}
+.tip.warn{background:#FFF3E0;color:var(--warn);border:1px solid rgba(184,90,0,.2);}
+.tip.ok{background:rgba(61,140,61,.07);color:var(--ok);border:1px solid rgba(61,140,61,.2);}
+
+/* ── 完成页面 ── */
+.done-screen{text-align:center;padding:48px 22px;}
+.done-icon{font-size:52px;margin-bottom:16px;}
+.done-title{font-size:22px;font-weight:700;margin-bottom:8px;}
+.done-sub{font-size:13px;color:var(--txm);margin-bottom:28px;line-height:1.7;}
+.info-box{background:var(--sf2);border:1px solid var(--ac3);border-radius:2px;padding:14px 18px;text-align:left;margin-bottom:24px;}
+.info-row{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px;border-bottom:1px solid rgba(0,0,0,.06);}
+.info-row:last-child{border-bottom:none;padding-bottom:0;}
+.info-key{font-weight:700;color:var(--txm);min-width:90px;flex-shrink:0;}
+.info-val{color:var(--tx);font-family:monospace;font-size:12px;}
+
+/* ── 进度指示 ── */
+.loading-overlay{display:none;position:fixed;inset:0;background:rgba(255,255,255,.85);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:14px;}
+.loading-overlay.show{display:flex;}
+.spinner{width:36px;height:36px;border:3px solid var(--ac3);border-top-color:var(--ac);border-radius:50%;animation:spin 1s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14px;font-weight:600;color:var(--txm);}
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">正在初始化系统…</div>
+</div>
+
+<div class="layout">
+<div class="container">
+
+  <!-- 品牌 -->
+  <div class="brand">
+    <div class="brand-icon">🔐</div>
+    <div>
+      <span class="brand-name">统一登录系统</span>
+      <span class="brand-sub">安装向导</span>
+    </div>
+  </div>
+
+  <!-- 步骤条 -->
+  <div class="steps" id="steps-bar">
+    <div class="step active" id="s1">
+      <div class="step-circle">1</div>
+      <div class="step-label">管理员账号</div>
+    </div>
+    <div class="step-connector" id="sc1"></div>
+    <div class="step" id="s2">
+      <div class="step-circle">2</div>
+      <div class="step-label">站点配置</div>
+    </div>
+    <div class="step-connector" id="sc2"></div>
+    <div class="step" id="s3">
+      <div class="step-circle">3</div>
+      <div class="step-label">功能选择</div>
+    </div>
+    <div class="step-connector" id="sc3"></div>
+    <div class="step" id="s4">
+      <div class="step-circle">4</div>
+      <div class="step-label">快速配置</div>
+    </div>
+    <div class="step-connector" id="sc4"></div>
+    <div class="step" id="s5">
+      <div class="step-circle">5</div>
+      <div class="step-label">完成</div>
+    </div>
+  </div>
+
+  <!-- ════ Step 1：管理员账号 ════ -->
+  <div id="step-1">
+    <div class="card">
+      <div class="card-header">
+        <h2>创建超级管理员账号</h2>
+        <p>此账号将拥有系统全部权限（管理员 Lv.1），安装完成后可在控制台添加更多管理员。</p>
+      </div>
+      <div class="card-body">
+        <div id="tip1" class="tip"></div>
+        <div class="form-row">
+          <label>管理员姓名</label>
+          <input type="text" id="admin-name" placeholder="如：系统管理员" maxlength="32"/>
+        </div>
+        <div class="form-row">
+          <label>登录邮箱 <span class="req">*</span></label>
+          <input type="email" id="admin-email" placeholder="admin@yourcompany.com" autocomplete="off"/>
+          <div class="hint" id="email-hint"></div>
+        </div>
+        <div class="form-row">
+          <label>登录密码 <span class="req">*</span></label>
+          <input type="password" id="admin-pw" placeholder="至少 8 位，建议包含大小写和数字" autocomplete="new-password" oninput="checkPw(this.value)"/>
+          <div class="pw-bars"><div class="pw-bar" id="pb1"></div><div class="pw-bar" id="pb2"></div><div class="pw-bar" id="pb3"></div><div class="pw-bar" id="pb4"></div></div>
+        </div>
+        <div class="form-row">
+          <label>确认密码 <span class="req">*</span></label>
+          <input type="password" id="admin-pw2" placeholder="再次输入密码"/>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" onclick="nextStep(1)">下一步 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ Step 2：站点配置 ════ -->
+  <div id="step-2" style="display:none">
+    <div class="card">
+      <div class="card-header">
+        <h2>站点基本配置</h2>
+        <p>配置站点对外访问地址，这将影响所有 OAuth 回调地址的生成。</p>
+      </div>
+      <div class="card-body">
+        <div id="tip2" class="tip"></div>
+        <div class="form-row">
+          <label>站点名称</label>
+          <input type="text" id="site-name" placeholder="统一登录系统" maxlength="32" value="统一登录系统"/>
+          <div class="hint">显示在登录页面和系统内各处。</div>
+        </div>
+        <div class="form-row">
+          <label>服务根地址（BASE_URL）<span class="req">*</span></label>
+          <input type="url" id="base-url" placeholder="https://sso.yourcompany.com"/>
+          <div class="hint">
+            对外可访问的完整地址，<strong>末尾不加 /</strong>。<br>
+            本地开发填 <code style="background:var(--sf2);padding:1px 4px;border-radius:2px;">http://localhost:3000</code>，生产环境填真实域名。<br>
+            OAuth 回调地址将自动以此地址为前缀生成。
+          </div>
+        </div>
+        <div class="form-row">
+          <label>运行环境</label>
+          <select id="node-env">
+            <option value="production">production（生产环境，启用限流和安全策略）</option>
+            <option value="development">development（开发环境，验证码打印到控制台）</option>
+          </select>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" onclick="goStep(1)">← 上一步</button>
+        <button class="btn primary" onclick="nextStep(2)">下一步 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ Step 3：功能选择 ════ -->
+  <div id="step-3" style="display:none">
+    <div class="card">
+      <div class="card-header">
+        <h2>选择开启的功能</h2>
+        <p>勾选需要启用的功能模块。未填写对应环境变量的功能将显示「功能未开放」提示，安装后可随时在管理端调整。</p>
+      </div>
+      <div class="card-body">
+        <div class="section-title">账号登录方式</div>
+        <div class="feat-grid">
+          <label class="feat-item checked" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="email" checked/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">📧</div>
+            <div class="feat-info"><div class="feat-name">邮箱登录</div><div class="feat-desc">邮箱验证码 + 邮箱密码</div></div>
+          </label>
+          <label class="feat-item checked" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="sms" checked/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">📱</div>
+            <div class="feat-info"><div class="feat-name">短信验证码</div><div class="feat-desc">需配置短信服务商</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="wechat"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">💬</div>
+            <div class="feat-info"><div class="feat-name">微信扫码</div><div class="feat-desc">微信公众号网页授权</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="wecom"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">🏢</div>
+            <div class="feat-info"><div class="feat-name">企业微信</div><div class="feat-desc">企业微信自建应用登录</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="feishu"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">📗</div>
+            <div class="feat-info"><div class="feat-name">飞书</div><div class="feat-desc">飞书自建应用 OAuth</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="dingtalk"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">📌</div>
+            <div class="feat-info"><div class="feat-name">钉钉</div><div class="feat-desc">钉钉 OAuth 2.0</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="douyin"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">🎵</div>
+            <div class="feat-info"><div class="feat-name">抖音</div><div class="feat-desc">需企业认证<span class="feat-badge note">企业</span></div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="kuaishou"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">▶️</div>
+            <div class="feat-info"><div class="feat-name">快手</div><div class="feat-desc">快手开放平台 OAuth</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="xhs"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">📕</div>
+            <div class="feat-info"><div class="feat-name">小红书</div><div class="feat-desc">需申请合作资质<span class="feat-badge note">合作</span></div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="bilibili"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">📺</div>
+            <div class="feat-info"><div class="feat-name">Bilibili</div><div class="feat-desc">需申请合作开发者<span class="feat-badge note">合作</span></div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="google"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">🔵</div>
+            <div class="feat-info"><div class="feat-name">Google</div><div class="feat-desc">Google OAuth 2.0</div></div>
+          </label>
+          <label class="feat-item" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="apple"/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">🍎</div>
+            <div class="feat-info"><div class="feat-name">Apple</div><div class="feat-desc">Sign in with Apple<span class="feat-badge note">HTTPS</span></div></div>
+          </label>
+        </div>
+
+        <div class="section-title">系统功能</div>
+        <div class="feat-grid">
+          <label class="feat-item checked" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="kyc" checked/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">🪪</div>
+            <div class="feat-info"><div class="feat-name">实名认证（KYC）</div><div class="feat-desc">接入实人认证接口</div></div>
+          </label>
+          <label class="feat-item checked" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="shop" checked/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">🛒</div>
+            <div class="feat-info"><div class="feat-name">积分商城</div><div class="feat-desc">签到积分兑换权益</div></div>
+          </label>
+          <label class="feat-item checked" onclick="toggleFeat(this)">
+            <input type="checkbox" name="feat" value="api" checked/>
+            <div class="feat-check"></div>
+            <div class="feat-icon">⚙️</div>
+            <div class="feat-info"><div class="feat-name">开放 API</div><div class="feat-desc">供第三方系统对接调用</div></div>
+          </label>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" onclick="goStep(2)">← 上一步</button>
+        <button class="btn primary" onclick="nextStep(3)">下一步 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ Step 4：快速配置 ════ -->
+  <div id="step-4" style="display:none">
+    <div class="card">
+      <div class="card-header">
+        <h2>快速配置接口（可选）</h2>
+        <p>现在填写可让对应功能立即生效；也可跳过，安装完成后在管理端「环境变量」中补充。</p>
+      </div>
+      <div class="card-body">
+        <div id="tip4" class="tip"></div>
+
+        <!-- 消息分发中心 -->
+        <div id="block-message">
+          <div class="section-title">📮 消息分发（QWQ Message）</div>
+          <div class="hint" style="margin-bottom:10px;">
+            短信和邮件都通过 QWQ Message 分发中心发送，本系统不直接对接服务商。
+            服务商账号、模板、轮询与故障转移都在分发中心那边配置。
+            现在可以先跳过，装完在管理端「系统配置 → 消息分发」里补填。
+          </div>
+          <div class="form-row">
+            <label>分发中心地址</label>
+            <input type="text" id="qwq-message-url" placeholder="https://msg.example.com"/>
+          </div>
+          <div class="form-row">
+            <label>API 密钥</label>
+            <input type="password" id="qwq-message-key" placeholder="qwq_live_xxxxxxxx"/>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>短信通道组</label>
+              <input type="text" id="qwq-message-sms-group" placeholder="sms-16"/>
+            </div>
+            <div class="form-row">
+              <label>邮件通道组</label>
+              <input type="text" id="qwq-message-email-group" placeholder="mail-1"/>
+            </div>
+          </div>
+        </div>
+
+        <div class="tip warn show" style="margin-top:8px;">
+          💡 以上配置均为可选。跳过后可随时在 <strong>管理端 → 环境变量</strong> 中补充，保存即生效（无需重启服务）。
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" onclick="goStep(3)">← 上一步</button>
+        <button class="btn" onclick="submitSetup(true)">跳过，直接完成</button>
+        <button class="btn primary" onclick="submitSetup(false)">保存并完成安装</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ Step 5：完成 ════ -->
+  <div id="step-5" style="display:none">
+    <div class="card">
+      <div class="done-screen">
+        <div class="done-icon">🎉</div>
+        <div class="done-title">安装完成！</div>
+        <div class="done-sub">系统已初始化完毕，以下是你的登录信息，<strong>请妥善保存。</strong></div>
+        <div class="info-box" id="done-info">
+          <!-- JS 渲染 -->
+        </div>
+        <div class="tip warn show" id="done-warn" style="text-align:left;margin-bottom:20px;">
+          ⚠️ 未填写的接口环境变量可在登录后进入 <strong>管理端 → 环境变量</strong> 中随时补充，填写保存后功能即刻生效。
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+          <a href="/login.html" class="btn primary" style="text-decoration:none;">进入登录页面 →</a>
+          <a href="/dashboard" class="btn" style="text-decoration:none;">直接进入控制台</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// ── 状态 ──
+let currentStep = 1;
+const formData = {};
+
+// ── 步骤切换 ──
+function goStep(n) {
+  document.getElementById('step-' + currentStep).style.display = 'none';
+  document.getElementById('step-' + n).style.display = '';
+  updateStepBar(n);
+  currentStep = n;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function updateStepBar(active) {
+  for (let i = 1; i <= 5; i++) {
+    const s = document.getElementById('s' + i);
+    s.classList.remove('active', 'done');
+    if (i < active) s.classList.add('done');
+    if (i === active) s.classList.add('active');
+  }
+  for (let i = 1; i <= 4; i++) {
+    const c = document.getElementById('sc' + i);
+    c.classList.toggle('done', i < active);
+  }
+}
+
+function showTip(n, type, msg) {
+  const el = document.getElementById('tip' + n);
+  if (!el) return;
+  el.className = 'tip ' + type + ' show';
+  el.textContent = msg;
+}
+function hideTip(n) {
+  const el = document.getElementById('tip' + n);
+  if (el) el.className = 'tip';
+}
+
+// ── 密码强度 ──
+function checkPw(v) {
+  const s = v.length >= 12 ? 4 : v.length >= 10 ? 3 : v.length >= 8 ? 2 : v.length > 0 ? 1 : 0;
+  const c = ['', '#E05252', '#D4A017', '#5A8A00', '#3D8C3D'];
+  [1,2,3,4].forEach(i => {
+    document.getElementById('pb' + i).style.background = i <= s ? c[s] : 'var(--bd)';
+  });
+}
+
+// ── 功能开关 ──
+function toggleFeat(label) {
+  const cb = label.querySelector('input[type=checkbox]');
+  cb.checked = !cb.checked;
+  label.classList.toggle('checked', cb.checked);
+}
+
+function getFeatures() {
+  const feats = {};
+  document.querySelectorAll('input[name=feat]').forEach(cb => {
+    feats[cb.value] = cb.checked;
+  });
+  return feats;
+}
+
+// ── 步骤验证 ──
+async function nextStep(from) {
+  hideTip(from);
+
+  if (from === 1) {
+    const email = document.getElementById('admin-email').value.trim();
+    const pw    = document.getElementById('admin-pw').value;
+    const pw2   = document.getElementById('admin-pw2').value;
+    const emailReg = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!email || !emailReg.test(email)) {
+      return showTip(1, 'err', '请输入有效的邮箱地址');
+    }
+    if (!pw || pw.length < 8) {
+      return showTip(1, 'err', '密码至少 8 位');
+    }
+    if (pw !== pw2) {
+      return showTip(1, 'err', '两次密码输入不一致');
+    }
+    // 检查邮箱是否已存在
+    try {
+      const r = await fetch('/setup/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const d = await r.json();
+      if (d.exists) {
+        showTip(1, 'warn', `邮箱 ${email} 已存在账号，安装完成后将升级为超级管理员。`);
+      }
+    } catch (_) {}
+
+    formData.admin_name     = document.getElementById('admin-name').value.trim();
+    formData.admin_email    = email;
+    formData.admin_password = pw;
+    goStep(2);
+    return;
+  }
+
+  if (from === 2) {
+    const baseUrl = document.getElementById('base-url').value.trim();
+    if (!baseUrl) return showTip(2, 'err', '服务根地址不能为空');
+    if (!baseUrl.startsWith('http')) return showTip(2, 'err', '地址需以 http:// 或 https:// 开头');
+
+    formData.site_name = document.getElementById('site-name').value.trim() || '统一登录系统';
+    formData.base_url  = baseUrl.replace(/\/$/, '');
+    formData.node_env  = document.getElementById('node-env').value;
+    goStep(3);
+    return;
+  }
+
+  if (from === 3) {
+    formData.features = getFeatures();
+    // 短信和邮件共用同一个分发中心，任意一个开启就显示该配置块
+    const f = formData.features;
+    document.getElementById('block-message').style.display = (f.email || f.sms) ? '' : 'none';
+    goStep(4);
+    return;
+  }
+}
+
+// ── 提交 ──
+async function submitSetup(skip) {
+  hideTip(4);
+
+  if (!skip) {
+    formData.qwq_message_url         = document.getElementById('qwq-message-url')?.value.trim()         || '';
+    formData.qwq_message_key         = document.getElementById('qwq-message-key')?.value               || '';
+    formData.qwq_message_sms_group   = document.getElementById('qwq-message-sms-group')?.value.trim()   || '';
+    formData.qwq_message_email_group = document.getElementById('qwq-message-email-group')?.value.trim() || '';
+  }
+
+  showLoading('正在初始化系统，请稍候…');
+
+  try {
+    const res = await fetch('/setup/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formData),
+    });
+    const data = await res.json();
+    hideLoading();
+
+    if (!res.ok) {
+      return showTip(4, 'err', data.error || '安装失败，请检查填写内容');
+    }
+
+    // 渲染完成页
+    renderDone();
+    goStep(5);
+
+  } catch (err) {
+    hideLoading();
+    showTip(4, 'err', '网络错误，请检查服务是否正常运行');
+  }
+}
+
+function renderDone() {
+  const feat = formData.features || {};
+  const enabledFeats = Object.entries(feat).filter(([,v])=>v).map(([k])=>({
+    email:'📧 邮箱登录', sms:'📱 短信验证码', wechat:'💬 微信扫码',
+    wecom:'🏢 企业微信', feishu:'📗 飞书', dingtalk:'📌 钉钉',
+    douyin:'🎵 抖音', kuaishou:'▶️ 快手', xhs:'📕 小红书',
+    bilibili:'📺 Bilibili', google:'🔵 Google', apple:'🍎 Apple',
+    kyc:'🪪 实名认证', shop:'🛒 积分商城', api:'⚙️ 开放 API',
+  }[k])).filter(Boolean);
+
+  document.getElementById('done-info').innerHTML = `
+    <div class="info-row"><div class="info-key">站点地址</div><div class="info-val">${formData.base_url}</div></div>
+    <div class="info-row"><div class="info-key">管理员邮箱</div><div class="info-val">${formData.admin_email}</div></div>
+    <div class="info-row"><div class="info-key">管理员密码</div><div class="info-val">（你设置的密码）</div></div>
+    <div class="info-row"><div class="info-key">运行环境</div><div class="info-val">${formData.node_env}</div></div>
+    <div class="info-row"><div class="info-key">已开启功能</div><div class="info-val" style="line-height:1.8;">${enabledFeats.join('　') || '—'}</div></div>
+  `;
+}
+
+// ── Loading ──
+function showLoading(msg) {
+  document.getElementById('loading-text').textContent = msg || '处理中…';
+  document.getElementById('loading').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('loading').classList.remove('show');
+}
+
+// ── 自动填充 Base URL ──
+document.addEventListener('DOMContentLoaded', () => {
+  const buInput = document.getElementById('base-url');
+  if (buInput && !buInput.value) {
+    buInput.value = window.location.origin;
+  }
+  // 邮箱失焦检查
+  const emailInput = document.getElementById('admin-email');
+  emailInput?.addEventListener('blur', async () => {
+    const email = emailInput.value.trim();
+    if (!email) return;
+    try {
+      const r = await fetch('/setup/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const d = await r.json();
+      const hint = document.getElementById('email-hint');
+      if (d.exists) {
+        hint.textContent = '⚠️ 该邮箱已有账号，安装后将自动升级为超级管理员';
+        hint.style.color = 'var(--warn)';
+      } else {
+        hint.textContent = '✓ 邮箱可用';
+        hint.style.color = 'var(--ok)';
+      }
+    } catch (_) {}
+  });
+});
+</script>
+
+__FOOTER_HTML__
+</body>
+</html>
