@@ -1,0 +1,28 @@
+# XcodeGen 工程描述文件。CI / 本地都靠它生成 QWQSSO.xcodeproj：
+#   brew install xcodegen && cd ios && xcodegen generate && open QWQSSO.xcodeproj
+# 之所以用 XcodeGen 而不是手写 .pbxproj：pbxproj 手写极易出错，用 spec 生成稳定可复现。
+name: QWQSSO
+options:
+  bundleIdPrefix: cn.xubainet
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""            # 本地/CI 出未签名包时留空；真机/上架时填你的 Team ID（或用 CI Secret 注入）
+targets:
+  QWQSSO:
+    type: application
+    platform: iOS
+    sources:
+      - path: QWQSSO
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.xubainet.qwqsso
+        TARGETED_DEVICE_FAMILY: "1,2"     # iPhone + iPad
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_STYLE: Automatic
