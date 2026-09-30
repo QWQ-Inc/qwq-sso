@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>QWQSSO</string>
+  <key>CFBundleDisplayName</key>
+  <string>QWQ SSO</string>
+  <key>CFBundleIdentifier</key>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSRequiresIPhoneOS</key>
+  <true/>
+  <key>UILaunchScreen</key>
+  <dict/>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+  </array>
+  <!-- 扫码登录需要相机 -->
+  <key>NSCameraUsageDescription</key>
+  <string>用于扫码登录 / 绑定第三方账号</string>
+  <!-- 深链：第三方 / 网页回跳用 qwqsso:// 唤起本 App（配合后端 v3.4.25 登录深链） -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>cn.xubainet.qwqsso</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>qwqsso</string>
+      </array>
+    </dict>
+  </array>
+  <!-- 允许 https（默认）；如需连自建 http 内网域，管理员自行放宽 ATS -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+  </dict>
+</dict>
+</plist>
