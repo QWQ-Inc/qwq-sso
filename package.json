@@ -1,0 +1,28 @@
+{
+  "name": "unified-sso-system",
+  "version": "3.5.18",
+  "description": "统一登录系统 SSO - 多渠道登录 + 用户/管理后台",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "init": "node server/init.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "express-rate-limit": "^7.1.5",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "uuid": "^9.0.0",
+    "better-sqlite3": "^9.4.3",
+    "@simplewebauthn/server": "^13.3.2",
+    "passkit-generator": "^3.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
