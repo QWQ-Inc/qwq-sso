@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>访客通行码 · QWQ SSO</title>
+<script src="/qr-mini.js"></script>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --txt:#1d1d1f; --mut:#86868b; --line:#e5e5ea; --accent:#0071e3; --ok:#1a7f37; --err:#d70015; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#0f1115; --card:#1c1f26; --txt:#e8e8ea; --mut:#9aa0ab; --line:#2c3038; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:28px 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; max-width:380px; width:100%; padding:24px; text-align:center; box-shadow:0 2px 16px rgba(0,0,0,.06); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:18px; }
+  .qr { background:#fff; padding:14px; border-radius:12px; display:inline-block; line-height:0; }
+  .name { font-size:20px; font-weight:700; margin:16px 0 4px; }
+  .meta { font-size:13px; color:var(--mut); line-height:1.8; margin-top:8px; }
+  .code { font-family:monospace; font-size:15px; margin-top:12px; letter-spacing:1px; }
+  .status { display:inline-block; padding:3px 12px; border-radius:20px; font-size:12px; margin-top:12px; }
+  .status.ok { background:rgba(26,127,55,.12); color:var(--ok); }
+  .status.bad { background:rgba(215,0,21,.12); color:var(--err); }
+  .tip { font-size:12px; color:var(--mut); margin-top:16px; line-height:1.6; }
+  .err { color:var(--err); font-size:14px; padding:30px 0; }
+  .wallet-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; margin-top:16px;
+    background:#000; color:#fff; text-decoration:none; padding:11px 20px; border-radius:10px; font-size:15px; font-weight:600; }
+  .wallet-btn::before { content:"\\F8FF"; font-size:17px; }  /* Apple logo glyph on Apple devices */
+  .wallet-btn::after { content:"添加到 Apple Wallet"; }
+  @media (prefers-color-scheme: dark){ .wallet-btn { background:#fff; color:#000; } }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <h1>访客通行码</h1>
+  <div class="sub">出示此二维码给门口扫码机</div>
+  <div id="content"><div style="color:var(--mut);padding:30px 0;">加载中…</div></div>
+</div>
+<script>
+const code = new URLSearchParams(location.search).get('code') || '';
+const el = document.getElementById('content');
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmt(s){ return s ? String(s).replace('T',' ').slice(0,16) : ''; }
+(async () => {
+  if (!code) { el.innerHTML = '<div class="err">链接缺少凭证编号</div>'; return; }
+  let d;
+  try { d = await (await fetch('/api/public/pass/' + encodeURIComponent(code))).json(); }
+  catch (e) { el.innerHTML = '<div class="err">网络错误</div>'; return; }
+  if (!d || !d.ok) { el.innerHTML = '<div class="err">凭证无效或不存在</div>'; return; }
+  const svg = (window.QRMini && QRMini.svg) ? QRMini.svg(d.code, { scale: 6, quiet: 4 }) : null;
+  const active = d.status === 'active';
+  const win = [d.valid_from, d.valid_to].filter(Boolean).map(fmt).join(' ~ ') || '不限时间';
+  el.innerHTML =
+    (svg ? `<div class="qr">${svg}</div>` : `<div class="code">${esc(d.code)}</div>`) +
+    `<div class="name">${esc(d.visitor_name || '访客')}</div>` +
+    `<div class="status ${active?'ok':'bad'}">${active?'有效':'已失效'}</div>` +
+    `<div class="meta">可通行：${esc((d.doors||[]).join('、')||'—')}<br>有效期：${esc(win)}</div>` +
+    `<div class="code">${esc(d.code)}</div>` +
+    ((active && d.wallet) ? `<a class="wallet-btn" href="/api/public/pass/${encodeURIComponent(code)}/pkpass"></a>` : '') +
+    `<div class="tip">把这个二维码对准门口扫码机即可通行。请勿外传。</div>`;
+})();
+</script>
+</body>
+</html>
