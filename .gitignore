@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 环境变量（含密钥，绝对不能上传）
+.env
+
+# 数据库文件（含用户数据）
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
+
+# 编辑器
+.vscode/
+.idea/
