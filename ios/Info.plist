@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>QWQSSO</string>
+  <key>CFBundleDisplayName</key>
+  <string>QWQ SSO</string>
+  <!-- 关键：可执行文件名。GENERATE_INFOPLIST_FILE=NO 时 Xcode 不会自动注入，
+       缺了会导致安装报 MissingBundleExecutable。$(EXECUTABLE_NAME) 在处理 Info.plist 时展开为 QWQSSO -->
+  <key>CFBundleExecutable</key>
+  <string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key>
+  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key>
+  <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>UIDeviceFamily</key>
+  <array>
+    <integer>1</integer>
+    <integer>2</integer>
+  </array>
+  <key>LSRequiresIPhoneOS</key>
+  <true/>
+  <key>UILaunchScreen</key>
+  <dict/>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+  </array>
+  <!-- 扫码登录需要相机 -->
+  <key>NSCameraUsageDescription</key>
+  <string>用于扫码登录 / 绑定第三方账号</string>
+  <!-- 深链：第三方 / 网页回跳用 qwqsso:// 唤起本 App（配合后端 v3.4.25 登录深链） -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>cn.xubainet.qwqsso</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>qwqsso</string>
+      </array>
+    </dict>
+  </array>
+  <!-- 允许 https（默认）；如需连自建 http 内网域，管理员自行放宽 ATS -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+  </dict>
+</dict>
+</plist>
