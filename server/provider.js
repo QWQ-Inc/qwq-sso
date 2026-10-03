@@ -203,7 +203,7 @@ router.get('/oauth/authorize', (req, res) => {
 router.get('/oauth/app-info', (req, res) => {
   const app = idp.findAppByClientId.get(req.query.client_id || '');
   if (!app || app.status !== 'enabled') return res.status(404).json({ error: '应用不存在或未启用' });
-  res.json({ success: true, app: { name: app.name, icon: app.icon, icon_bg: app.icon_bg, description: app.description } });
+  res.json({ success: true, app: { name: app.name, icon: app.icon, icon_bg: app.icon_bg, icon_url: app.icon_url || '', description: app.description } });
 });
 
 // ── 同意页拉取展示信息（需要登录态）──
@@ -225,7 +225,7 @@ router.get('/oauth/consent-info', requireAuth, (req, res) => {
 
   res.json({
     success: true,
-    app:  { name: app.name, icon: app.icon, icon_bg: app.icon_bg, description: app.description },
+    app:  { name: app.name, icon: app.icon, icon_bg: app.icon_bg, icon_url: app.icon_url || '', description: app.description },
     user: { name: user.name, avatar: user.avatar, uid: String(user.uid_seq || '').padStart(5, '0') },
     // 每一项都带说明，让用户清楚这次到底交出去什么；required=应用强制必传，不可取消
     scopes: asked.map(s => ({

@@ -234,6 +234,26 @@ final class APIClient {
         return (j["url"] as? String) ?? ""
     }
 
+    // ── 我的应用文件夹（v3.5.28，个人整理，不影响可见性/授权）──
+    func appFolders(token: String) async throws -> [[String: Any]] {
+        let j = try await getJSON("/api/user/app-folders", token: token)
+        return (j["folders"] as? [[String: Any]]) ?? []
+    }
+    func appFolderCreate(name: String, appIds: [String], token: String) async throws {
+        _ = try await postJSON("/api/user/app-folders", body: ["name": name, "app_ids": appIds], token: token)
+    }
+    func appFolderRename(id: String, name: String, token: String) async throws {
+        _ = try await sendBody("PATCH", "/api/user/app-folders/\(id)", body: ["name": name], token: token)
+    }
+    func appFolderDelete(id: String, token: String) async throws {
+        _ = try await sendBody("DELETE", "/api/user/app-folders/\(id)", body: nil, token: token)
+    }
+    /// folderId 为 nil = 移出文件夹
+    func appFolderAssign(appId: String, folderId: String?, token: String) async throws {
+        let body: [String: Any] = ["app_id": appId, "folder_id": folderId ?? NSNull()]
+        _ = try await sendBody("PUT", "/api/user/app-folders/assign", body: body, token: token)
+    }
+
     // ── 登录日志 ──
     func loginLogs(token: String) async throws -> (logs: [[String: Any]], windowDays: Int, canExport: Bool) {
         let j = try await getJSON("/api/user/login-logs", token: token)

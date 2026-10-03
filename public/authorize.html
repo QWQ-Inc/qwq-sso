@@ -75,9 +75,9 @@ function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
     if (!r.ok) return fail(d.error || '加载失败');
   } catch (e) { return fail('网络错误，请重试'); }
 
-  const isImg = s => /^https?:\/\//i.test(s || '');
+  const isImg = s => /^https?:\/\//i.test(s || '') || /^\/(?!\/)/.test(s || '');   // 站内相对路径 = 上传的图片图标（v3.5.28）
   const appAva = () => `<div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
-    isImg(d.app.icon) ? `<img src="${esc(d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>`;
+    isImg(d.app.icon_url || d.app.icon) ? `<img src="${esc(d.app.icon_url || d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>`;
 
   // 应用要求的必传信息用户缺失（如必传邮箱但没绑）→ 拦下来引导绑定，不能继续
   if (d.missingRequired && d.missingRequired.length) {
@@ -127,7 +127,7 @@ function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
   card.innerHTML = `
     <div class="heads">
       <div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
-        isImg(d.app.icon) ? `<img src="${esc(d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>
+        isImg(d.app.icon_url || d.app.icon) ? `<img src="${esc(d.app.icon_url || d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>
       <div class="link">···</div>
       <div class="ava" style="background:#E8E8ED">${
         isImg(d.user.avatar) ? `<img src="${esc(d.user.avatar)}" alt="">` : esc((d.user.name || 'U').slice(0,1))}</div>

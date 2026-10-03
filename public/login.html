@@ -1922,12 +1922,12 @@
       if (!r.ok) return;
       const d = await r.json();
       if (!d.app) return;
-      const isImg = s => /^https?:\/\//i.test(s || '');
+      const isImg = s => /^https?:\/\//i.test(s || '') || /^\/(?!\/)/.test(s || '');   // 站内相对路径 = 上传的图片图标（v3.5.28）
       const iconEl = document.getElementById('oidc-banner-icon');
       iconEl.style.background = d.app.icon_bg || '#F0F0F0';
-      if (isImg(d.app.icon)) {
+      if (isImg(d.app.icon_url || d.app.icon)) {
         const img = document.createElement('img');
-        img.src = d.app.icon; img.alt = '';
+        img.src = d.app.icon_url || d.app.icon; img.alt = '';
         img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
         iconEl.innerHTML = ''; iconEl.appendChild(img);
       } else {

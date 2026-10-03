@@ -676,6 +676,14 @@ function _devApi(method, path, body) {
 
   // 应用市场
   if (path === '/apps/market') return ok({ success:true, apps: db.mockApps });
+  // v3.5.28 应用文件夹（演示）
+  db._folders = db._folders || [{ id:'f1', name:'办公', app_ids:['a1'] }];
+  if (path === '/user/app-folders' && method === 'GET') return ok({ success:true, folders: db._folders });
+  if (path === '/user/app-folders' && method === 'POST') { const id='f'+Date.now(); db._folders.push({ id, name:body.name, app_ids:[] }); return ok({ success:true, id }); }
+  if (path === '/user/app-folders/assign' && method === 'PUT') { db._folders.forEach(f => f.app_ids = f.app_ids.filter(x => x !== body.app_id)); const f = db._folders.find(x => x.id === body.folder_id); if (f) f.app_ids.push(body.app_id); return ok({ success:true }); }
+  { const fm = path.match(/^\/user\/app-folders\/([^/]+)$/);
+    if (fm && method === 'PATCH') { const f = db._folders.find(x => x.id === fm[1]); if (f) f.name = body.name; return ok({ success:true }); }
+    if (fm && method === 'DELETE') { db._folders = db._folders.filter(x => x.id !== fm[1]); return ok({ success:true }); } }
   if (path === '/apps/authed') return ok({ success:true, apps: db.mockApps.filter(a=>a.userAuthed) });
   if (method === 'POST' && path.startsWith('/apps/') && path.endsWith('/auth')) {
     const id = path.split('/')[2];
@@ -4154,7 +4162,15 @@ function onMarketOrgChange() {
   try { localStorage.setItem('sso_current_org', sel.value || ''); } catch (_) {}
   renderMarket();
 }
+// 应用图标：有上传的图片（icon_url）就显示图片，否则 emoji（v3.5.28）
+function appIconInner(a) {
+  return (a && a.icon_url)
+    ? `<img src="${esc(a.icon_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block;">`
+    : esc((a && a.icon) || '📦');
+}
 let _marketCat = '';   // 应用市场分类筛选（''=全部）
+let _marketFolder = '';   // 我的文件夹筛选（''=全部，v3.5.28）
+let _marketFolders = [];
 async function renderMarket() {
   const grid = document.getElementById('market-grid');
   if (!grid) return;
@@ -4168,16 +4184,32 @@ async function renderMarket() {
   // 分类筛选 chip
   const cats = [...new Set(data.apps.map(a => (a.category||'').trim()).filter(Boolean))];
   if (_marketCat) list = list.filter(a => (a.category||'').trim() === _marketCat);
+  // 我的文件夹（个人整理，不影响可见性/授权）
+  try { const fr = await api('GET', '/user/app-folders'); _marketFolders = (fr.ok && fr.data.folders) || []; } catch (_) { _marketFolders = []; }
+  if (_marketFolder && !_marketFolders.find(f => f.id === _marketFolder)) _marketFolder = '';
+  const curFolder = _marketFolders.find(f => f.id === _marketFolder);
+  if (curFolder) list = list.filter(a => curFolder.app_ids.includes(a.id));
   let chips = '';
   if (cats.length) {
     const chip = (label, val) => `<button class="btn${_marketCat===val?' primary':''}" style="font-size:11px;padding:3px 12px;" onclick='_marketCat=${JSON.stringify(val)};renderMarket()'>${label}</button>`;
     chips = `<div style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">${chip('全部','')}${cats.map(c=>chip(esc(c),c)).join('')}</div>`;
   }
+  {
+    const fchip = (label, val) => `<button class="btn${_marketFolder===val?' primary':''}" style="font-size:11px;padding:3px 12px;" onclick='_marketFolder=${JSON.stringify(val)};renderMarket()'>${label}</button>`;
+    chips += `<div style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">
+      <span style="font-size:11px;color:var(--txd);">我的文件夹</span>${fchip('全部应用','')}
+      ${_marketFolders.map(f => fchip('📁 ' + esc(f.name) + ' · ' + f.app_ids.length, f.id)).join('')}
+      <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="newAppFolder()">＋ 新建文件夹</button>
+      ${curFolder ? `<button class="btn" style="font-size:11px;padding:3px 10px;" onclick='renameAppFolder(${JSON.stringify(curFolder.id)})'>重命名</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--err);border-color:var(--err);" onclick='deleteAppFolder(${JSON.stringify(curFolder.id)})'>删除文件夹</button>` : ''}
+    </div>`;
+  }
   grid.innerHTML = chips + list.map(a => `
     <div class="app-card">
       <div style="display:flex;align-items:center;gap:10px;">
-        <div class="app-icon" style="background:${a.icon_bg||'#F0F0F0'}">${a.icon}</div>
-        <div><div class="app-name">${a.name}${(a.category||'').trim()?` <span style="font-size:10px;color:var(--txd);background:var(--sf2);padding:1px 6px;border-radius:8px;">${esc(a.category)}</span>`:''}</div><div class="app-desc">${a.description}</div></div>
+        <div class="app-icon" style="background:${esc(a.icon_bg||'#F0F0F0')};overflow:hidden;">${appIconInner(a)}</div>
+        <div style="flex:1;min-width:0;"><div class="app-name">${a.name}${(a.category||'').trim()?` <span style="font-size:10px;color:var(--txd);background:var(--sf2);padding:1px 6px;border-radius:8px;">${esc(a.category)}</span>`:''}</div><div class="app-desc">${a.description}</div></div>
+        <button class="btn" title="移到文件夹" style="font-size:12px;padding:2px 7px;" data-id="${esc(a.id)}" onclick="moveAppToFolder(this.dataset.id)">📁</button>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;">
         ${a.userAuthed
@@ -4197,6 +4229,51 @@ async function renderMarket() {
     <div class="app-card" style="border-style:dashed;border-color:var(--bd2);justify-content:center;align-items:center;min-height:110px;color:var(--txd);cursor:pointer;" onclick="showApplyAppModal()">
       <div style="text-align:center;"><div style="font-size:24px;margin-bottom:4px;">＋</div><div style="font-size:12px;">申请接入新应用</div></div>
     </div>` : '');
+}
+
+// ── 我的应用文件夹（v3.5.28）──
+async function newAppFolder(appId) {
+  const name = (prompt('文件夹名称') || '').trim();
+  if (!name) return;
+  const { ok, data } = await api('POST', '/user/app-folders', { name, app_ids: appId ? [appId] : [] });
+  if (!ok) return showToast('⚠️ ' + (data?.error || '创建失败'));
+  if (!appId) _marketFolder = data.id;
+  document.getElementById('folder-pick-ov')?.remove();
+  renderMarket();
+}
+async function renameAppFolder(id) {
+  const f = _marketFolders.find(x => x.id === id); if (!f) return;
+  const name = (prompt('新名称', f.name) || '').trim();
+  if (!name || name === f.name) return;
+  const { ok, data } = await api('PATCH', '/user/app-folders/' + id, { name });
+  ok ? renderMarket() : showToast('⚠️ ' + (data?.error || '失败'));
+}
+async function deleteAppFolder(id) {
+  const f = _marketFolders.find(x => x.id === id); if (!f) return;
+  if (!confirm(`删除文件夹「${f.name}」？里面的应用会回到「全部应用」，不会被删除或取消授权。`)) return;
+  await api('DELETE', '/user/app-folders/' + id);
+  _marketFolder = ''; renderMarket();
+}
+function moveAppToFolder(appId) {
+  const cur = _marketFolders.find(f => f.app_ids.includes(appId));
+  const ov = document.createElement('div');
+  ov.id = 'folder-pick-ov';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
+  const row = (label, fid, active) => `<button class="btn${active?' primary':''}" style="width:100%;text-align:left;margin-bottom:6px;" onclick='assignAppFolder(${JSON.stringify(appId)}, ${JSON.stringify(fid)})'>${label}</button>`;
+  ov.innerHTML = `<div style="background:var(--sf,#fff);border-radius:12px;max-width:320px;width:100%;padding:16px;">
+    <div style="font-size:14px;font-weight:700;margin-bottom:10px;">移到文件夹</div>
+    ${_marketFolders.map(f => row('📁 ' + esc(f.name), f.id, cur && cur.id === f.id)).join('')}
+    ${cur ? row('↩ 移出文件夹', '', false) : ''}
+    <button class="btn" style="width:100%;margin-bottom:6px;" onclick='newAppFolder(${JSON.stringify(appId)})'>＋ 新建文件夹并放入</button>
+    <button class="btn" style="width:100%;" onclick="this.closest('#folder-pick-ov').remove()">取消</button>
+  </div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+async function assignAppFolder(appId, folderId) {
+  const { ok, data } = await api('PUT', '/user/app-folders/assign', { app_id: appId, folder_id: folderId || null });
+  document.getElementById('folder-pick-ov')?.remove();
+  ok ? renderMarket() : showToast('⚠️ ' + (data?.error || '失败'));
 }
 
 function showApplyAppModal() {
@@ -6891,7 +6968,7 @@ async function renderAdmApps() {
   if (!ok || !data.apps.length) { tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--txd);padding:20px;">暂无应用</td></tr>'; return; }
   tbody.innerHTML = data.apps.map(a => `
     <tr>
-      <td><span style="font-weight:600;">${a.icon} ${a.name}</span></td>
+      <td><span style="font-weight:600;display:inline-flex;align-items:center;gap:6px;"><span style="width:22px;height:22px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;background:${esc(a.icon_bg||'#F0F0F0')};font-size:13px;">${appIconInner(a)}</span>${a.name}</span></td>
       <td><code style="font-size:11px;background:var(--bg);padding:2px 6px;border-radius:2px;">${a.client_id}</code></td>
       <td style="font-size:12px;color:var(--txm);">${a.callback_url}</td>
       <td>${a.auth_users}</td>
@@ -6928,6 +7005,33 @@ async function admDeleteApp(id, name) {
   const { ok } = await api('DELETE', `/admin/apps/${id}`);
   if (ok) { renderAdmApps(); renderMarket(); showToast(`✓ 已删除「${name}」`); }
   else showToast('⚠️ 删除失败');
+}
+
+// 应用图片图标上传 / 移除（v3.5.28）：原始字节上传，附件接口要 Bearer，所以裸 fetch
+async function uploadAppIcon(appId, input) {
+  const f = input.files && input.files[0]; input.value = '';
+  if (!f) return;
+  if (f.size > 512 * 1024) return showToast('⚠️ 图标不能超过 512KB');
+  let url;
+  if (_IS_DEV) url = URL.createObjectURL(f);
+  else {
+    const r = await fetch('/api/admin/apps/' + encodeURIComponent(appId) + '/icon?filename=' + encodeURIComponent(f.name),
+      { method: 'POST', headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/octet-stream' }, body: f });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return showToast('⚠️ ' + (d.error || '上传失败'));
+    url = d.icon_url;
+  }
+  const pv = document.getElementById('ae-icon-preview');
+  if (pv) pv.innerHTML = appIconInner({ icon_url: url });
+  const cl = document.getElementById('ae-icon-clear'); if (cl) cl.style.display = '';
+  showToast('✓ 图标已更新'); renderAdmApps();
+}
+async function clearAppIcon(appId) {
+  if (!_IS_DEV) { const { ok } = await api('DELETE', '/admin/apps/' + encodeURIComponent(appId) + '/icon'); if (!ok) return showToast('⚠️ 移除失败'); }
+  const pv = document.getElementById('ae-icon-preview');
+  if (pv) pv.innerHTML = esc(document.getElementById('ae-icon')?.value || '📦');
+  const cl = document.getElementById('ae-icon-clear'); if (cl) cl.style.display = 'none';
+  showToast('✓ 已移除图片图标'); renderAdmApps();
 }
 
 async function saveAppEdit() {
@@ -7030,7 +7134,7 @@ async function openAppEdit(id) {
   document.getElementById('bind-modal').innerHTML = `
     <div class="modal" style="min-width:500px;text-align:left;padding:0;overflow:hidden;">
       <div style="padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-        <span style="font-size:18px;">${a.icon}</span>
+        <span style="width:28px;height:28px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;background:${esc(a.icon_bg||'#F0F0F0')};font-size:16px;">${appIconInner(a)}</span>
         <div style="flex:1;font-size:14px;font-weight:700;">编辑应用：${a.name}</div>
         <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="document.getElementById('bind-modal').classList.remove('show')">关闭</button>
       </div>
@@ -7038,7 +7142,14 @@ async function openAppEdit(id) {
         ${appCredentialsHtml(a)}
         <div class="settings-grid">
           <div class="form-row"><label>应用名称</label><input type="text" id="ae-name" value="${esc(a.name)}"/></div>
-          <div class="form-row"><label>应用图标（Emoji）</label><input type="text" id="ae-icon" value="${a.icon}" maxlength="2"/></div>
+          <div class="form-row"><label>应用图标（Emoji，无图片时显示）</label><input type="text" id="ae-icon" value="${a.icon}" maxlength="2"/></div>
+          <div class="form-row"><label>图片图标（可选，png/jpg/webp ≤512KB，建议正方形）</label>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="ae-icon-preview" style="width:36px;height:36px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;background:${esc(a.icon_bg||'#F0F0F0')};font-size:18px;">${appIconInner(a)}</span>
+              <input type="file" id="ae-icon-file" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" onchange='uploadAppIcon(${JSON.stringify(a.id)}, this)'/>
+              <button class="btn" style="font-size:11px;" onclick="document.getElementById('ae-icon-file').click()">上传图片</button>
+              <button class="btn" style="font-size:11px;${a.icon_url?'':'display:none;'}" id="ae-icon-clear" onclick='clearAppIcon(${JSON.stringify(a.id)})'>移除</button>
+            </div></div>
           <div class="form-row full"><label>应用描述</label><input type="text" id="ae-desc" value="${a.description}"/></div>
           <div class="form-row full"><label>分类（可选）</label><input type="text" id="ae-category" value="${esc(a.category||'')}" placeholder="如：办公 / 财务 / 人事"/></div>
           <div class="form-row full"><label>回调地址</label><input type="text" id="ae-cb" value="${a.callback_url}" style="font-family:monospace;font-size:12px;"/></div>
@@ -9077,7 +9188,7 @@ async function loadAuthedApps() {
     return `
     <div class="card" style="margin-bottom:10px;">
       <div class="card-header">
-        <h3>${a.icon||'📦'} ${esc(a.name)}</h3>
+        <h3 style="display:flex;align-items:center;gap:8px;"><span style="width:24px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;background:${esc(a.icon_bg||'#F0F0F0')};font-size:14px;">${appIconInner(a)}</span>${esc(a.name)}</h3>
         <button class="btn" style="color:var(--err);border-color:var(--err);font-size:11px;padding:4px 10px;"
           data-app-id="${esc(a.id)}" data-app-name="${esc(a.name)}"
           onclick="confirmRevokeApp(this.dataset.appId, this.dataset.appName)">撤销授权</button>
@@ -9106,7 +9217,7 @@ async function openMyAppDetail(id, name) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
   ov.innerHTML = `<div style="background:var(--sf,#fff);border-radius:14px;max-width:400px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.2);">
     <div style="padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-      <div style="width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;background:${esc(a.icon_bg||'#F0F0F0')}">${esc(a.icon||'📦')}</div>
+      <div style="width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden;background:${esc(a.icon_bg||'#F0F0F0')}">${appIconInner(a)}</div>
       <div style="flex:1;font-size:15px;font-weight:700;">${esc(a.name)}</div>
       <button class="btn" style="font-size:11px;" onclick="this.closest('div[style*=fixed]').remove()">关闭</button>
     </div>

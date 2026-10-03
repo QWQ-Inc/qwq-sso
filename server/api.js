@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, appOrgs, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
@@ -2592,7 +2592,79 @@ router.post('/admin/apps/:id/reject', requireAdmin(2), (req, res) => {
 
 router.delete('/admin/apps/:id', requireAdmin(2), (req, res) => {
   db.prepare('DELETE FROM user_app_auth WHERE app_id=?').run(req.params.id);
+  appIcons.remove.run(req.params.id); appFolders.removeApp.run(req.params.id);   // v3.5.28 图标 / 文件夹连带清
   db.prepare('DELETE FROM apps WHERE id=?').run(req.params.id);
+  res.json({ success: true });
+});
+
+// ── 应用图片图标（v3.5.28）──
+// 上传原始字节（?filename= 带扩展名），只收 png/jpg/gif/webp（复用备忘录的扩展名白名单 + magic bytes 校验；SVG 不收，防 XSS）。
+const APP_ICON_MAX = 512 * 1024;
+router.post('/admin/apps/:id/icon', requireAdmin(2), express.raw({ type: () => true, limit: 2 * 1024 * 1024 }), (req, res) => {
+  const app = apps.findById.get(req.params.id);
+  if (!app) return res.status(404).json({ error: '应用不存在' });
+  const buf = req.body;
+  if (!buf || !buf.length) return res.status(400).json({ error: '空文件' });
+  if (buf.length > APP_ICON_MAX) return res.status(413).json({ error: '图标不能超过 512KB' });
+  const v = validateAttachment(String(req.query.filename || 'icon.png'), buf);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  if (v.kind !== 'image') return res.status(400).json({ error: '图标只接受图片（png/jpg/gif/webp）' });
+  appIcons.upsert.run(app.id, v.mime, buf);
+  const url = `/api/public/app-icon/${encodeURIComponent(app.id)}?v=${Date.now().toString(36)}`;
+  appIcons.setUrl.run(url, app.id);
+  res.json({ success: true, icon_url: url });
+});
+router.delete('/admin/apps/:id/icon', requireAdmin(2), (req, res) => {
+  appIcons.remove.run(req.params.id); appIcons.setUrl.run(null, req.params.id);
+  res.json({ success: true });
+});
+// 公开读取（应用图标本就展示在登录过渡页/授权页，不属敏感数据）；带 ?v= 的地址可长缓存
+router.get('/public/app-icon/:id', (req, res) => {
+  const ic = appIcons.get.get(req.params.id);
+  if (!ic) return res.status(404).end();
+  res.set('Content-Type', ic.mime);
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(ic.data);
+});
+
+// ── 我的应用文件夹（v3.5.28，个人整理用；只影响自己的展示，不改可见性/授权）──
+router.get('/user/app-folders', requireAuth, (req, res) => {
+  const items = appFolders.items.all(req.user.uid);
+  const folders = appFolders.list.all(req.user.uid).map(f => ({ ...f, app_ids: items.filter(i => i.folder_id === f.id).map(i => i.app_id) }));
+  res.json({ success: true, folders });
+});
+router.post('/user/app-folders', requireAuth, (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 30);
+  if (!name) return res.status(400).json({ error: '请填写文件夹名称' });
+  if (appFolders.list.all(req.user.uid).length >= 50) return res.status(400).json({ error: '文件夹太多了（上限 50）' });
+  const id = uuidv4();
+  appFolders.insert.run(id, req.user.uid, name, 0);
+  const ids = Array.isArray(req.body?.app_ids) ? req.body.app_ids.map(String).slice(0, 200) : [];
+  ids.forEach(a => appFolders.assign.run(req.user.uid, a, id));
+  res.json({ success: true, id });
+});
+router.patch('/user/app-folders/:id', requireAuth, (req, res) => {
+  if (!appFolders.get.get(req.params.id, req.user.uid)) return res.status(404).json({ error: '文件夹不存在' });
+  const name = String(req.body?.name || '').trim().slice(0, 30);
+  if (!name) return res.status(400).json({ error: '请填写文件夹名称' });
+  appFolders.rename.run(name, req.params.id, req.user.uid);
+  res.json({ success: true });
+});
+// 删文件夹：里面的应用回到「未归类」，不会被删/取消授权
+router.delete('/user/app-folders/:id', requireAuth, (req, res) => {
+  appFolders.clearFolder.run(req.params.id, req.user.uid);
+  appFolders.remove.run(req.params.id, req.user.uid);
+  res.json({ success: true });
+});
+// 把某应用放进某文件夹（folder_id 为空 = 移出到未归类）
+router.put('/user/app-folders/assign', requireAuth, (req, res) => {
+  const appId = String(req.body?.app_id || '');
+  if (!appId) return res.status(400).json({ error: '缺少 app_id' });
+  const fid = req.body?.folder_id ? String(req.body.folder_id) : '';
+  if (!fid) { appFolders.unassign.run(req.user.uid, appId); return res.json({ success: true }); }
+  if (!appFolders.get.get(fid, req.user.uid)) return res.status(404).json({ error: '文件夹不存在' });
+  appFolders.assign.run(req.user.uid, appId, fid);
   res.json({ success: true });
 });
 

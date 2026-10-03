@@ -300,7 +300,30 @@ try { db.exec("ALTER TABLE apps ADD COLUMN launch_url TEXT"); } catch(_) {}
 try { db.exec("ALTER TABLE apps ADD COLUMN required_scopes TEXT"); } catch(_) {}
 try { db.exec("ALTER TABLE apps ADD COLUMN category TEXT"); } catch(_) {}   // 应用分类（v3.4.44）
 try { db.exec("ALTER TABLE apps ADD COLUMN deprovision_url TEXT"); } catch(_) {}   // 账号撤销回调（v3.5.11，SSO 主动推送停用/删除事件）
-try { db.exec("ALTER TABLE apps ADD COLUMN backchannel_logout_uri TEXT"); } catch(_) {}   // OIDC Back-Channel Logout（v3.5.13，SSO 主动通知应用登出）
+try { db.exec("ALTER TABLE apps ADD COLUMN backchannel_logout_uri TEXT"); } catch(_) {}
+// 应用图片图标（v3.5.28）：图片本体放独立表 app_icons（别塞进 apps——到处都 SELECT * FROM apps 下发，BLOB 会被序列化进 JSON）；
+// apps.icon_url 只存公开地址（带版本参数防缓存），有值则前端/App 显示图片，否则回退 emoji icon。
+try { db.exec("ALTER TABLE apps ADD COLUMN icon_url TEXT"); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS app_icons (
+  app_id     TEXT PRIMARY KEY,
+  mime       TEXT NOT NULL,
+  data       BLOB NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+// 用户自己的应用文件夹（v3.5.28，类似手机桌面文件夹；纯个人整理，不影响可见性/授权）。一个应用对一个用户只在一个文件夹里。
+try { db.exec(`CREATE TABLE IF NOT EXISTS app_folders (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  sort_weight INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS app_folder_items (
+  user_id   TEXT NOT NULL,
+  app_id    TEXT NOT NULL,
+  folder_id TEXT NOT NULL,
+  PRIMARY KEY (user_id, app_id)
+)`); } catch(_) {}   // OIDC Back-Channel Logout（v3.5.13，SSO 主动通知应用登出）
 // 三方登录「多主体」：一个渠道（如微信）可挂多套登录凭证（多组织/多架构）。
 // 环境变量里配的那套仍是各平台的「默认凭证」（provider=平台名，零迁移）；
 // oauth_providers 这张表存的是额外「凭证」，provider=平台名:凭证id。config 是凭证 JSON（含 secret）。
@@ -938,6 +961,28 @@ function appVisibleInSession(appId, userId, scopedOrg) {
   return !!appOrgStmts.openToSubject.get(appId, scopedOrg) && !!orgMemberStmts.get.get(scopedOrg, userId);
 }
 
+// 应用图片图标 + 用户应用文件夹（v3.5.28）
+const appIconStmts = {
+  get:    db.prepare('SELECT mime, data, updated_at FROM app_icons WHERE app_id=?'),
+  upsert: db.prepare(`INSERT INTO app_icons (app_id,mime,data,updated_at) VALUES (?,?,?,datetime('now'))
+                      ON CONFLICT(app_id) DO UPDATE SET mime=excluded.mime, data=excluded.data, updated_at=excluded.updated_at`),
+  remove: db.prepare('DELETE FROM app_icons WHERE app_id=?'),
+  setUrl: db.prepare('UPDATE apps SET icon_url=? WHERE id=?'),
+};
+const appFolderStmts = {
+  list:      db.prepare('SELECT id, name, sort_weight FROM app_folders WHERE user_id=? ORDER BY sort_weight DESC, created_at'),
+  get:       db.prepare('SELECT * FROM app_folders WHERE id=? AND user_id=?'),
+  insert:    db.prepare('INSERT INTO app_folders (id,user_id,name,sort_weight) VALUES (?,?,?,?)'),
+  rename:    db.prepare('UPDATE app_folders SET name=? WHERE id=? AND user_id=?'),
+  remove:    db.prepare('DELETE FROM app_folders WHERE id=? AND user_id=?'),
+  items:     db.prepare('SELECT app_id, folder_id FROM app_folder_items WHERE user_id=?'),
+  clearFolder: db.prepare('DELETE FROM app_folder_items WHERE folder_id=? AND user_id=?'),
+  assign:    db.prepare(`INSERT INTO app_folder_items (user_id,app_id,folder_id) VALUES (?,?,?)
+                         ON CONFLICT(user_id,app_id) DO UPDATE SET folder_id=excluded.folder_id`),
+  unassign:  db.prepare('DELETE FROM app_folder_items WHERE user_id=? AND app_id=?'),
+  removeApp: db.prepare('DELETE FROM app_folder_items WHERE app_id=?'),
+};
+
 // 应用↔组织开放关系（app_orgs 无行 = 全局应用）
 const appOrgStmts = {
   forApp:     db.prepare('SELECT subject_id FROM app_orgs WHERE app_id=?'),
@@ -1244,6 +1289,8 @@ module.exports = {
   oauthSubjects: oauthSubjectStmts,
   orgMembers: orgMemberStmts,
   appOrgs: appOrgStmts,
+  appIcons: appIconStmts,
+  appFolders: appFolderStmts,
   appVisibleInSession,
   appVisibleToUser,
   memos: memoStmts,

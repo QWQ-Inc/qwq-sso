@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.27**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.28**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -427,6 +427,31 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.28 应用图片图标 + 我的应用文件夹 + iOS 应用中心桌面式（用户反馈）
+
+三级版本。用户：允许应用上传图片作为图标；手机端不显示应用图标（连 emoji 都没有）；应用要有分组/文件夹，手机端一定要有。
+
+### 图片图标
+- ⚠️ **图片放独立表 `app_icons(app_id PK, mime, data BLOB, updated_at)`，不进 `apps`**——到处都 `SELECT * FROM apps` 直接下发，BLOB 进 apps 会被序列化进每个 JSON。`apps.icon_url` 只存公开地址 `/api/public/app-icon/<id>?v=<时间戳36进制>`（换图即换 v，可长缓存）；为空则回退 emoji `icon`。
+- `POST /admin/apps/:id/icon`（Lv.2，`express.raw` 原始字节 + `?filename=`，复用 `memo-util.validateAttachment` 扩展名白名单 + magic bytes，只收 image 类，≤512KB，SVG 不在白名单=防 XSS）/ `DELETE` 同路径；公开 `GET /api/public/app-icon/:id`（nosniff + 1 天缓存）。删应用连带清图标和文件夹条目。
+- `provider.js` 的 `/oauth/app-info`、`/oauth/consent-info` 回带 `icon_url`；`authorize.html` / `login.html` 的 `isImg` 放行站内相对路径（`/` 开头非 `//`）。
+- `dashboard.html`：`appIconInner(a)` 统一渲染（img 或 emoji），市场卡片 / 管理端表格 / 编辑弹窗头 / 已授权应用 / 应用详情都改用它；编辑弹窗「图片图标」行（`uploadAppIcon`/`clearAppIcon`，裸 fetch + Bearer）。
+
+### 我的应用文件夹（个人，非管理员分组）
+- 表 `app_folders(id,user_id,name,sort_weight)` + `app_folder_items(user_id,app_id,folder_id, PK(user_id,app_id))`——**一个应用对一个人只在一个文件夹**（assign 用 upsert）。`appFolders` 语句集。
+- `GET/POST /user/app-folders`、`PATCH/DELETE /user/app-folders/:id`（删夹=里面应用回未归类）、`PUT /user/app-folders/assign {app_id, folder_id|null}`。全部按 `req.user.uid` 隔离（别人的文件夹 404）。
+- 与 v3.4.44 管理员「分类」并存：分类=全局归类（管理员定），文件夹=个人整理。
+- 网页市场：文件夹 chip 行（全部 / 各文件夹·数量 / 新建 / 选中时重命名·删除）+ 卡片 📁 按钮弹「移到文件夹」浮层。dev mock 齐。
+
+### iOS（应用中心）
+- 新 `AppIconView.swift`（`AsyncImage` 拼 `baseURL + icon_url`，失败/无图回退 emoji + `icon_bg`；`Color(hexString:)` 扩展）。
+- `AppsTabView` 重写为桌面式 `LazyVGrid`：文件夹磁贴（2×2 迷你图标）+ 未归类应用；搜索/分类时平铺匹配结果。点应用 `confirmationDialog`、长按 `contextMenu`：打开 / 授权 / 移到文件夹… / 取消授权；「移到文件夹」对话框可新建并放入、移出。文件夹 sheet（`FolderSheet`）可重命名/删除。右上角新建文件夹。`APIClient` 加 `appFolders/appFolderCreate/appFolderRename/appFolderDelete/appFolderAssign`。
+- ⚠️ 本机无 Swift 工具链，靠 push 后 GitHub Actions（macos-15）编译验证。
+
+### 测试
+- 真实服务端 e2e 新增 16 项全过（非管理员 403、拒 SVG、拒伪造扩展名、超 512KB 413、上传返回 icon_url、公开读取字节一致、市场带 icon_url 且无 BLOB、app-info 带 icon_url、移除后 404、文件夹建/放/一应用一夹/按人隔离/不能动别人的/重命名·移出·删除），原 35 项回归全过。
+- playwright 打真服务：管理员编辑弹窗上传图片→预览与表格出现 img；用户市场卡片显示图片图标、📁→新建文件夹并放入→文件夹 chip 出现并可筛选，零 JS 报错。
 
 ## v3.5.27 独立安全≠只许密码：改为可叠加的组织附加管控（用户反馈）
 
