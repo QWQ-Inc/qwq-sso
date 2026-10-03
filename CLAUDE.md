@@ -6,20 +6,20 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.33**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.34**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.21，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.34，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员、外部通讯录导入、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
-- **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）。
-- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印、登录协议富文本、动态页脚、系统版本更新。
-- **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
-- **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码、商城、备忘录、应用市场、账号设定等；GitHub Actions 云编译）。
+- **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
+- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新。
+- **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
+- **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码（含主屏幕快捷操作）、商城、备忘录、应用中心（图标/文件夹/组织切换/管理工具磁贴：门禁·设备·用户·身份核验）、账号设定等；GitHub Actions 云编译）。
 
 ---
 
@@ -54,6 +54,7 @@ server/
 ├── passkey.js    # Passkey(WebAuthn/FIDO2)，用 @simplewebauthn/server（v3.3.8）
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
+├── org-policy.js # 组织登录策略判定（IP 白名单/登录时段，v3.5.24）：三方登录与「登录到组织」两条通道共用
 ├── updater.js    # 系统版本更新（v3.5.6）：checkUpdate 查 GitHub tag + applyUpdate 自托管一键拉取（默认关）
 ├── pkpass.js     # Apple Wallet 访客码 .pkpass 生成+签名（v3.5.10，passkit-generator 懒加载，需 Apple 证书）
 ├── watermark-burn.js # 导出文件加水印（v3.5.33）：sharp 渲染瓦片 → 图片平铺 / PDF 每页铺图 + 追踪码；字体解析链
@@ -197,21 +198,22 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.21）
+## 数据库表清单（截至 v3.5.34）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
-- `apps` 关键增补列：`client_id`/`client_secret`/`callback_url`、`launch_url`、`required_scopes`、`category`、`deprovision_url`、`backchannel_logout_uri`
+- `apps` 关键增补列：`client_id`/`client_secret`/`callback_url`、`launch_url`、`required_scopes`、`category`、`deprovision_url`、`backchannel_logout_uri`、`icon_url`
+- 应用图片 / 文件夹（v3.5.28）：`app_icons`（图片 BLOB 独立存，**不进 apps**）、`app_folders`/`app_folder_items`（个人文件夹，一应用一夹）
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
-门禁 / 设备（v3.5.0+）：`access_doors`、`access_rules`（deny 优先 + valid_from/to/weekdays/time）、`access_logs`、`access_qr_used`、`access_cards`（v3.5.2）、`access_faces`（v3.5.3）、`visitor_passes`（v3.5.4）、`federation_peers`（v3.5.5）、`fed_oidc_codes`/`fed_oidc_tokens`、`fed_apps`（v3.5.7）、`devices`（设备管理，v3.5.21）
+门禁 / 设备（v3.5.0+）：`access_doors`（+code_mode/sub_ttl/escort_required/blackout，v3.5.29）、`access_rules`（deny 优先 + valid_from/to/weekdays/time）、`access_logs`、`access_qr_used`、`access_cards`（v3.5.2）、`access_faces`（v3.5.3）、`visitor_passes`（v3.5.4，+escort_user_id/blackout）、`access_escort_pending`（陪同待带入，v3.5.29）、`federation_peers`（v3.5.5）、`fed_oidc_codes`/`fed_oidc_tokens`、`fed_apps`（v3.5.7）、`devices`（设备管理，v3.5.21）
 
-内容 / 其他：`memos`/`memo_attachments`（备忘录）、`announcements`/`announcement_reads`（公告）、`site_documents`（登录协议）、`webauthn_credentials`（Passkey）、`provider_stats`（服务商调用统计）、`api_call_logs`（入站/出站调用日志）
+内容 / 其他：`memos`/`memo_attachments`（备忘录）、`twofa_recovery_codes`（2FA 恢复码）、`announcements`/`announcement_reads`（公告）、`site_documents`（登录协议）、`webauthn_credentials`（Passkey）、`provider_stats`（服务商调用统计）、`api_call_logs`（入站/出站调用日志）
 
 OIDC 相关（v3.3.0 新增）：`oauth_auth_codes`（授权码，10 分钟单次使用）、`oauth_access_tokens`（访问令牌，只存 sha256）、`user_app_auth.scope`（用户对该应用实际授权了哪些 scope）
 
@@ -428,6 +430,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.34 iOS 主屏幕快捷操作「出示开门码」+ 交接文档总览追平（承接 v3.5.13/v3.5.14 遗留）
+
+三级版本。v3.5.13 用户要「访客码/门禁码放进 App 快捷方式」，v3.5.14 以「要动 scene 生命周期、无法真机验」暂缓，本版做掉。
+- `Info.plist` 加静态 `UIApplicationShortcutItems`（type `cn.xubainet.qwqsso.accessqr`，标题「出示开门码」，SF Symbol `qrcode`）+ 显式 `UIApplicationSceneManifest`（单场景）。
+- 新 `ios/QWQSSO/QuickActions.swift`：`ShortcutRouter`（单例 ObservableObject，`pending`）+ `AppDelegate`（`@UIApplicationDelegateAdaptor`；冷启动从 `configurationForConnecting` 的 `options.shortcutItem` 取，并把场景 `delegateClass` 设为 `SceneDelegate`；另保留非场景兜底 `performActionFor`）+ `SceneDelegate`（热启动 `windowScene(_:performActionFor:)`）+ `QuickAccessSheet`（`NavigationStack { AccessView() }` + 完成按钮）。
+- `RootView`：`fullScreenCover` 绑定「已登录 && pending == accessQR」，关闭即清 pending；**未登录时挂着，登录完成后自动弹出**。
+- CLAUDE.md 总览追平：功能范围、目录结构（补 `org-policy.js`）、数据库表清单（补 `app_icons`/`app_folders`/`app_folder_items`/`access_escort_pending`/`twofa_recovery_codes` 及门/访客码/组织新增列）改为「截至 v3.5.34」。
+- ⚠️ 只能靠 GitHub Actions 编译验证；快捷操作的真机行为（长按图标出现菜单 → 冷/热启动都弹门禁码）需装到 iPhone 上确认。
 
 ## v3.5.33 把水印烧进导出的图片 / PDF（服务端烧录 + 追踪码）（承接 v3.4.23 遗留）
 

@@ -48,6 +48,26 @@
       </array>
     </dict>
   </array>
+  <!-- 场景生命周期（SwiftUI 默认就是；显式写上，确保快捷操作走 SceneDelegate） -->
+  <key>UIApplicationSceneManifest</key>
+  <dict>
+    <key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+  </dict>
+  <!-- 主屏幕快捷操作（长按图标）：一步出示门禁码（v3.5.34，由 QuickActions.swift 处理） -->
+  <key>UIApplicationShortcutItems</key>
+  <array>
+    <dict>
+      <key>UIApplicationShortcutItemType</key>
+      <string>cn.xubainet.qwqsso.accessqr</string>
+      <key>UIApplicationShortcutItemTitle</key>
+      <string>出示开门码</string>
+      <key>UIApplicationShortcutItemSubtitle</key>
+      <string>门禁动态码</string>
+      <key>UIApplicationShortcutItemIconSymbolName</key>
+      <string>qrcode</string>
+    </dict>
+  </array>
   <!-- 允许 https（默认）；如需连自建 http 内网域，管理员自行放宽 ATS -->
   <key>NSAppTransportSecurity</key>
   <dict>
