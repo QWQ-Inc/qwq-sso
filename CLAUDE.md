@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.26**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.27**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -428,6 +428,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 
 ---
 
+## v3.5.27 独立安全≠只许密码：改为可叠加的组织附加管控（用户反馈）
+
+三级版本。用户纠正：「独立安全并不代表只允许密码不验证码。意思是组织可以独立管理其下级，在现有的主要安全策略中，再加上其他的管控策略，而不是一棍打死。」
+- **语义**：`independent_security` = 组织独立管理下级 + org-scoped 锁定会话（v3.5.26 的后端收口照旧）。**不再**隐含任何登录方式限制。
+- **附加管控**（`oauth_subjects` 新列，默认 0，任何组织都可开，不限独立）：`require_org_password`（成员没设组织密码时不回退平台密码）、`deny_code_login`（禁止 `/account/org-login-code`）。`oauthSubjects.setOrgControls`；GET/PATCH oauth-subjects 收发；主体弹窗在「独立安全」下方加两个勾选。
+- 密码通道：成员有组织密码 → 只认组织密码；没有 → `require_org_password` 拒绝，否则回退平台密码。验证码通道：去掉「独立组织拒绝」，改看 `deny_code_login`；`org_scoped = !!independent_security`（两通道一致）。
+- ⚠️ **一次性迁移**（带版本保护的写法，见交接核查第 4 条教训）：`ALTER ADD require_org_password` 成功（=首次）才紧跟 `UPDATE ... SET require_org_password=1 WHERE independent_security=1`，保住 v3.5.20~26 独立组织「必须组织密码」的原行为；列已存在时 ALTER 抛错、UPDATE 不再执行，管理员改动不会被覆盖（内存库模拟两次启动验证）。
+- ⚠️ 测试：真实服务端 e2e 35 项全过（新增：独立组织验证码登录得 org_scoped、deny_code_login 拒绝、无组织密码回退平台密码、require_org_password 拒绝回退、设了组织密码平台密码不认）。
+- ⚠️ 本地起测试服务后别用 `pkill -f "node server/index.js"`——会连带杀掉发命令的 shell 自己（命令行里含同样字符串），用 `pkill -f "^node server/index.js"`。
+
 ## v3.5.26 组织登录收尾：验证码通道 + org-scoped 会话后端收口（承接 v3.5.20 遗留，至此组织登录遗留项清零）
 
 三级版本。
@@ -442,7 +452,7 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - `api.js`：`isSysAdmin` 对 org_scoped 恒 false；新增 `scopedOrgOf(req)` / `myManagedOrgs(req)`（scoped 时只剩当前组织）。`canManageOrg`/`canManageDevice` 限当前组织；`canManageGroup` 对 scoped 恒 false（分组是平台维度）；`canIssuePass` scoped 时仅当前组织的组织管理员；设备列表/managed-orgs 走 `myManagedOrgs`；`/account/public/switch` scoped 403；`/apps/market` scoped 强制 `org=token.org`（忽略 query）。
 - `db.js` 新增 `appVisibleInSession(appId, userId, scopedOrg)`：scoped = 全局应用 + 该组织开放应用（且仍为成员）；否则同 `appVisibleToUser`。`/apps/:id/auth` + `provider.js` 的 consent-info / consent / launch 三处改用它。
 - `dashboard.html`：`_isOrgScoped()` 以 **token 的 org_scoped** 为准（localStorage 兜底）；scoped 时隐藏 mode-admin / 公共账号入口，不加载公共账号切换器，按非管理员走（bootToLastPage 丢弃 adm-* 页），组织管理员菜单照常点亮。
-- ⚠️ org_scoped 的语义仍是「独立安全组织」才锁定；非独立组织登录（含验证码通道）带 org 但不锁定。
+- ⚠️ org_scoped 的语义仍是「独立安全组织」才锁定；非独立组织登录（含验证码通道）带 org 但不锁定。（v3.5.27：独立组织不再拒绝验证码，改由附加管控 deny_code_login 决定）
 
 ### 测试
 - **首次在本仓库跑真实服务端端到端**：`npm install --omit=dev --no-save` 装真依赖（better-sqlite3 等），临时库 seed 后起 `server/index.js`，HTTP 跑 31 项全过：验证码登录（邮箱/手机/错码/一次性/非成员/不建号/独立组织拒绝/用户名拒绝）、IP 白名单对两条通道生效（顺带实测 v3.5.24）、scoped 下管理端 403 / 市场锁 OB / 授权与 OIDC launch 拦 OA 应用 / managed-orgs 与设备只剩 OB / 不能管 OC / 不能切公共账号、普通会话不受影响、移出组织与停用组织后令牌 401。

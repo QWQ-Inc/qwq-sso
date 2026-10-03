@@ -503,14 +503,17 @@ async function handleOrgLogin(req, res) {
   if (!user || !member) { logLogin({ method: '组织登录', ip: req.ip, ua, status: 'failed', failReason: '非该组织成员' }); return res.status(401).json({ error: badMsg }); }
   if (user.status === 'disabled') { logLogin({ userId: user.id, method: '组织登录', ip: req.ip, ua, status: 'disabled' }); return res.status(403).json({ error: '账号已停用，请联系管理员' }); }
 
-  // 优先组织自有密码；无组织密码时：独立安全组织拒绝回退，非独立组织回退平台密码
+  // 成员设了组织密码 → 只认组织密码（优先独立功能）；没设 → 回退平台密码，
+  // 除非组织额外开了「必须组织密码」管控（v3.5.27：独立安全不再隐含此项，改为组织可选的附加管控）
   let ok = false;
   if (member.password_hash) {
     ok = await bcrypt.compare(password, member.password_hash);
-  } else if (!s.independent_security && user.password_hash) {
+  } else if (!s.require_org_password && user.password_hash) {
     ok = await bcrypt.compare(password, user.password_hash);
-  } else {
+  } else if (s.require_org_password) {
     return res.status(401).json({ error: '该组织要求使用组织密码登录，请联系组织管理员设置组织密码' });
+  } else {
+    return res.status(401).json({ error: '该账号未设置密码，请改用验证码登录' });
   }
   if (!ok) { logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: '组织登录·' + s.name, ip: req.ip, ua, status: 'failed', failReason: badMsg }); return res.status(401).json({ error: badMsg }); }
 
@@ -526,7 +529,7 @@ router.post('/account/org-login', handleOrgLogin);
 // ── 登录到组织：验证码通道（v3.5.26）──
 // 账号=邮箱/手机号；验证码由 /sms/send、/email/send-code（带 org）下发，走该组织专属消息凭证。
 // 规则与密码通道一致：组织 IP/时段门先行；只认已存在且为本组织成员的账号（绝不自动建号）；
-// 独立安全组织要求组织密码，不接受验证码；强制 2FA 照常；org_scoped 同密码通道。
+// 组织可用附加管控 deny_code_login 关掉本通道；强制 2FA 照常；org_scoped 同密码通道（独立安全=锁定）。
 async function handleOrgCodeLogin(req, res) {
   const { account, code, org } = req.body || {};
   const ua = req.headers['user-agent'];
@@ -542,7 +545,7 @@ async function handleOrgCodeLogin(req, res) {
       ? '当前网络不在该组织允许的登录 IP 范围内'
       : `当前不在该组织允许的登录时段内（${s.login_start}~${s.login_end}）`, code: gate });
   }
-  if (s.independent_security) return res.status(400).json({ error: '该组织启用了独立安全策略，请使用组织密码登录' });
+  if (s.deny_code_login) return res.status(400).json({ error: '该组织不允许验证码登录，请使用密码登录' });
   const byEmail = isEmail(ident), byPhone = !byEmail && isPhone(ident);
   if (!byEmail && !byPhone) return res.status(400).json({ error: '验证码登录请填写邮箱或手机号' });
   const key = (byEmail ? 'email:' : 'sms:') + ident;
@@ -559,7 +562,7 @@ async function handleOrgCodeLogin(req, res) {
   if (s.require_2fa && !user.twofa_enabled) {
     return res.status(403).json({ error: '该组织要求两步验证，请先在账号设定里开启两步验证后再登录' });
   }
-  return finishLogin(res, user, req, method, { org: s.id, org_scoped: false });
+  return finishLogin(res, user, req, method, { org: s.id, org_scoped: !!s.independent_security });
 }
 router.post('/account/org-login-code', handleOrgCodeLogin);
 
@@ -1186,6 +1189,8 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     allow_direct_login: !!s.allow_direct_login,
     members_open: !!s.members_open,
     independent_security: !!s.independent_security,
+    require_org_password: !!s.require_org_password,
+    deny_code_login: !!s.deny_code_login,
     direct_listed: s.direct_listed == null ? true : !!s.direct_listed,
     org_code: s.allow_direct_login ? ensureOrgCode(s) : (s.org_code || ''),
     // 成员数 / 开放应用数（卡片上直接显示，更直观）
@@ -1237,6 +1242,11 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   if (req.body.allow_direct_login !== undefined) oauthSubjects.setDirectLogin.run(req.body.allow_direct_login ? 1 : 0, row.id);
   if (req.body.members_open !== undefined) oauthSubjects.setMembersOpen.run(req.body.members_open ? 1 : 0, row.id);   // v3.5.18 成员开放
   if (req.body.independent_security !== undefined) oauthSubjects.setIndependentSecurity.run(req.body.independent_security ? 1 : 0, row.id); // v3.5.20 独立安全
+  if (req.body.require_org_password !== undefined || req.body.deny_code_login !== undefined) {   // v3.5.27 组织附加管控
+    oauthSubjects.setOrgControls.run(
+      req.body.require_org_password !== undefined ? (req.body.require_org_password ? 1 : 0) : (row.require_org_password || 0),
+      req.body.deny_code_login !== undefined ? (req.body.deny_code_login ? 1 : 0) : (row.deny_code_login || 0), row.id);
+  }
   if (req.body.direct_listed !== undefined) oauthSubjects.setDirectListed.run(req.body.direct_listed ? 1 : 0, row.id); // v3.5.18 登录页是否显性列出
   // 开了直登就确保有组织码（不显性组织靠它被搜索到）
   if (req.body.allow_direct_login) ensureOrgCode(oauthSubjects.get.get(row.id));

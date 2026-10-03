@@ -1575,7 +1575,7 @@
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
     ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.25);">
       <div style="font-size:16px;font-weight:700;color:#1D1D1F;margin-bottom:6px;">登录到组织（IAM 用户）</div>
-      <div style="font-size:12.5px;color:#86868B;line-height:1.6;margin-bottom:14px;">仅登录到所选组织；若该组织启用独立安全策略，登录后不可切换到其他组织或个人账号，需重新登录。</div>
+      <div style="font-size:12.5px;color:#86868B;line-height:1.6;margin-bottom:14px;">仅登录到所选组织；若该组织启用独立安全，登录后不可切换到其他组织或个人账号，需重新登录。</div>
       <select id="ol-org" style="width:100%;height:40px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;background:#fff;"><option value="">选择组织…</option></select>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
         <input id="ol-code" placeholder="或输入组织码搜索不公开的组织" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:12.5px;text-transform:uppercase;"/>
@@ -1619,7 +1619,7 @@
       olTip('ok', '✓ 已选择「' + d.org.name + '」');
     } catch (e) { olTip('error', e.message || '组织码无效'); }
   }
-  // 组织登录方式：pw = 组织密码 / code = 邮箱·手机验证码（v3.5.26；独立安全组织后端会拒绝验证码）
+  // 组织登录方式：pw = 组织密码 / code = 邮箱·手机验证码（v3.5.26；组织开了「禁止验证码登录」时后端拒绝）
   let _olMode = 'pw';
   function olSetMode(m) {
     _olMode = m;

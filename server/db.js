@@ -353,6 +353,13 @@ try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN allow_direct_login INTEGER 
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN members_open INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // 独立安全（v3.5.20）：开启后本组织运行自己的安全策略（组织自有密码 + 独立 2FA/IP/时段），org-scoped 登录不可切换到平台或其他组织
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN independent_security INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+// 组织附加管控（v3.5.27）：独立安全≠只许密码。组织在平台主策略之上可再叠加的登录管控，默认都不开：
+//   require_org_password：成员必须用组织密码（不回退平台密码）；deny_code_login：禁止「登录到组织」走验证码。
+// ⚠️ 一次性迁移：v3.5.20~26 的独立安全组织原本隐含「必须组织密码」，新列首次建出时为它们置 1 保持原行为
+//   （UPDATE 跟在 ALTER 后面——列已存在时 ALTER 抛错，UPDATE 不会重复执行）。
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN require_org_password INTEGER NOT NULL DEFAULT 0');
+      db.exec('UPDATE oauth_subjects SET require_org_password=1 WHERE independent_security=1'); } catch(_) {}
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN deny_code_login INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // 组织登录可见性（v3.5.18）：org_code=组织码（不显性组织靠它在登录页搜索）；direct_listed=是否在登录页下拉列出（显性）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN org_code TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN direct_listed INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
@@ -869,6 +876,7 @@ const oauthSubjectStmts = {
   setDirectLogin: db.prepare('UPDATE oauth_subjects SET allow_direct_login=? WHERE id=?'),
   setMembersOpen: db.prepare('UPDATE oauth_subjects SET members_open=? WHERE id=?'),
   setIndependentSecurity: db.prepare('UPDATE oauth_subjects SET independent_security=? WHERE id=?'),
+  setOrgControls: db.prepare('UPDATE oauth_subjects SET require_org_password=?, deny_code_login=? WHERE id=?'),
   setDirectListed: db.prepare('UPDATE oauth_subjects SET direct_listed=? WHERE id=?'),
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),

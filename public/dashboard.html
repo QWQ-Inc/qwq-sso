@@ -2800,8 +2800,13 @@ async function loadMe() {
       <input type="checkbox" id="sm-members-open"> 成员开放：允许其他组织的管理员查看并复用本组织成员（v3.5.18）
     </label>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:10px;">
-      <input type="checkbox" id="sm-indsec"> 独立安全：本组织用自有密码 + 独立策略（强制 2FA 等），「登录到组织」后锁定为仅组织会话、不可切换（v3.5.20）
+      <input type="checkbox" id="sm-indsec"> 独立安全：组织独立管理下级成员，「登录到组织」后锁定为仅组织会话、不可切换（登录方式仍沿用平台主策略，可再叠加下列管控）
     </label>
+    <div style="margin:6px 0 0 24px;padding:8px 10px;border-left:2px solid var(--bd);display:flex;flex-direction:column;gap:6px;">
+      <div style="font-size:11px;color:var(--txd);">组织附加管控（可选，叠加在平台主策略之上）</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt);"><input type="checkbox" id="sm-req-orgpw"> 必须使用组织密码（成员未设组织密码时不回退平台密码）</label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt);"><input type="checkbox" id="sm-deny-code"> 禁止验证码登录到本组织</label>
+    </div>
 
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
       <button class="btn" onclick="closeSubjectModal()">取消</button>
@@ -6349,6 +6354,8 @@ function openSubjectModal(subj) {
   document.getElementById('sm-direct').checked   = editing ? !!subj.allow_direct_login : false;
   document.getElementById('sm-members-open').checked = editing ? !!subj.members_open : false;
   document.getElementById('sm-indsec').checked = editing ? !!subj.independent_security : false;
+  document.getElementById('sm-req-orgpw').checked = editing ? !!subj.require_org_password : false;
+  document.getElementById('sm-deny-code').checked = editing ? !!subj.deny_code_login : false;
   document.getElementById('sm-listed').checked = editing ? (subj.direct_listed !== false) : true;
   const ocRow = document.getElementById('sm-orgcode-row');
   if (editing && subj.allow_direct_login && subj.org_code) { document.getElementById('sm-orgcode').textContent = subj.org_code; ocRow.style.display = ''; }
@@ -6378,7 +6385,9 @@ async function saveSubject() {
   const members_open = document.getElementById('sm-members-open').checked;
   const independent_security = document.getElementById('sm-indsec').checked;
   const direct_listed = document.getElementById('sm-listed').checked;
-  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed };
+  const require_org_password = document.getElementById('sm-req-orgpw').checked;
+  const deny_code_login = document.getElementById('sm-deny-code').checked;
+  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login };
   let res;
   if (id) {
     res = await api('PATCH', '/admin/oauth-subjects/' + id, { name, enabled, ...policy, ...extra });

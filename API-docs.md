@@ -389,7 +389,7 @@ POST /api/public/forgot-password/reset      # 用验证码重置密码
 { "account": "邮箱/手机/UID/用户名", "password": "组织密码", "org": "组织 id" }
 ```
 
-优先校验组织自有密码；成员没有组织密码时，非独立安全组织回退平台密码，独立安全组织直接拒绝。
+成员设了组织密码则只认组织密码；没设则回退平台密码——除非组织开了附加管控「必须组织密码」。
 
 **验证码通道** `POST /api/account/org-login-code`（v3.5.26）
 
@@ -397,9 +397,9 @@ POST /api/public/forgot-password/reset      # 用验证码重置密码
 { "account": "邮箱或手机号", "code": "123456", "org": "组织 id" }
 ```
 
-验证码先用 `POST /api/email/send-code {email, org}` 或 `POST /api/sms/send {phone, org}` 获取（会走该组织的专属消息凭证）。只接受**已存在且是该组织成员**的账号，绝不自动建号；**独立安全组织不接受验证码**（返回 `400`，须用组织密码）。
+验证码先用 `POST /api/email/send-code {email, org}` 或 `POST /api/sms/send {phone, org}` 获取（会走该组织的专属消息凭证）。只接受**已存在且是该组织成员**的账号，绝不自动建号；组织开了附加管控「禁止验证码登录」时返回 `400`。
 
-**成功响应**：`{ success, token, user, org, org_scoped }`。`org_scoped=true`（独立安全组织）的会话：
+**成功响应**：`{ success, token, user, org, org_scoped }`。独立安全组织（两个通道都一样）返回 `org_scoped=true`，该会话：
 - 不能使用管理端接口（`403`），不能切换公共账号；
 - 组织管理员权限只限当前组织；应用市场 / 授权 / OIDC 发起只认「全局应用 + 该组织开放的应用」；
 - 组织被停用或关闭直登、或本人被移出该组织后，令牌立即失效（`401`）。
