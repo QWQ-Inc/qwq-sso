@@ -2383,6 +2383,11 @@ async function loadMe() {
           </div>
           <div class="card-body">
             <div id="audit-integrity" style="margin:6px 0 12px;font-size:13px;">校验中…</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+              <input id="audit-trace" placeholder="水印追踪码，如 T1A2B3C4D" style="flex:1;min-width:180px;max-width:280px;padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-family:monospace;font-size:12px;background:var(--sf);color:var(--tx);" onkeydown="if(event.key==='Enter')lookupTrace()">
+              <button class="btn" style="font-size:11px;" onclick="lookupTrace()">反查追踪码</button>
+              <span id="audit-trace-result" style="font-size:12px;color:var(--txd);"></span>
+            </div>
             <div id="audit-list" style="font-size:12px;color:var(--txd);">加载中…</div>
           </div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
@@ -2728,6 +2733,7 @@ async function loadMe() {
         <span id="memo-att-hint" style="color:var(--txd);"></span>
       </div>
       <div id="memo-att-list" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      <div id="memo-burn-hint" style="display:none;font-size:11px;color:var(--txd);margin-top:6px;">🔏 查看 / 下载的图片和 PDF 会带上你的身份水印与追踪码。</div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap;">
       <div style="display:flex;gap:6px;align-items:center;">
@@ -4977,9 +4983,22 @@ const AUDIT_EVENT_LABEL = {
   'access.face_enrolled':'录入人脸', 'access.face_deleted':'删除人脸',
   'access.pass_issued':'签发访客码', 'access.pass_revoked':'撤销访客码',
   'access.fed_issued':'签发跨域码', 'fed.app_login':'跨域应用登录', 'fed.pair_received':'接收联邦配对',
-  'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验',
+  'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验', 'file.watermarked':'导出文件加水印',
   'org.member_password_set':'设置组织密码', 'org.member_password_cleared':'清除组织密码',
 };
+// 水印追踪码反查（v3.5.33）：外泄的图片/PDF 上「T+8 位」→ 谁、何时、导出了哪个附件
+async function lookupTrace() {
+  const code = document.getElementById('audit-trace').value.trim();
+  const out = document.getElementById('audit-trace-result');
+  if (!code) { out.textContent = ''; return; }
+  if (_IS_DEV) { out.innerHTML = '演示：<b>许睿 #00001</b> 于 2026-10-03 12:05 导出「合同.pdf」'; return; }
+  const { ok, data } = await api('GET', '/admin/audit/trace/' + encodeURIComponent(code));
+  if (!ok) { out.innerHTML = '<span style="color:var(--err);">' + esc(data.error || '查询失败') + '</span>'; return; }
+  if (!data.found) { out.innerHTML = '<span style="color:var(--err);">未找到该追踪码</span>'; return; }
+  const r = data.data[0];
+  const who = r.user ? `${esc(r.user.name || '')} ${esc(r.user.uid)}${r.user.email ? '（' + esc(r.user.email) + '）' : ''}` : esc(r.actor || '未知');
+  out.innerHTML = `<b style="color:var(--tx);">${who}</b> 于 ${esc(String(r.at || '').replace('T', ' ').slice(0, 19))} 导出「${esc(r.file || '附件')}」`;
+}
 async function loadAuditChain() {
   const box = document.getElementById('audit-list');
   const ib = document.getElementById('audit-integrity');
@@ -6373,6 +6392,7 @@ async function openMemo(id, asAdmin) {
     document.getElementById('memo-att-hint').textContent = '（先保存后可加附件）';
   }
   document.getElementById('memo-transfer').value = '';
+  const bh = document.getElementById('memo-burn-hint'); if (bh) bh.style.display = (_WM && _WM.burn) ? '' : 'none';
   document.getElementById('memo-modal').classList.add('show');
 }
 function closeMemo() { document.getElementById('memo-modal').classList.remove('show'); }
@@ -6435,7 +6455,7 @@ function renderMemoAtts(id, atts) {
   }).join('');
   if (!_IS_DEV) box.querySelectorAll('img[data-att]').forEach(im => {
     const [mid, aid] = im.dataset.att.split('/');
-    fetch('/api/memos/' + mid + '/attachments/' + aid, { headers: { Authorization: 'Bearer ' + getToken() } })
+    fetch('/api/memos/' + mid + '/attachments/' + aid + '?thumb=1', { headers: { Authorization: 'Bearer ' + getToken() } })
       .then(r => r.ok ? r.blob() : null).then(b => { if (b) im.src = URL.createObjectURL(b); }).catch(() => {});
   });
 }
@@ -6464,7 +6484,7 @@ async function delMemoAtt(id, aid) {
 async function memoDownload(id, aid, filename) {
   if (_IS_DEV) { showToast('演示模式无附件内容'); return; }
   const r = await fetch('/api/memos/' + id + '/attachments/' + aid, { headers: { Authorization: 'Bearer ' + getToken() } });
-  if (!r.ok) { showToast('下载失败'); return; }
+  if (!r.ok) { let e = ''; try { e = (await r.json()).error || ''; } catch (_) {} showToast(e || '下载失败'); return; }
   const u = URL.createObjectURL(await r.blob());
   const a = document.createElement('a'); a.href = u; a.download = filename || 'file'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(u), 10000);
@@ -6473,7 +6493,7 @@ async function memoDownload(id, aid, filename) {
 async function memoViewAtt(id, aid, mime, filename) {
   if (_IS_DEV) { showToast('演示模式无附件内容'); return; }
   const r = await fetch('/api/memos/' + id + '/attachments/' + aid, { headers: { Authorization: 'Bearer ' + getToken() } });
-  if (!r.ok) { showToast('打开失败'); return; }
+  if (!r.ok) { let e = ''; try { e = (await r.json()).error || ''; } catch (_) {} showToast(e || '打开失败'); return; }
   const u = URL.createObjectURL(await r.blob());
   if (mime === 'application/pdf') {
     window.open(u, '_blank');
@@ -8026,6 +8046,10 @@ const ENV_GROUPS = [
       { key: 'WATERMARK_SIZE', label: '字号(px)', desc: '8~48，默认 14', required: false, secret: false, placeholder: '14', value: '' },
       { key: 'WATERMARK_GAP', label: '平铺间距(px)', desc: '60~600，默认 180（越小越密）', required: false, secret: false, placeholder: '180', value: '' },
       { key: 'WATERMARK_COLOR', label: '颜色', desc: '#RGB~#RRGGBBAA，默认 #000000', required: false, secret: false, placeholder: '#000000', value: '' },
+      { key: 'WATERMARK_BURN', label: '导出文件加水印', desc: '填 on：备忘录附件里的图片 / PDF 在查看、下载时由服务器把「查看人 + 时间 + 追踪码」烧进文件本身（与上面的页面水印开关独立）。用上面的透明度/角度/字号/间距/颜色。docx 等其它类型无法烧录，照常下发', required: false, secret: false, placeholder: 'off', value: '' },
+      { key: 'WATERMARK_BURN_TEXT', label: '导出水印文本', desc: '留空则用「水印文本模板」。末尾会自动追加追踪码 T+8 位，外泄后可在「审计存证」页反查是谁、何时导出', required: false, secret: false, placeholder: '{name} {uid} {email} {datetime}', value: '' },
+      { key: 'WATERMARK_FONT_URL', label: '中文字体下载地址', desc: '服务器没装中文字体时，首次使用自动下载一次并缓存到数据目录。留空=默认钉死版本的 Noto Sans SC（约 8MB，带哈希校验）；填 off 不下载（此时水印只保留 UID/邮箱/时间/追踪码，去掉中文）', required: false, secret: false, placeholder: '', value: '' },
+      { key: 'WATERMARK_FONT_PATH', label: '本机字体文件路径', desc: '自托管可直接指定服务器上的 TTF/OTF/TTC 文件，优先于下载；填 - 表示不用中文字体', required: false, secret: false, placeholder: '/usr/share/fonts/…/xxx.ttc', value: '' },
     ]
   },
   {

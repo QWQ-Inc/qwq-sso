@@ -1488,7 +1488,7 @@ GET /api/v1/watermark     scope: config:read
 PUT /api/v1/watermark     scope: config:write
 ```
 
-**读取** — `GET /v1/watermark` → `{ success, watermark: { enabled, scope:[...], text, opacity, angle, size, gap, color } }`
+**读取** — `GET /v1/watermark` → `{ success, watermark: { enabled, scope:[...], text, opacity, angle, size, gap, color, burn } }`
 
 **修改** — `PUT /v1/watermark`（只接受以下键，传了才改，即时生效）
 
@@ -1499,12 +1499,19 @@ PUT /api/v1/watermark     scope: config:write
 | `text` | string | 文本模板，支持 `{name}` `{uid}` `{email}` `{date}` `{time}` `{datetime}` |
 | `opacity` / `angle` / `size` / `gap` | number | 透明度 / 角度 / 字号 / 间距（后端有范围夹紧） |
 | `color` | string | `#RRGGBB` |
+| `burn` | bool/string | **导出文件加水印**开关（v3.5.33，与 `enabled` 独立）：备忘录附件里的图片 / PDF 下发时由服务器烧录水印 |
+| `burn_text` | string | 导出水印文本模板（留空则用 `text`）；末尾自动追加追踪码 `T` + 8 位 |
 
 ```json
 { "success": true, "watermark": { "enabled": true, "scope": ["all"], "text": "{name} {uid} {datetime}", "opacity": 0.12, "angle": -22, "size": 16, "gap": 160, "color": "#888888" } }
 ```
 
-> ⚠️ 本版水印是**页面 DOM 层**水印（防截图/录屏外泄场景）；把水印烧进导出的图片/PDF 不在此接口范围。
+> **两层水印**：`enabled` 控制页面 DOM 层水印（防截图/录屏）；`burn` 控制**烧进文件本身**的水印（v3.5.33）——
+> 备忘录附件中的 PNG/JPEG/WebP/GIF 与 PDF 在查看/下载时由服务器把「查看人 + 时间 + 追踪码」合成进像素 / 每一页，
+> 绕过前端直接调接口拿到的也是带水印的文件；烧录失败时**拒绝下发**（不会退回原文件）。docx 等其它类型无法烧录，照常下发。
+> 每次下发写一条审计存证 `file.watermarked`；管理端可用 `GET /api/admin/audit/trace/:code`（Lv.3，`code` 如 `T1A2B3C4D`）
+> 按追踪码反查是谁、何时导出了哪个文件。中文字体：服务器无 CJK 字体时首次使用自动下载（`WATERMARK_FONT_URL`，默认钉死版本的 Noto Sans SC），
+> 下载不了则只保留 UID / 邮箱 / 时间 / 追踪码。
 
 ---
 

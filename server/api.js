@@ -8,6 +8,8 @@ const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
+const wmBurn = require('./watermark-burn');
+wmBurn.prefetchFont();   // 开了「导出加水印」就在启动时把中文字体备好
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
 const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey } = require('./auth');
 const totp = require('./twofa');
@@ -1042,6 +1044,7 @@ function watermarkPolicy() {
     size: clampNum(e.WATERMARK_SIZE, 14, 8, 48),
     gap: clampNum(e.WATERMARK_GAP, 180, 60, 600),
     color,
+    burn: wmBurn.isBurnOn(),   // 导出的图片/PDF 是否烧录水印（与页面水印开关独立）
   };
 }
 router.get('/public/watermark', (req, res) => {
@@ -1634,17 +1637,48 @@ router.post('/memos/:id/attachments', requireAuth, noPublic, express.raw({ type:
   res.json({ success: true, id, kind: v.kind, filename, mime: v.mime, size: buf.length });
 });
 // 取附件内容（图片内联预览；文档强制下载）——owner/admin
-router.get('/memos/:id/attachments/:aid', requireAuth, noPublic, (req, res) => {
+router.get('/memos/:id/attachments/:aid', requireAuth, noPublic, async (req, res) => {
   const m = memoOf(req, res); if (!m) return;
   const a = memoAtt.get.get(req.params.aid, m.id);
   if (!a || a.kind === 'link' || !a.data) return res.status(404).json({ error: '附件不存在' });
+  let data = a.data;
+  // 缩略图（?thumb=1，备忘录列表里的小图）：缩到 120px 内，不烧水印也不记存证——这么小没有外泄价值，
+  // 否则每打开一次备忘录就要为每张小图烧录 + 记一条审计。开了烧录却缩不了图（sharp 不可用）时不给原图。
+  if (req.query.thumb === '1' && a.kind === 'image') {
+    try {
+      const thumb = await require('sharp')(Buffer.from(a.data), { animated: false }).rotate()
+        .resize(120, 120, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 70 }).toBuffer();
+      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.send(thumb);
+    } catch (_) {
+      if (wmBurn.isBurnOn()) return res.status(404).json({ error: '缩略图不可用' });
+    }
+  }
+  // 导出加水印（v3.5.33）：图片 / PDF 下发前把「当前查看人 + 时间 + 追踪码」烧进文件本身。
+  // 失败即拒绝（绝不退回原文件）；docx 等无法烧录的类型照常下发。
+  if (wmBurn.isBurnOn() && wmBurn.canBurn(a.mime)) {
+    const trace = wmBurn.genTrace();
+    const viewer = users.findById.get(req.user.uid);
+    try {
+      const out = await wmBurn.burn(Buffer.from(a.data), a.mime, { user: viewer, policy: watermarkPolicy(), trace });
+      data = out.data;
+      audit('file.watermarked', { subject: viewer ? String(viewer.uid_seq) : null, actor: actorOf(req),
+        detail: { trace, memo: m.id, attachment: a.id, file: String(a.filename || '').slice(0, 80), mime: a.mime, cjk: out.cjk } });
+    } catch (e) {
+      console.warn('[水印] 烧录失败：', e.message);
+      return res.status(500).json({ error: '水印处理失败，已拒绝下发该文件（' + e.message.slice(0, 80) + '）' });
+    }
+    res.setHeader('Cache-Control', 'no-store');   // 每次下发的水印（时间/追踪码）都不同，别缓存
+  }
   res.setHeader('Content-Type', a.mime || 'application/octet-stream');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   // 图片和 PDF 允许内联查看；其余（docx 等）强制下载，防在站内直接执行/渲染
   const inline = a.kind === 'image' || a.mime === 'application/pdf';
   const dispName = encodeURIComponent(a.filename || 'file');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${dispName}`);
-  res.send(a.data);
+  res.send(data);
 });
 router.delete('/memos/:id/attachments/:aid', requireAuth, noPublic, (req, res) => {
   const m = memoOf(req, res); if (!m) return;
@@ -2227,6 +2261,20 @@ router.get('/admin/audit', requireAdmin(3), (req, res) => {
 });
 router.get('/admin/audit/verify', requireAdmin(3), (req, res) => {
   res.json({ success: true, ...auditVerifyChain() });
+});
+// 水印追踪码反查（v3.5.33）：外泄文件上的「T + 8 位」→ 谁、何时、导出了哪个附件
+router.get('/admin/audit/trace/:code', requireAdmin(3), (req, res) => {
+  const code = String(req.params.code || '').trim().toUpperCase().replace(/^T/, '');
+  if (!/^[0-9A-F]{8}$/.test(code)) return res.status(400).json({ error: '追踪码格式应为 T + 8 位十六进制，如 T1A2B3C4D' });
+  const rows = db.prepare(`SELECT seq,event_type,subject,actor,detail,created_at FROM audit_chain
+    WHERE event_type='file.watermarked' AND detail LIKE ? ORDER BY seq DESC LIMIT 5`).all('%"trace":"' + code + '"%');
+  const data = rows.map(r => {
+    let d = {}; try { d = JSON.parse(r.detail || '{}'); } catch (_) {}
+    const u = r.subject ? db.prepare('SELECT name, uid_seq, uid_code, email FROM users WHERE uid_seq=?').get(parseInt(r.subject, 10)) : null;
+    return { trace: 'T' + code, at: r.created_at, actor: r.actor, file: d.file, mime: d.mime, memo: d.memo, attachment: d.attachment,
+      user: u ? { name: u.name, uid: u.uid_code || ('#' + String(u.uid_seq).padStart(5, '0')), email: u.email } : null };
+  });
+  res.json({ success: true, found: data.length > 0, data });
 });
 
 // ══════════════════════════════════════════
@@ -2962,11 +3010,12 @@ router.put('/v1/watermark', requireApiKey('config:write'), (req, res) => {
     enabled: 'WATERMARK_ENABLED', scope: 'WATERMARK_SCOPE', text: 'WATERMARK_TEXT',
     opacity: 'WATERMARK_OPACITY', angle: 'WATERMARK_ANGLE', size: 'WATERMARK_SIZE',
     gap: 'WATERMARK_GAP', color: 'WATERMARK_COLOR',
+    burn: 'WATERMARK_BURN', burn_text: 'WATERMARK_BURN_TEXT',
   };
   Object.entries(map).forEach(([field, envKey]) => {
     if (b[field] == null) return;
     let val = b[field];
-    if (field === 'enabled') val = (val === true || /^(on|1|true|yes)$/i.test(String(val))) ? 'on' : 'off';
+    if (field === 'enabled' || field === 'burn') val = (val === true || /^(on|1|true|yes)$/i.test(String(val))) ? 'on' : 'off';
     else if (Array.isArray(val)) val = val.join(',');
     val = String(val).slice(0, 300);
     env.set.run(envKey, val);

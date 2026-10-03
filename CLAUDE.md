@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.32**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.33**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -56,6 +56,7 @@ server/
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
 ├── updater.js    # 系统版本更新（v3.5.6）：checkUpdate 查 GitHub tag + applyUpdate 自托管一键拉取（默认关）
 ├── pkpass.js     # Apple Wallet 访客码 .pkpass 生成+签名（v3.5.10，passkit-generator 懒加载，需 Apple 证书）
+├── watermark-burn.js # 导出文件加水印（v3.5.33）：sharp 渲染瓦片 → 图片平铺 / PDF 每页铺图 + 追踪码；字体解析链
 ├── memo-util.js  # 备忘录：附件类型白名单+magic bytes 校验、外链白名单、附件大小上限（纯函数，可单测）
 ├── poller.js     # 通用轮询选择器。⚠️ 现在只有 kyc.js 在用，但别删——
 │                 #   message.js 仍靠它的 recordCall() 记出站调用统计
@@ -427,6 +428,19 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.33 把水印烧进导出的图片 / PDF（服务端烧录 + 追踪码）（承接 v3.4.23 遗留）
+
+三级版本。之前的水印只是页面 DOM 遮罩，文件下载后就是干净的。现在由**服务端**在下发备忘录附件时烧录，绕过前端直接调接口也拿不到原文件。
+- 新 `server/watermark-burn.js`：sharp（libvips + Pango）把「模板文字 · T追踪码」渲染成透明 PNG 瓦片（旋转 + 留间距 + **隔行错位半格**），图片用 `composite tile:true` 平铺并按原格式输出（PNG/JPEG/WebP/GIF，EXIF 先摆正，大图按短边/900 放大字号）；PDF 用 pdf-lib 把同一瓦片（2 倍分辨率）当图片铺满每页——**PDF 里不嵌字体**，中文不会缺字。
+- ⚠️ **字体是最大的坑**：Zeabur 类容器一个字体都没有，Pango 连英文都渲染成豆腐块（已在空 fontconfig 下实测）。所以永远显式传 `fontfile`，解析链：`WATERMARK_FONT_PATH`（`-`=不用中文）→ 常见系统 CJK 字体 → 下载缓存到 `<DB 目录>/fonts/`（默认 jsDelivr 上**钉死 tag Sans2.004 + sha256 校验**的 Noto Sans SC 8.3MB；`WATERMARK_FONT_URL` 可换 / `off` 不下载）→ 兜底 npm 依赖 `dejavu-fonts-ttf` 的 DejaVuSans（只有拉丁字，此时文字去掉非 ASCII，保留 UID/邮箱/时间/追踪码）。开启烧录时 api.js 加载即 `prefetchFont()`。
+- 接入 `GET /memos/:id/attachments/:aid`：`WATERMARK_BURN=on` 且是图片/PDF → 烧录后下发，`Cache-Control: no-store`，审计 `file.watermarked`（subject=查看人 uid_seq，detail 含 trace/memo/attachment/file/mime/cjk）。**烧录失败一律 500 拒绝，绝不退回原文件**（如损坏/加密 PDF）。docx 等不可烧录类型照常下发。
+- `?thumb=1`：图片缩到 120px webp、不烧录不记存证（网页备忘录小图改用它，否则每开一次备忘录就为每张小图烧录 + 记审计）；开了烧录却 sharp 不可用时缩略图 404，不给原图。
+- 追踪码反查 `GET /admin/audit/trace/:code`（Lv.3，`T`+8 位十六进制，可省 T/小写）；「审计存证」页加反查框（`lookupTrace`）。AUDIT_EVENT_LABEL 补 `file.watermarked`。
+- 策略：`watermarkPolicy()` 多 `burn`；`PUT /v1/watermark` 收 `burn`/`burn_text`。系统配置「水印」组加 `WATERMARK_BURN`/`WATERMARK_BURN_TEXT`/`WATERMARK_FONT_URL`/`WATERMARK_FONT_PATH`；init.js ENV_KEYS 同步。备忘录弹窗开启时显示「🔏 会带身份水印与追踪码」提示。服务端模板时间按用户 `timezone`（auto 则 `WATERMARK_TZ`，默认 Asia/Shanghai）。
+- 依赖：`pdf-lib`、`dejavu-fonts-ttf`（纯 JS/纯数据）进 dependencies；**`sharp` ^0.34.5 放 optionalDependencies**（0.35 要求 Node ≥20.9；可选=原生包装不上也不挡部署，此时开启烧录会 500 拒绝）。两者都懒加载。
+- ⚠️ 测试：模块 14 项（四种图片格式同格式同尺寸、PDF 页数不变、docx 返回 null、模板时区、ASCII 降级、坏 PDF 抛错）在**空 fontconfig** 下分别以 DejaVu 兜底 / Noto 中文跑通并目检出图；真实服务端 15+7 项（开/关两种模式：烧录、no-store、每次一条存证、追踪码反查/大小写/不存在/普通用户 403、坏 PDF 500 不泄原文、缩略图不记存证、txt 原样）+ 回归 35/16/25/12/4 全过；playwright：备忘录提示、缩略图 120px、灯箱大图带水印且记 1 条存证、坏 PDF toast 显示后端原因、审计页反查出 alice，零 JS 报错。
+- ⚠️ 本地 e2e 起服务时 `WATERMARK_BURN=on` 直接给环境变量即可；本机有 wqy 字体，要模拟线上无字体用 `FONTCONFIG_FILE=<空配置>` + `WATERMARK_FONT_PATH=-`。
 
 ## v3.5.32 iOS：身份核验屏 + 我的组织 / 按组织看应用（承接 v3.5.12、v3.4.42 遗留）
 

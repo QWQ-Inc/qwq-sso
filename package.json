@@ -1,6 +1,6 @@
 {
   "name": "unified-sso-system",
-  "version": "3.5.32",
+  "version": "3.5.33",
   "description": "统一登录系统 SSO - 多渠道登录 + 用户/管理后台",
   "main": "server/index.js",
   "scripts": {
@@ -20,7 +20,12 @@
     "uuid": "^9.0.0",
     "better-sqlite3": "^9.4.3",
     "@simplewebauthn/server": "^13.3.2",
-    "passkit-generator": "^3.3.0"
+    "passkit-generator": "^3.3.0",
+    "pdf-lib": "^1.17.1",
+    "dejavu-fonts-ttf": "^2.37.3"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
