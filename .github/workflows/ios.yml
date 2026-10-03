@@ -1,0 +1,88 @@
+name: iOS Build (unsigned IPA)
+
+# GitHub 的 macOS runner 自带 Xcode，可在云端编译 iOS App 并打包出「未签名 .ipa」。
+# 未签名 .ipa 免费、无需任何证书，可在本 workflow 运行页面的 Artifacts 里下载
+#   （⚠️ 未签名 → 不能直接装真机；仅供留档/自行重签/模拟器；真机/上架需 Apple 证书，见文件底部）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+# 说明：本仓库发版工作流每次 rm -rf .git 重开历史再 force-push，paths 过滤在这种「无关历史」的
+# force-push 下不稳定（可能整批不触发）。这里对 main 的每次 push 都跑；纯 Web 版本也会跑一次
+# iOS 构建（约几分钟、免费），可接受。稳定后要省资源可改回 paths 过滤。
+
+jobs:
+  build:
+    # macos-15 自带 Xcode 16，能读 XcodeGen 新版输出的 objectVersion 77 项目格式
+    # （macos-14 的 Xcode 15.4 读不了 → "Unable to read project"）
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned .app (device)
+        run: |
+          set +e
+          xcodebuild \
+            -project QWQSSO.xcodeproj \
+            -scheme QWQSSO \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+          code=${PIPESTATUS[0]}
+          echo "xcodebuild exit=$code"
+          if [ "$code" -ne 0 ]; then
+            hits=$(grep -nE "error:|Multiple commands|cannot find|no such module|does not contain a scheme|Unable to find a destination|Unable to read project" build.log | head -40)
+            if [ -n "$hits" ]; then
+              echo "$hits" | while IFS= read -r l; do echo "::error::${l}"; done
+            else
+              tail -n 40 build.log | while IFS= read -r l; do [ -n "$l" ] && echo "::error::${l}"; done
+            fi
+            exit "$code"
+          fi
+
+      - name: Package unsigned .ipa
+        run: |
+          set -e
+          APP=$(find build/Build/Products -maxdepth 2 -name "*.app" -type d | head -1)
+          echo "app=$APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          rm -f QWQSSO-unsigned.ipa
+          zip -qr QWQSSO-unsigned.ipa Payload
+          ls -la QWQSSO-unsigned.ipa
+
+      - name: Upload unsigned .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QWQSSO-unsigned-ipa
+          path: ios/QWQSSO-unsigned.ipa
+          if-no-files-found: error
+
+# ─────────────────────────────────────────────────────────────
+# 出「已签名 .ipa」（TestFlight / 真机安装）时，追加一个 job，大致如下：
+#
+#   1. 在 GitHub 仓库 Settings → Secrets 里放：
+#      BUILD_CERTIFICATE_BASE64   (导出的 .p12 证书，base64)
+#      P12_PASSWORD               (.p12 密码)
+#      PROVISIONING_PROFILE_BASE64(描述文件 .mobileprovision，base64)
+#      APPLE_TEAM_ID              (你的 Team ID)
+#   2. 用 apple-actions/import-codesign-certs 导入证书+描述文件；
+#   3. xcodebuild archive -archivePath build/QWQSSO.xcarchive ... ;
+#   4. xcodebuild -exportArchive -exportOptionsPlist ExportOptions.plist
+#        -archivePath build/QWQSSO.xcarchive -exportPath build/ipa ;
+#   5. actions/upload-artifact 上传 build/ipa/QWQSSO.ipa。
+#
+# 需要 Apple 开发者账号（个人 $99/年）。没有账号时，上面的未签名构建足以验证代码可编译。
