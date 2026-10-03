@@ -19,6 +19,13 @@ struct AppsTabView: View {
     @State private var newFolderName = ""
     @State private var tools: [String: Any] = [:]          // 管理工具权限（v3.5.30，/api/user/app-center）
     @State private var passDoors: [[String: Any]] = []
+    @State private var orgs: [[String: Any]] = []            // 我所属的组织（v3.5.32）
+    @State private var curOrg = ""                          // 当前组织（""=全部我的组织），按系统记在 UserDefaults
+
+    private var orgKey: String { "sso_current_org|" + state.domain }
+    private var curOrgName: String {
+        orgs.first { ($0["id"] as? String) == curOrg }.flatMap { $0["name"] as? String } ?? "全部组织"
+    }
 
     private let cols = [GridItem(.adaptive(minimum: 72), spacing: 14)]
 
@@ -89,6 +96,23 @@ struct AppsTabView: View {
             }
             .navigationTitle("应用中心")
             .toolbar {
+                if !orgs.isEmpty {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Menu {
+                            Button { pickOrg("") } label: { orgRow("全部我的组织", checked: curOrg.isEmpty) }
+                            ForEach(orgs.indices, id: \.self) { i in
+                                let o = orgs[i]
+                                let oid = (o["id"] as? String) ?? ""
+                                let uid = (o["org_uid"] as? String) ?? ""
+                                Button { pickOrg(oid) } label: {
+                                    orgRow(((o["name"] as? String) ?? "组织") + (uid.isEmpty ? "" : "（\(uid)）"), checked: curOrg == oid)
+                                }
+                            }
+                        } label: {
+                            Label(curOrgName, systemImage: "building.2").labelStyle(.titleAndIcon).font(.subheadline)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { newFolderName = ""; newFolderFor = .some(nil) } label: { Image(systemName: "folder.badge.plus") }
                 }
@@ -123,7 +147,7 @@ struct AppsTabView: View {
     }
 
     // ── 管理工具磁贴（同一套管理接口，只是手机上的入口）──
-    private var hasTools: Bool { tools["users"] is [String: Any] || tools["devices"] is [String: Any] || tools["access"] is [String: Any] }
+    private var hasTools: Bool { ["users", "devices", "access", "verify"].contains { tools[$0] is [String: Any] } }
     @ViewBuilder private var toolTiles: some View {
         if let acc = tools["access"] as? [String: Any] {
             NavigationLink { AccessManageView(isAdmin: (acc["admin"] as? Bool) ?? false, canPass: (acc["passes"] as? Bool) ?? false, passDoors: passDoors) }
@@ -132,6 +156,10 @@ struct AppsTabView: View {
         }
         if tools["devices"] is [String: Any] {
             NavigationLink { DevicesManageView() } label: { ToolTile(title: "设备管理", symbol: "laptopcomputer.and.iphone", color: .teal) }
+                .buttonStyle(.plain)
+        }
+        if tools["verify"] is [String: Any] {
+            NavigationLink { IdentityVerifyView() } label: { ToolTile(title: "身份核验", symbol: "person.text.rectangle", color: .orange) }
                 .buttonStyle(.plain)
         }
         if let us = tools["users"] as? [String: Any] {
@@ -274,14 +302,28 @@ struct AppsTabView: View {
         }
     }
 
+    @ViewBuilder private func orgRow(_ title: String, checked: Bool) -> some View {
+        if checked { Label(title, systemImage: "checkmark") } else { Text(title) }
+    }
+    private func pickOrg(_ id: String) {
+        curOrg = id
+        UserDefaults.standard.set(id, forKey: orgKey)
+        Task { await load() }
+    }
+
     private func load() async {
         guard !state.token.isEmpty else { return }
         await MainActor.run { loading = true }
-        let list = (try? await state.api().appsMarket(token: state.token)) ?? []
+        let os = (try? await state.api().myOrgs(token: state.token)) ?? []
+        // 记住的组织已不在我的组织里（被移出）→ 回到「全部」
+        var org = UserDefaults.standard.string(forKey: orgKey) ?? ""
+        if !org.isEmpty && !os.contains(where: { ($0["id"] as? String) == org }) { org = ""; UserDefaults.standard.removeObject(forKey: orgKey) }
+        let list = (try? await state.api().appsMarket(token: state.token, org: org)) ?? []
         let fs = (try? await state.api().appFolders(token: state.token)) ?? []
         let ac = (try? await state.api().request("GET", "/api/user/app-center", token: state.token)) ?? [:]
         await MainActor.run {
             apps = list; folders = fs; loading = false
+            orgs = os; curOrg = org
             tools = (ac["tools"] as? [String: Any]) ?? [:]
             passDoors = (ac["pass_doors"] as? [[String: Any]]) ?? []
         }

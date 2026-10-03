@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.31**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.32**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -427,6 +427,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.32 iOS：身份核验屏 + 我的组织 / 按组织看应用（承接 v3.5.12、v3.4.42 遗留）
+
+三级版本（iOS 为主）。
+- 后端 `/user/app-center` 的 `tools` 加 `verify`（`verifierOf(req).ok`：管理员或有效核验员）。
+- 新 `VerifyView.swift`（`IdentityVerifyView`）：扫码（复用 `ScannerView`，sheet）或粘贴 qr1 → `POST /api/verify/scan` → 脱敏身份卡（姓名/UID/组织/分组/自定义字段）；`ok:false` 显示 `reason_text`。应用中心「管理工具」多一个「身份核验」磁贴。
+- 组织：`APIClient.appsMarket(token:org:)`（`?org=`）+ `myOrgs`（`/api/user/orgs`）。`AppsTabView` 左上角组织菜单（全部 / 各组织·组织内 UID），选择按系统存 `UserDefaults["sso_current_org|<domain>"]`；记住的组织已不在我的组织里则回退「全部」。`MeTabView` 加「我的组织」区（组织名 + 组织内 UID）。
+- ⚠️ 测试：真实服务端 4 项（管理员/核验员有磁贴、普通用户无、/user/orgs 带 org_uid）+ 35 项回归；Swift 靠 GitHub Actions 编译验证。
 
 ## v3.5.31 分组/组织管理员的网页签发访客码入口 + 签发门范围收紧（承接 v3.5.4 遗留）
 

@@ -2643,6 +2643,7 @@ router.get('/user/app-center', requireAuth, (req, res) => {
     users:   sysRead ? { write: sysWrite } : null,                        // 用户管理（系统管理员）
     devices: (sysRead || managed.length) ? { orgs: managed.map(o => ({ id: o.id, name: o.name })), all: sysRead } : null,  // 设备管理
     access:  (sysRead || issue) ? { admin: sysRead, passes: issue } : null,  // 门禁：管理员看门/记录；可签发者管访客码
+    verify:  verifierOf(req).ok ? {} : null,                              // 身份核验（核验员，v3.5.32）
   }, pass_doors: passDoors });
 });
 

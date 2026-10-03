@@ -6,6 +6,7 @@ struct MeTabView: View {
     @State private var showSwitcher = false
     @State private var kycVerified = false
     @State private var kycText = "未实名"
+    @State private var orgs: [[String: Any]] = []   // 我所属的组织 + 组织内 UID（v3.5.32）
 
     var body: some View {
         NavigationStack {
@@ -33,6 +34,18 @@ struct MeTabView: View {
                         Text(kycText).font(.caption).foregroundColor(.secondary)
                     }
                     NavigationLink { AccountSettingsView() } label: { Label("账号设定", systemImage: "gearshape") }
+                }
+
+                if !orgs.isEmpty {
+                    Section {
+                        ForEach(orgs.indices, id: \.self) { i in
+                            HStack {
+                                Label((orgs[i]["name"] as? String) ?? "组织", systemImage: "building.2")
+                                Spacer()
+                                Text((orgs[i]["org_uid"] as? String) ?? "").font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    } header: { Text("我的组织") } footer: { Text("右侧是你在该组织内的编号。到「应用」页左上角可按组织查看开放给你的应用。") }
                 }
 
                 Section("功能") {
@@ -63,6 +76,8 @@ struct MeTabView: View {
         guard !state.token.isEmpty else { return }
         do {
             let u = try await state.api().meUser(token: state.token)
+            let os = (try? await state.api().myOrgs(token: state.token)) ?? []
+            await MainActor.run { orgs = os }
             await MainActor.run {
                 if let name = u["name"] as? String { state.setMe(name: name, uid: state.meUid.isEmpty ? uidOf(u) : state.meUid) }
                 let verified = ((u["kyc_verified"] as? Int) ?? 0) == 1 || (u["kyc_verified"] as? Bool) == true

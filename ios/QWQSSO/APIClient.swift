@@ -218,9 +218,17 @@ final class APIClient {
     }
 
     // ── 应用市场 / 授权 / 打开 ──
-    func appsMarket(token: String) async throws -> [[String: Any]] {
-        let j = try await getJSON("/api/apps/market", token: token)
+    /// 应用市场；org 非空时只看「全局应用 + 该组织开放的应用」（须是该组织成员，v3.5.32）
+    func appsMarket(token: String, org: String? = nil) async throws -> [[String: Any]] {
+        var path = "/api/apps/market"
+        if let o = org, !o.isEmpty, let q = o.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) { path += "?org=" + q }
+        let j = try await getJSON(path, token: token)
         return (j["apps"] as? [[String: Any]]) ?? []
+    }
+    /// 我所属的组织（id / name / org_uid）
+    func myOrgs(token: String) async throws -> [[String: Any]] {
+        let j = try await getJSON("/api/user/orgs", token: token)
+        return (j["orgs"] as? [[String: Any]]) ?? []
     }
     func appAuthorize(id: String, token: String) async throws {
         _ = try await postJSON("/api/apps/\(id)/auth", body: [:], token: token)
