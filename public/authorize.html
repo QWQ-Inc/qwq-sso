@@ -1,0 +1,191 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>授权确认 · QWQ SSO</title>
+<style>
+  :root{
+    --bg:#F5F5F7; --card:#fff; --tx:#1D1D1F; --txd:#86868B;
+    --line:rgba(0,0,0,.08); --brand:#0071E3; --warn:#FF9500; --danger:#FF3B30;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font:14px/1.6 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Microsoft YaHei",sans-serif;
+       min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 16px}
+  .card{background:var(--card);width:100%;max-width:420px;border-radius:18px;padding:28px 26px;
+        box-shadow:0 4px 24px rgba(0,0,0,.06)}
+  .heads{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:6px}
+  .ava{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+       font-size:24px;overflow:hidden;flex:none}
+  .ava img{width:100%;height:100%;object-fit:cover}
+  .link{color:var(--txd);letter-spacing:2px;font-size:13px}
+  h1{font-size:17px;font-weight:600;text-align:center;margin:14px 0 4px}
+  .sub{text-align:center;color:var(--txd);font-size:12.5px;margin-bottom:20px}
+  .sec-title{font-size:12px;color:var(--txd);margin:0 0 8px 2px}
+  .scope{display:flex;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:11px;margin-bottom:8px;
+         cursor:pointer;transition:border-color .15s,background .15s}
+  .scope:hover{background:#FAFAFA}
+  .scope.req{cursor:default;opacity:.72}
+  .scope.sensitive{border-color:rgba(255,149,0,.4);background:rgba(255,149,0,.04)}
+  .scope input{margin-top:3px;accent-color:var(--brand);width:15px;height:15px;flex:none}
+  .scope .n{font-size:13.5px;font-weight:500}
+  .scope .d{font-size:11.5px;color:var(--txd);margin-top:1px}
+  .tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(0,0,0,.06);color:var(--txd);margin-left:5px;vertical-align:1px}
+  .tag.s{background:rgba(255,149,0,.15);color:#B26A00}
+  .btns{display:flex;gap:10px;margin-top:20px}
+  button{flex:1;padding:11px;border-radius:11px;border:none;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit}
+  .ok{background:var(--brand);color:#fff}
+  .ok:disabled{opacity:.5;cursor:not-allowed}
+  .no{background:rgba(0,0,0,.05);color:var(--tx)}
+  .foot{text-align:center;font-size:11px;color:var(--txd);margin-top:14px;line-height:1.7}
+  .err{background:rgba(255,59,48,.08);color:var(--danger);padding:12px 14px;border-radius:11px;font-size:13px;text-align:center}
+  .load{text-align:center;color:var(--txd);padding:30px 0;font-size:13px}
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#000;--card:#1C1C1E;--tx:#F5F5F7;--txd:#8E8E93;--line:rgba(255,255,255,.12)}
+    .scope:hover{background:rgba(255,255,255,.03)}
+    .no{background:rgba(255,255,255,.1)}
+    .tag{background:rgba(255,255,255,.1)}
+  }
+</style>
+
+<div class="card" id="card"><div class="load">正在加载…</div></div>
+
+<script>
+const P = new URLSearchParams(location.search);
+const card = document.getElementById('card');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
+
+(async function init() {
+  const token = localStorage.getItem('sso_token');
+  // 未登录 → 先去登录，登录完原样跳回来继续授权
+  if (!token) {
+    location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
+    return;
+  }
+
+  let d;
+  try {
+    const q = new URLSearchParams({ client_id: P.get('client_id') || '', scope: P.get('scope') || '' });
+    const r = await fetch('/oauth/consent-info?' + q, { headers: { Authorization: 'Bearer ' + token } });
+    if (r.status === 401) {
+      localStorage.removeItem('sso_token');
+      location.replace('/login.html?next=' + encodeURIComponent(location.pathname + location.search));
+      return;
+    }
+    d = await r.json();
+    if (!r.ok) return fail(d.error || '加载失败');
+  } catch (e) { return fail('网络错误，请重试'); }
+
+  const isImg = s => /^https?:\/\//i.test(s || '');
+  const appAva = () => `<div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
+    isImg(d.app.icon) ? `<img src="${esc(d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>`;
+
+  // 应用要求的必传信息用户缺失（如必传邮箱但没绑）→ 拦下来引导绑定，不能继续
+  if (d.missingRequired && d.missingRequired.length) {
+    const items = d.missingRequired.map(m => m.label).join('、');
+    card.innerHTML = `
+      <div class="heads">${appAva()}</div>
+      <h1>${esc(d.app.name)} 需要你的${esc(items)}</h1>
+      <div class="sub">该应用把「${esc(items)}」设为登录必需项，你的账号还没有绑定，无法完成登录。</div>
+      <div style="background:rgba(255,149,0,.08);color:#B26A00;padding:12px 14px;border-radius:11px;font-size:12.5px;line-height:1.7;margin-bottom:18px;">
+        请先到 <b>控制台 → 账号设定</b> 绑定${esc(items)}，然后重新发起登录。
+      </div>
+      <div class="btns">
+        <button class="no" id="back">返回</button>
+        <button class="ok" id="go">去绑定</button>
+      </div>`;
+    document.getElementById('go').onclick   = () => location.href = '/dashboard.html#account';
+    document.getElementById('back').onclick = () => history.length > 1 ? history.back() : location.href = '/dashboard.html';
+    return;
+  }
+
+  // 之前已授权过且本次没申请新权限，且第三方没强制要求重新确认 → 免打扰，但给个倒计时中转页
+  if (d.alreadyGranted && P.get('prompt') !== 'consent') {
+    let left = Number.isFinite(d.countdown) ? d.countdown : 3;
+    if (left <= 0) return submit(true, null, token);   // 秒数设为 0 → 不倒计时，直接跳
+
+    const render = () => {
+      card.innerHTML = `
+        <div class="heads">${appAva()}<div class="link">···</div>${
+          `<div class="ava" style="background:#E8E8ED">${isImg(d.user.avatar) ? `<img src="${esc(d.user.avatar)}" alt="">` : esc((d.user.name || 'U').slice(0,1))}</div>`}</div>
+        <h1>正在登录 ${esc(d.app.name)}</h1>
+        <div class="sub">你已授权过该应用，将在 <b id="cd">${left}</b> 秒后自动跳转登录</div>
+        <div class="btns"><button class="ok" id="now">立即继续</button></div>
+        <div class="foot">如果这不是你发起的登录，请关闭此页面</div>`;
+      const nowBtn = document.getElementById('now');
+      if (nowBtn) nowBtn.onclick = () => { clearInterval(timer); submit(true, null, token); };
+    };
+    render();
+    const timer = setInterval(() => {
+      left--;
+      const cd = document.getElementById('cd');
+      if (cd) cd.textContent = left;
+      if (left <= 0) { clearInterval(timer); submit(true, null, token); }
+    }, 1000);
+    return;
+  }
+
+  card.innerHTML = `
+    <div class="heads">
+      <div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
+        isImg(d.app.icon) ? `<img src="${esc(d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>
+      <div class="link">···</div>
+      <div class="ava" style="background:#E8E8ED">${
+        isImg(d.user.avatar) ? `<img src="${esc(d.user.avatar)}" alt="">` : esc((d.user.name || 'U').slice(0,1))}</div>
+    </div>
+    <h1>${esc(d.app.name)} 请求访问你的账号</h1>
+    <div class="sub">你正以 ${esc(d.user.name || '未命名')}（#${esc(d.user.uid)}）的身份授权</div>
+    <div class="sec-title">该应用将获得以下权限</div>
+    <div id="scopes"></div>
+    <div class="btns">
+      <button class="no" id="deny">拒绝</button>
+      <button class="ok" id="allow">同意授权</button>
+    </div>
+    <div class="foot">授权后可随时在「控制台 → 应用管理 → 已授权应用」中撤销<br>取消勾选可选项不影响登录，但该应用可能功能受限</div>`;
+
+  const box = document.getElementById('scopes');
+  d.scopes.forEach(s => {
+    const el = document.createElement('label');
+    el.className = 'scope' + (s.required ? ' req' : '') + (s.sensitive ? ' sensitive' : '');
+    el.innerHTML = `
+      <input type="checkbox" value="${esc(s.key)}" ${s.required ? 'checked disabled' : 'checked'}>
+      <div>
+        <div class="n">${esc(s.label)}${s.required ? '<span class="tag">必需</span>' : ''}${
+          s.sensitive ? '<span class="tag s">敏感</span>' : ''}</div>
+        <div class="d">${esc(s.descr)}</div>
+      </div>`;
+    box.appendChild(el);
+  });
+
+  document.getElementById('allow').onclick = () => {
+    const picked = [...box.querySelectorAll('input:checked')].map(i => i.value);
+    submit(true, picked, token);
+  };
+  document.getElementById('deny').onclick = () => submit(false, [], token);
+})();
+
+async function submit(approve, picked, token) {
+  const btn = document.getElementById('allow');
+  if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+  try {
+    const r = await fetch('/oauth/consent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({
+        client_id:    P.get('client_id'),
+        redirect_uri: P.get('redirect_uri'),
+        scope:        (picked || (P.get('scope') || '').split(' ')).join(' '),
+        state:        P.get('state') || '',
+        nonce:        P.get('nonce') || '',
+        code_challenge:        P.get('code_challenge') || '',
+        code_challenge_method: P.get('code_challenge_method') || '',
+        approve,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) return fail(d.error || '授权失败');
+    location.replace(d.redirect);
+  } catch (e) { fail('网络错误，请重试'); }
+}
+</script>
+
+__FOOTER_HTML__
