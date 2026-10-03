@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.24 — 组织登录通道执行组织登录策略（安全修复）
+
+- 「登录到组织（IAM 用户）」(`/api/account/org-login`) 现在执行该组织的 **IP 白名单** 与 **登录时段** 策略（之前只在三方登录通道执行，组织登录可绕过）。组织级判定先于密码校验，拒绝时不泄露密码对错，并记登录日志。
+- 组织「强制两步验证」在组织登录通道与三方登录通道一致：只看 `require_2fa`（不再要求同时开独立安全）。
+- 策略判定抽成 `server/org-policy.js`（`withinLoginWindow` / `subjectGateError`），两条通道共用，防判定漂移。
+
 ## v3.5.23 — API-docs 逐接口补全
 
 - `API-docs.md` 开放 API 从「选摘」补成全部 45 个 `/v1/*` 接口全覆盖：速查表补设备/水印行；新增 6.15 设备管理、6.16 水印策略、6.17 外部通讯录导入分节。

@@ -11,6 +11,7 @@ const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = req
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
 const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey } = require('./auth');
 const totp = require('./twofa');
+const { subjectGateError } = require('./org-policy');
 // 短信与邮件统一走 QWQ Message 分发中心（v3.3.3 起不再直连服务商）
 const { sendSmsCode, sendEmailCode, sendEmail, isConfigured: hasMessageHub } = require('./message');
 // 组织专属短信/邮件凭证（v3.5.15）：某组织 msg_config 覆盖（空=回退全局）
@@ -487,6 +488,14 @@ async function handleOrgLogin(req, res) {
   if (!account || !password || !org) return res.status(400).json({ error: '请选择组织并填写账号和密码' });
   const s = directLoginSubject(org);   // enabled + allow_direct_login
   if (!s) return res.status(400).json({ error: '该组织未开放登录' });
+  // 组织登录策略（IP 白名单 / 登录时段，v3.5.24）：组织级、与用户无关，先于密码校验——拒绝不泄露密码对错
+  const gate = subjectGateError(s, req.ip);
+  if (gate) {
+    logLogin({ method: '组织登录·' + s.name, ip: req.ip, ua, status: 'failed', failReason: gate === 'ip_denied' ? '不在组织 IP 白名单内' : '不在组织允许登录时段内' });
+    return res.status(403).json({ error: gate === 'ip_denied'
+      ? '当前网络不在该组织允许的登录 IP 范围内'
+      : `当前不在该组织允许的登录时段内（${s.login_start}~${s.login_end}）`, code: gate });
+  }
   const resolved = resolveUser(String(account).trim());
   if (resolved === AMBIGUOUS) return res.status(400).json({ error: '该用户名对应多个账号，请改用邮箱 / 手机号 / UID' });
   const user = resolved;
@@ -505,8 +514,8 @@ async function handleOrgLogin(req, res) {
   }
   if (!ok) { logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: '组织登录·' + s.name, ip: req.ip, ua, status: 'failed', failReason: badMsg }); return res.status(401).json({ error: badMsg }); }
 
-  // 独立安全组织：执行组织自己的策略（当前：强制 2FA；IP/时段沿用 v3.4.32 的三方登录通道，组织登录后续接）
-  if (s.independent_security && s.require_2fa && !user.twofa_enabled) {
+  // 组织「强制两步验证」策略（v3.5.24 起与三方登录通道一致：只看 require_2fa，不再要求同时开独立安全）
+  if (s.require_2fa && !user.twofa_enabled) {
     return res.status(403).json({ error: '该组织要求两步验证，请先在账号设定里开启两步验证后再登录' });
   }
   // org_scoped：独立安全组织锁定（不可切换）；非独立组织带 org 但不锁定（安全策略与平台相同，可切换）

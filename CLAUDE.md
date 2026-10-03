@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.23**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.24**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -427,6 +427,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.24 组织登录通道执行组织登录策略（IP 白名单 / 登录时段）（安全修复，承接 v3.5.20 遗留）
+
+三级版本。v3.5.20 遗留「独立安全组织的 IP/时段策略在 org-login 路径的执行」——之前 v3.4.32 的主体策略只在 `oauth.js` `loginSuccess`（三方登录）执行，`/account/org-login` 可绕过 IP 白名单与登录时段。
+- 新文件 `server/org-policy.js`：`withinLoginWindow(start,end,now)` + `subjectGateError(subj, ip, now)` → null | `ip_denied` | `time_denied`。从 oauth.js 抽出，**两条通道共用**，改策略判定只改这一处。
+- `handleOrgLogin`：`directLoginSubject` 之后、解析用户/校验密码**之前**执行 `subjectGateError`（组织级、与用户无关——先拦可避免「拒绝即说明密码正确」的泄露），403 + `code`，记登录日志。
+- ⚠️ 语义变更：组织登录的「强制 2FA」从 `independent_security && require_2fa` 改为只看 `require_2fa`，与三方登录通道一致（之前非独立组织勾了强制 2FA 但组织登录不拦，属漏洞）。
+- 主体弹窗「登录策略」标题改为「经该主体三方登录 /『登录到组织』时强制执行」。
+- ⚠️ 测试：`scratchpad/org-policy-test.js` 15 项全过（日内/跨夜/边界/非法放行、CIDR/精确/::ffff:/空白列表、时段拒、只填一端不拦、IP 优先）。HTTP 层同既有约束未端到端跑（无 node_modules）。
+- 仍未做（v3.5.20 遗留）：org-login 走验证码、dashboard 更彻底的「不可切换」收口；v3.5.21 遗留：组织管理员的设备管理 UI 入口。
 
 ## v3.5.23 API-docs 逐接口补全（开放 API 全覆盖）（用户反馈）
 

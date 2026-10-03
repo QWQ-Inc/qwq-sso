@@ -15,7 +15,8 @@ const crypto  = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, state: stateStore, logs } = require('./db');
-const { signToken, signShortToken, requireAuth, ipAllowed } = require('./auth');
+const { signToken, signShortToken, requireAuth } = require('./auth');
+const { subjectGateError } = require('./org-policy');
 
 const router = express.Router();
 
@@ -202,15 +203,6 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   return createBoundUser({ provider, openId, unionId, name, email });
 }
 
-/** 当前服务器本地时间是否在 [start,end] 时段内（HH:MM）；start>end 视为跨夜 */
-function withinLoginWindow(start, end) {
-  const m = s => { const [h, mi] = String(s).split(':').map(n => parseInt(n, 10)); return (h * 60 + mi); };
-  const now = new Date(); const cur = now.getHours() * 60 + now.getMinutes();
-  const a = m(start), b = m(end);
-  if (isNaN(a) || isNaN(b)) return true;         // 配置无效则不拦
-  return a <= b ? (cur >= a && cur <= b) : (cur >= a || cur <= b);
-}
-
 /** 登录成功 → 跳转中间页（存 token 后再进 dashboard）*/
 function loginSuccess(res, user) {
   // 绑定模式：不切换登录态，绑好后跳回控制台（成功/冲突都清掉一次性的 bind 标记）
@@ -231,18 +223,9 @@ function loginSuccess(res, user) {
   const subjId = pk ? subjectOfProviderKey(pk) : null;
   const subj = subjId ? oauthSubjects.get.get(subjId) : null;
   if (subj) {
-    // 登录 IP 白名单（CIDR / 精确 / *，逗号分隔；空=不限）
-    if (subj.ip_allow && subj.ip_allow.trim()) {
-      const clientIp = String(creq?.ip || '').replace('::ffff:', '');
-      const list = subj.ip_allow.split(',').map(s => s.trim()).filter(Boolean);
-      if (list.length && !ipAllowed(clientIp, list)) {
-        return res.redirect('/login.html?error=ip_denied');
-      }
-    }
-    // 登录时段（HH:MM~HH:MM，支持跨夜；两者都填才生效）
-    if (subj.login_start && subj.login_end && !withinLoginWindow(subj.login_start, subj.login_end)) {
-      return res.redirect('/login.html?error=time_denied');
-    }
+    // 登录 IP 白名单 + 登录时段（与组织登录通道共用 org-policy.js）
+    const gate = subjectGateError(subj, creq?.ip);
+    if (gate) return res.redirect('/login.html?error=' + gate);
     // 强制两步验证：已开 → 走下面的 2FA 门；未开 → 拒绝并提示先启用（该主体策略要求）
     if (subj.require_2fa && !user.twofa_enabled) {
       return res.redirect('/login.html?error=need_2fa');
