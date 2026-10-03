@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.30**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.31**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -427,6 +427,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.31 分组/组织管理员的网页签发访客码入口 + 签发门范围收紧（承接 v3.5.4 遗留）
+
+三级版本。v3.5.4 遗留「纯分组管理员的用户端签发入口」——后端早就允许分组/组织管理员签发（`canIssuePass`），但网页签发只在管理端「门禁管理」（nav-admin，仅系统管理员可见）。
+- `dashboard.html` 用户端「门禁」页加「我签发的访客码」卡（`my-pass-card`）：`loadMyPassCard()` 调 `/user/app-center`，`tools.access.passes && !admin` 才显示（系统管理员仍在管理端签）；门选项来自 `pass_doors`。
+- 复用管理端访客码代码：`loadAccessPasses(boxId)` 记住渲染目标 `_passBoxId`（管理端显式传 `'adm-pass-list'`），`openPassModal(doorList)` 可传入门列表（缺省=管理端门缓存）。dev mock 补 `/user/app-center`。
+- ⚠️ **安全收紧**：`POST /access/passes` 之前对非系统管理员**不限门**（分组管理员能把访客放进任何门）。现在非 `isSysAdmin(req,2)` 只能签自己 `doorsForUser` 里的门，否则 403「只能签发你自己有权通行的门」。列表/撤销的「全部」判定也从 `role==='admin'` 改为 `isSysAdmin`（org_scoped 的管理员会话不再看到全部访客码）；app-center 的 `pass_doors` 全量门改按 `isSysAdmin(req,2)`，与签发校验一致。
+- ⚠️ 测试：真实服务端 12 项全过（pass_doors 只含自己能开的门、签无权门/混入无权门 403、签自己的门成功、系统管理员签任意门、只看自己签发的、不能撤销别人的、普通用户 403 且无磁贴）+ 门禁 25 项回归；playwright 打真服务：组织管理员门禁页出现卡片→签发→出二维码→列表刷新，零 JS 报错。
 
 ## v3.5.30 iOS 应用中心加入管理工具（门禁 / 设备 / 用户）（用户反馈）
 

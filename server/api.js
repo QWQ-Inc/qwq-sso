@@ -2636,7 +2636,7 @@ router.get('/user/app-center', requireAuth, (req, res) => {
   const issue = canIssuePass(req);
   let passDoors = [];
   if (issue) {
-    if (sysRead) passDoors = access.enabledDoors.all().map(d => ({ id: d.id, name: d.name }));
+    if (sysWrite) passDoors = access.enabledDoors.all().map(d => ({ id: d.id, name: d.name }));
     else { const u = users.findById.get(req.user.uid); passDoors = u ? accessCore.doorsForUser(u).map(d => ({ id: d.id, name: d.name })) : []; }
   }
   res.json({ success: true, tools: {
@@ -4479,7 +4479,7 @@ function passView(p) {
 }
 router.get('/access/passes', requireAuth, (req, res) => {
   if (!canIssuePass(req)) return res.status(403).json({ error: '无签发访客码的权限' });
-  const rows = req.user.role === 'admin' ? access.passAll.all() : access.passByIssuer.all(req.user.uid);
+  const rows = isSysAdmin(req, 3) ? access.passAll.all() : access.passByIssuer.all(req.user.uid);
   res.json({ success: true, passes: rows.map(passView) });
 });
 router.post('/access/passes', requireAuth, (req, res) => {
@@ -4489,6 +4489,12 @@ router.post('/access/passes', requireAuth, (req, res) => {
   const doorIds = (Array.isArray(req.body?.door_ids) ? req.body.door_ids : [])
     .map(x => String(x).trim()).filter(id => access.doorById.get(id));   // 只保留存在的门
   if (!doorIds.length) return res.status(400).json({ error: '请至少选择一扇可通行的门' });
+  // 非系统管理员（分组/组织管理员）只能把访客带进自己有权通行的门（v3.5.31）
+  if (!isSysAdmin(req, 2)) {
+    const meU = users.findById.get(req.user.uid);
+    const mine = new Set(meU ? accessCore.doorsForUser(meU).map(d => d.id) : []);
+    if (doorIds.some(id => !mine.has(id))) return res.status(403).json({ error: '只能签发你自己有权通行的门' });
+  }
   const maxUses = Math.max(0, parseInt(req.body?.max_uses, 10) || 0);
   const me = users.findById.get(req.user.uid);
   // 指定陪同人（v3.5.29，可空：空则需陪同的门由签发人陪同）
@@ -4517,7 +4523,7 @@ router.delete('/access/passes/:id', requireAuth, (req, res) => {
   if (!canIssuePass(req)) return res.status(403).json({ error: '无权限' });
   const p = access.passById.get(req.params.id);
   if (!p) return res.status(404).json({ error: '访客码不存在' });
-  if (req.user.role !== 'admin' && p.issued_by !== req.user.uid) return res.status(403).json({ error: '只能撤销自己签发的访客码' });
+  if (!isSysAdmin(req, 2) && p.issued_by !== req.user.uid) return res.status(403).json({ error: '只能撤销自己签发的访客码' });
   access.revokePass.run(p.id);
   audit('access.pass_revoked', { subject: '访客:' + p.visitor_name, actor: actorOf(req) });
   res.json({ success: true });

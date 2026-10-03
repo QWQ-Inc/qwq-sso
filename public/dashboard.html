@@ -819,6 +819,7 @@ function _devApi(method, path, body) {
   db._accessDoors = db._accessDoors || [{ id:'d-demo', name:'一楼大门', location:'总部一楼', subject_id:null, subject_name:null, status:'enabled', note:'', rule_count:1 }];
   db._accessRules = db._accessRules || { 'd-demo':[{ id:'r-demo', door_id:'d-demo', grant_type:'all', grant_value:'', effect:'allow', weekdays:'', time_start:'', time_end:'', label:'所有登录用户' }] };
   db._accessLogs = db._accessLogs || [{ id:'al1', door_name:'一楼大门', user_name:'演示用户', uid_seq:1, method:'qr', result:'allow', reason:'ok', ip:'127.0.0.1', created_at:'2026-10-02 09:00:00' }];
+  if (path === '/user/app-center') return ok({ success:true, tools:{ users:null, devices:null, access:{ admin:false, passes:true } }, pass_doors: db._accessDoors.filter(d=>d.status==='enabled').map(d=>({ id:d.id, name:d.name })) });
   if (path === '/user/access/doors') return ok({ success:true, doors: db._accessDoors.filter(d=>d.status==='enabled').map(d=>({ id:d.id, name:d.name, location:d.location })) });
   if (method === 'POST' && path === '/user/access/qr') return ok({ success:true, code:'qr1.ZGVtbw.'+Math.random().toString(36).slice(2,10), expires_in:45, exp:Math.floor(Date.now()/1000)+45 });
   if (path === '/admin/access/doors' && method === 'GET') return ok({ success:true, doors: db._accessDoors });
@@ -1549,6 +1550,16 @@ async function loadMe() {
         <div class="card">
           <div class="card-header"><h3>我能通行的门</h3></div>
           <div class="card-body"><div id="access-my-doors" style="font-size:13px;color:var(--txd);">加载中…</div></div>
+        </div>
+        <!-- 我签发的访客码（分组/组织管理员入口，v3.5.31；系统管理员在管理端「门禁管理」签发） -->
+        <div class="card" id="my-pass-card" style="display:none;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>我签发的访客码</h3>
+            <button class="btn primary" style="font-size:11px;" onclick="openPassModal(_myPassDoors)">+ 签发访客码</button>
+          </div>
+          <div class="card-body"><div id="my-pass-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+            <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 你是分组/组织管理员，可以邀请访客：只能开放你自己有权通行的门，记录签发人，可随时撤销。</div>
+          </div>
         </div>
         <div class="card">
           <div class="card-header"><h3>人脸录入（可选）</h3></div>
@@ -2448,7 +2459,7 @@ async function loadMe() {
             <button class="btn primary" style="font-size:11px;" onclick="openPassModal()">+ 签发访客码</button>
           </div>
           <div class="card-body"><div id="adm-pass-list" style="font-size:13px;color:var(--txd);">加载中…</div>
-            <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 时限+指定门+次数的临时码，可发给无账号访客（扫码即过）。管理员 / 分组管理员可签发，记录签发人。</div>
+            <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 时限+指定门+次数的临时码，可发给无账号访客（扫码即过）。管理员 / 分组·组织管理员可签发（后者在用户端「门禁」页），记录签发人。</div>
           </div>
         </div>
         <div class="card">
@@ -5018,6 +5029,18 @@ async function loadMyAccess() {
       </div>`).join('')
     : '<div style="color:var(--txd);">暂无你有权限通行的门。如需开通请联系管理员。</div>';
   loadFaceStatus();
+  loadMyPassCard();
+}
+// 非系统管理员的签发人（分组/组织管理员）在用户端「门禁」页签发访客码（v3.5.31）
+let _myPassDoors = [];
+async function loadMyPassCard() {
+  const card = document.getElementById('my-pass-card'); if (!card) return;
+  const { ok, data } = await api('GET', '/user/app-center');
+  const a = ok ? data.tools?.access : null;
+  if (!a || !a.passes || a.admin) { card.style.display = 'none'; return; }
+  _myPassDoors = data.pass_doors || [];
+  card.style.display = '';
+  loadAccessPasses('my-pass-list');
 }
 async function loadFaceStatus() {
   const el = document.getElementById('face-status'); const del = document.getElementById('face-del-btn');
@@ -5212,7 +5235,7 @@ async function loadAccessAdmin() {
   _accessDoorsCache = data.doors || [];
   loadAccessCards();
   loadAccessFaces();
-  loadAccessPasses();
+  loadAccessPasses('adm-pass-list');
   loadAccessPeers();
   loadFedApps();
   loadAccessLogs();
@@ -5507,8 +5530,10 @@ async function pushPeer(id, name, baseUrl) {
   showToast(ok ? '✓ 对方已接受配对' : ('✗ ' + (data.error || '推送失败')));
 }
 let _accessDoorsCache = [];
-async function loadAccessPasses() {
-  const box = document.getElementById('adm-pass-list'); if (!box) return;
+let _passBoxId = 'adm-pass-list';   // 访客码列表渲染到哪：管理端 adm-pass-list / 用户端 my-pass-list
+async function loadAccessPasses(boxId) {
+  if (boxId) _passBoxId = boxId;
+  const box = document.getElementById(_passBoxId); if (!box) return;
   const { ok, data } = await api('GET', '/access/passes');
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + (data.error || '加载失败') + '</div>'; return; }
   const passes = data.passes || [];
@@ -5564,8 +5589,8 @@ function bwCollect(prefix) {
   })).filter(w => w.wd.length || (w.s && w.e) || w.from || w.to);
 }
 
-function openPassModal() {
-  const doors = _accessDoorsCache.filter(d => d.status === 'enabled');
+function openPassModal(doorList) {
+  const doors = Array.isArray(doorList) ? doorList : _accessDoorsCache.filter(d => d.status === 'enabled');
   const ov = document.createElement('div'); ov.className = 'modal-mask show';
   ov.innerHTML = `<div class="modal" style="max-width:480px;">
     <div class="modal-head"><h3>签发访客通行码</h3><button class="modal-x" onclick="this.closest('.modal-mask').remove()">×</button></div>
@@ -5576,7 +5601,7 @@ function openPassModal() {
       <input id="pass-phone" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
       <label style="font-size:12px;color:var(--txd);">可通行的门 *</label>
       <div style="max-height:140px;overflow-y:auto;border:1px solid var(--bd);border-radius:6px;padding:8px;margin:4px 0 10px;">
-        ${doors.length?doors.map(d=>`<label style="display:block;font-size:13px;padding:3px 0;color:var(--tx);"><input type="checkbox" class="pass-door" value="${esc(d.id)}"> ${esc(d.name)}${d.location?' · '+esc(d.location):''}</label>`).join(''):'<span style="font-size:12px;color:var(--txd);">暂无启用的门</span>'}
+        ${doors.length?doors.map(d=>`<label style="display:block;font-size:13px;padding:3px 0;color:var(--tx);"><input type="checkbox" class="pass-door" value="${esc(d.id)}"> ${esc(d.name)}${d.location?' · '+esc(d.location):''}</label>`).join(''):'<span style="font-size:12px;color:var(--txd);">暂无可开放的门</span>'}
       </div>
       <div style="display:flex;gap:8px;">
         <div style="flex:1;"><label style="font-size:12px;color:var(--txd);">生效时间</label><input type="datetime-local" id="pass-from" style="width:100%;padding:8px;margin-top:4px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);"></div>
