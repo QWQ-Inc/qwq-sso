@@ -318,9 +318,11 @@ final class APIClient {
 
     // ── 门禁 ──
     /// 出示动态开门码：返回 (code, 有效秒数)
-    func accessQr(token: String) async throws -> (code: String, expiresIn: Int) {
-        let j = try await postJSON("/api/user/access/qr", body: [:], token: token)
-        return ((j["code"] as? String) ?? "", (j["expires_in"] as? Int) ?? 45)
+    /// doorId 为 nil = 主码（能开有权限的所有门）；传门 id = 该门子码（v3.5.29）
+    func accessQr(token: String, doorId: String? = nil) async throws -> (code: String, expiresIn: Int) {
+        let body: [String: Any] = doorId.map { ["door_id": $0] } ?? [:]
+        let j = try await postJSON("/api/user/access/qr", body: body, token: token)
+        return ((j["code"] as? String) ?? "", (j["expires_in"] as? Int) ?? 60)
     }
     /// 我能通行的门
     func accessDoors(token: String) async throws -> [[String: Any]] {

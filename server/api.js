@@ -4208,6 +4208,16 @@ router.post('/user/access/qr', requireAuth, (req, res) => {
   const u = users.findById.get(req.user.uid);
   if (!u) return res.status(404).json({ error: '用户不存在' });
   if (u.status && u.status !== 'active') return res.status(403).json({ error: '账号已被禁用' });
+  // v3.5.29：带 door_id = 出该门的子码（只能开这一扇、有效期按门设定）；不带 = 主码（能开我有权限的所有门）
+  const doorId = req.body?.door_id ? String(req.body.door_id) : '';
+  if (doorId) {
+    const door = access.doorById.get(doorId);
+    if (!door) return res.status(404).json({ error: '门不存在' });
+    const ev = accessCore.evaluateAccess(u, door);
+    if (!ev.allow) return res.status(403).json({ error: accessCore.REASON_LABEL[ev.reason] || '无权通行此门', reason: ev.reason });
+    const r = accessCore.signQr(u, accessCore.subTtl(door), door.id);
+    return res.json({ success: true, code: r.code, expires_in: r.expires_in, exp: r.exp, door: { id: door.id, name: door.name } });
+  }
   const r = accessCore.signQr(u);
   res.json({ success: true, code: r.code, expires_in: r.expires_in, exp: r.exp });
 });
@@ -4226,6 +4236,19 @@ router.get('/admin/access/doors', requireAdmin(3), (req, res) => {
   }));
   res.json({ success: true, doors: rows });
 });
+// 门级策略（v3.5.29）：子码模式 / 子码有效期 / 访客须陪同 / 禁入时段
+function applyDoorPolicy(id, body, cur) {
+  const has = k => body && body[k] !== undefined;
+  if (!['code_mode', 'sub_ttl', 'escort_required', 'blackout'].some(has)) return;
+  const ttl = has('sub_ttl') ? parseInt(body.sub_ttl, 10) : (cur?.sub_ttl || 0);
+  access.setDoorPolicy.run({
+    id,
+    code_mode: has('code_mode') ? (body.code_mode === 'sub_only' ? 'sub_only' : 'any') : (cur?.code_mode || 'any'),
+    sub_ttl: Number.isFinite(ttl) && ttl > 0 ? Math.min(600, Math.max(15, ttl)) : 0,
+    escort_required: has('escort_required') ? (body.escort_required ? 1 : 0) : (cur?.escort_required || 0),
+    blackout: has('blackout') ? JSON.stringify(accessCore.normalizeWindows(body.blackout)) : (cur?.blackout || ''),
+  });
+}
 router.post('/admin/access/doors', requireAdmin(2), (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: '请填写门/通道名称' });
@@ -4237,6 +4260,7 @@ router.post('/admin/access/doors', requireAdmin(2), (req, res) => {
     subject_id: req.body?.subject_id || null,
     status, note: String(req.body?.note || '').trim().slice(0, 300),
   });
+  applyDoorPolicy(id, req.body, null);
   res.json({ success: true, door: access.doorById.get(id) });
 });
 router.patch('/admin/access/doors/:id', requireAdmin(2), (req, res) => {
@@ -4251,6 +4275,7 @@ router.patch('/admin/access/doors/:id', requireAdmin(2), (req, res) => {
     status: ['enabled', 'disabled'].includes(req.body?.status) ? req.body.status : d.status,
     note: req.body?.note != null ? String(req.body.note).trim().slice(0, 300) : d.note,
   });
+  applyDoorPolicy(d.id, req.body, d);
   res.json({ success: true, door: access.doorById.get(d.id) });
 });
 router.delete('/admin/access/doors/:id', requireAdmin(2), (req, res) => {
@@ -4431,7 +4456,8 @@ function genPassCode() { return 'VP-' + require('crypto').randomBytes(5).toStrin
 function passView(p) {
   const doorNames = String(p.door_ids || '').split(',').map(s => s.trim()).filter(Boolean)
     .map(id => access.doorById.get(id)?.name || id);
-  return { ...p, door_names: doorNames };
+  const esc = p.escort_user_id ? users.findById.get(p.escort_user_id) : null;
+  return { ...p, door_names: doorNames, escort_name: esc ? esc.name : null };
 }
 router.get('/access/passes', requireAuth, (req, res) => {
   if (!canIssuePass(req)) return res.status(403).json({ error: '无签发访客码的权限' });
@@ -4447,6 +4473,14 @@ router.post('/access/passes', requireAuth, (req, res) => {
   if (!doorIds.length) return res.status(400).json({ error: '请至少选择一扇可通行的门' });
   const maxUses = Math.max(0, parseInt(req.body?.max_uses, 10) || 0);
   const me = users.findById.get(req.user.uid);
+  // 指定陪同人（v3.5.29，可空：空则需陪同的门由签发人陪同）
+  let escortId = null;
+  if (req.body?.escort && String(req.body.escort).trim()) {
+    const eu = resolveUser(String(req.body.escort).trim());
+    if (eu === AMBIGUOUS) return res.status(400).json({ error: '陪同人账号有重名，请用邮箱/手机/UID' });
+    if (!eu) return res.status(400).json({ error: '陪同人账号不存在' });
+    escortId = eu.id;
+  }
   const id = uuidv4(), code = genPassCode();
   access.insertPass.run({
     id, code, visitor_name: visitor_name.slice(0, 40),
@@ -4457,6 +4491,7 @@ router.post('/access/passes', requireAuth, (req, res) => {
     valid_to: String(req.body?.valid_to || '').trim().slice(0, 19),
     max_uses: maxUses, note: String(req.body?.note || '').trim().slice(0, 200),
   });
+  access.setPassExtra.run(escortId, JSON.stringify(accessCore.normalizeWindows(req.body?.blackout)), id);
   audit('access.pass_issued', { subject: '访客:' + visitor_name, actor: actorOf(req), detail: { doors: doorIds.length, by: me ? me.name : '' } });
   res.json({ success: true, id, code });
 });
@@ -4473,10 +4508,23 @@ router.delete('/access/passes/:id', requireAuth, (req, res) => {
 router.get('/public/pass/:code', (req, res) => {
   const p = access.passByCode.get(String(req.params.code).trim());
   if (!p) return res.json({ ok: false });
-  const doorNames = String(p.door_ids || '').split(',').map(s => s.trim()).filter(Boolean)
-    .map(id => access.doorById.get(id)?.name || id);
+  const doorIds = String(p.door_ids || '').split(',').map(s => s.trim()).filter(Boolean);
+  const doorNames = doorIds.map(id => access.doorById.get(id)?.name || id);
+  // door_list（v3.5.29）：访客页点某扇门出该门子码
+  const doorList = doorIds.map(id => { const d = access.doorById.get(id); return d ? { id: d.id, name: d.name, sub_only: d.code_mode === 'sub_only', escort: !!(d.escort_required || p.escort_user_id) } : null; }).filter(Boolean);
   res.json({ ok: true, visitor_name: p.visitor_name, valid_from: p.valid_from, valid_to: p.valid_to,
-    doors: doorNames, status: p.status, code: p.code, wallet: pkpass.isConfigured() });
+    doors: doorNames, door_list: doorList, status: p.status, code: p.code, wallet: pkpass.isConfigured() });
+});
+// 访客某扇门的子码（v3.5.29）：持有访客码即可取（访客码本身就是凭证），子码短时一次性
+router.post('/public/pass/:code/sub', (req, res) => {
+  const p = access.passByCode.get(String(req.params.code).trim());
+  if (!p || p.status !== 'active') return res.status(404).json({ error: '访客码无效' });
+  const doorId = String(req.body?.door_id || '');
+  if (!String(p.door_ids || '').split(',').map(s => s.trim()).includes(doorId)) return res.status(400).json({ error: '访客码不含此门' });
+  const door = access.doorById.get(doorId);
+  if (!door) return res.status(404).json({ error: '门不存在' });
+  const r = accessCore.signVisitorSub(p, door);
+  res.json({ success: true, code: r.code, expires_in: r.expires_in, door: { id: door.id, name: door.name } });
 });
 // 访客码 → Apple Wallet（.pkpass）：iOS 打开此地址即可「添加到钱包」
 const pkpass = require('./pkpass');
@@ -4701,6 +4749,53 @@ router.post('/admin/version/apply', requireAdmin(1), async (req, res) => {
 
 // ── 开放 API：门禁设备接入 ──
 // 扫动态码开门：设备读到二维码内容后调此接口；code 一次性消费防重放。
+const ESCORT_WINDOW = 120;   // 访客验码通过后，等陪同人扫码的秒数
+// 访客已通过凭证校验后：需陪同则挂起等陪同人，否则直接放行。返回给设备的响应体。
+function passGrantOrEscort({ pass, door, ip, method }) {
+  const needEscort = !!(door.escort_required || pass.escort_user_id);
+  if (!needEscort) {
+    access.bumpPassUse.run(pass.id);
+    const ev = { allow: true, reason: 'ok' };
+    writeAccessLog({ door, user: null, method, ev, ip, name: pass.visitor_name });
+    return { allow: true, result: 'allow', reason: 'ok', reason_text: '放行',
+      visitor: { name: pass.visitor_name, remaining: pass.max_uses > 0 ? Math.max(0, pass.max_uses - pass.used_count - 1) : null },
+      door: { id: door.id, name: door.name } };
+  }
+  const escortId = pass.escort_user_id || pass.issued_by;
+  const escort = escortId ? users.findById.get(escortId) : null;
+  const ev = { allow: false, reason: 'need_escort' };
+  writeAccessLog({ door, user: null, method, ev, ip, name: pass.visitor_name });
+  if (!escort) return { allow: false, result: 'deny', reason: 'need_escort', reason_text: '需要陪同人，但该访客码没有可用的陪同人', door: { id: door.id, name: door.name } };
+  const now = Math.floor(Date.now() / 1000);
+  try { access.escortClean.run(now); } catch (_) {}
+  access.escortDelPass.run(pass.id, door.id);
+  access.escortInsert.run({ id: uuidv4(), door_id: door.id, pass_id: pass.id, escort_user_id: escort.id, visitor_name: pass.visitor_name, expire_at: now + ESCORT_WINDOW });
+  return { allow: false, result: 'pending_escort', reason: 'need_escort',
+    reason_text: `访客已核验，请陪同人「${escort.name}」在 ${ESCORT_WINDOW} 秒内于此门扫码带入`,
+    visitor: { name: pass.visitor_name }, escort: { name: escort.name }, expires_in: ESCORT_WINDOW,
+    door: { id: door.id, name: door.name } };
+}
+// 陪同人本人通过后：把这扇门上等他的访客一并放行（访客码凭证再核一次，防等待期间被撤销/用尽）
+function completeEscorts(door, user, ip) {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = access.escortFor.all(door.id, user.id, now);
+  const done = [];
+  for (const r of rows) {
+    access.escortDel.run(r.id);
+    const pass = access.passById.get(r.pass_id);
+    const ev = accessCore.evaluatePass(pass, door);
+    if (!ev.allow) { writeAccessLog({ door, user: null, method: 'visitor', ev, ip, name: r.visitor_name }); continue; }
+    access.bumpPassUse.run(pass.id);
+    writeAccessLog({ door, user: null, method: 'visitor', ev: { allow: true, reason: 'escort_ok' }, ip, name: r.visitor_name + '（陪同:' + user.name + '）' });
+    done.push(r.visitor_name);
+  }
+  return done;
+}
+const denyBody = (door, reason) => ({ allow: false, result: 'deny', reason, reason_text: accessCore.REASON_LABEL[reason] || reason, door: { id: door.id, name: door.name } });
+
+// 扫码开门：设备读到二维码内容后调此接口；动态码/子码一次性消费防重放。
+// 码类型：qr1.=用户主码/门子码；vs1.=访客门子码；ft1.=跨域码；其余=静态访客码。
+// v3.5.29：门级策略（禁入时段 / 只认子码）对所有类型生效；访客到「需陪同」的门先挂起，陪同人扫码才双双放行。
 router.post('/v1/access/verify', requireApiKey('access:verify'), (req, res) => {
   if (req.isSandbox) return res.json({ ...SANDBOX.accessVerify(), _sandbox: true });
   const { door_id, code } = req.body || {};
@@ -4708,12 +4803,15 @@ router.post('/v1/access/verify', requireApiKey('access:verify'), (req, res) => {
   const door = access.doorById.get(door_id);
   if (!door) return res.status(404).json({ error: '门不存在' });
   const ip = accessClientIp(req);
-  // 跨系统联邦码（ft1. 开头）：伙伴系统签发的跨域访客码，用登记的共享密钥验签
-  if (String(code).startsWith('ft1.')) {
-    const parsed = accessCore.fedParse(code);
+  const c = String(code).trim();
+  // 跨系统联邦码（ft1. 开头）：伙伴系统签发的跨域访客码，用登记的共享密钥验签（无子码机制，sub_only 门不收）
+  if (c.startsWith('ft1.')) {
+    const parsed = accessCore.fedParse(c);
     const peer = parsed && access.fedByCode.get(parsed.iss);
     let ev;
-    if (!peer) ev = { allow: false, reason: 'fed_unknown' };
+    const pol = accessCore.doorPolicyCheck(door, { isSub: false });
+    if (pol) ev = { allow: false, reason: pol };
+    else if (!peer) ev = { allow: false, reason: 'fed_unknown' };
     else if (!accessCore.fedVerifySig(parsed.body, parsed.sig, peer.secret)) ev = { allow: false, reason: 'fed_bad_sig' };
     else ev = accessCore.evaluateFed(parsed, peer, door);
     const vname = (parsed?.v || '访客') + (peer ? ('@' + peer.name) : '');
@@ -4725,33 +4823,45 @@ router.post('/v1/access/verify', requireApiKey('access:verify'), (req, res) => {
       door: { id: door.id, name: door.name },
     });
   }
-  // 访客通行码（非 qr1./ft1. 开头）：静态时限凭证，不走一次性消费
-  if (!String(code).startsWith('qr1.')) {
-    const pass = access.passByCode.get(String(code).trim());
-    const ev = accessCore.evaluatePass(pass, door);
-    if (ev.allow) access.bumpPassUse.run(pass.id);
-    writeAccessLog({ door, user: null, method: 'visitor', ev, ip, name: pass ? pass.visitor_name : null });
-    return res.json({
-      allow: ev.allow, result: ev.allow ? 'allow' : 'deny',
-      reason: ev.reason, reason_text: accessCore.REASON_LABEL[ev.reason] || ev.reason,
-      visitor: pass ? { name: pass.visitor_name, remaining: pass.max_uses > 0 ? Math.max(0, pass.max_uses - pass.used_count - (ev.allow ? 1 : 0)) : null } : null,
-      door: { id: door.id, name: door.name },
-    });
+  // 访客门子码（vs1.）：只能开签发时指定的那扇门
+  if (c.startsWith('vs1.')) {
+    const vr = accessCore.verifyVisitorSub(c, { consume: true });
+    let reason = vr.ok ? null : vr.reason;
+    const pass = vr.ok ? access.passByCode.get(String(vr.payload.c)) : null;
+    if (!reason && !accessCore.doorMatches(vr.payload.d, door)) reason = 'wrong_door_code';
+    if (!reason) reason = accessCore.doorPolicyCheck(door, { isSub: true });
+    if (!reason) { const ev = accessCore.evaluatePass(pass, door); if (!ev.allow) reason = ev.reason; }
+    if (reason) { writeAccessLog({ door, user: null, method: 'visitor', ev: { allow: false, reason }, ip, name: pass ? pass.visitor_name : null }); return res.json(denyBody(door, reason)); }
+    return res.json(passGrantOrEscort({ pass, door, ip, method: 'visitor' }));
   }
-  // 用户动态开门码（一次性消费）
-  const vr = accessCore.verifyQr(code, { consume: true });
+  // 静态访客通行码（非 qr1./vs1./ft1.）：时限凭证，不走一次性消费；sub_only 门不收
+  if (!c.startsWith('qr1.')) {
+    const pass = access.passByCode.get(c);
+    let reason = accessCore.doorPolicyCheck(door, { isSub: false });
+    if (!reason) { const ev = accessCore.evaluatePass(pass, door); if (!ev.allow) reason = ev.reason; }
+    if (reason) { writeAccessLog({ door, user: null, method: 'visitor', ev: { allow: false, reason }, ip, name: pass ? pass.visitor_name : null }); return res.json(denyBody(door, reason)); }
+    return res.json(passGrantOrEscort({ pass, door, ip, method: 'visitor' }));
+  }
+  // 用户动态码：主码（无 d）或门子码（d=门 id），一次性消费
+  const vr = accessCore.verifyQr(c, { consume: true });
   if (!vr.ok) {
-    const ev = { allow: false, reason: vr.reason };
-    writeAccessLog({ door, user: null, method: 'qr', ev, ip });
-    return res.json({ allow: false, result: 'deny', reason: vr.reason, reason_text: accessCore.REASON_LABEL[vr.reason] || vr.reason, door: { id: door.id, name: door.name } });
+    writeAccessLog({ door, user: null, method: 'qr', ev: { allow: false, reason: vr.reason }, ip });
+    return res.json(denyBody(door, vr.reason));
   }
   const user = users.findById.get(vr.payload.u);
-  const ev = accessCore.evaluateAccess(user, door);
+  let ev;
+  if (vr.payload.d && !accessCore.doorMatches(vr.payload.d, door)) ev = { allow: false, reason: 'wrong_door_code' };
+  else {
+    const pol = accessCore.doorPolicyCheck(door, { isSub: !!vr.payload.d });
+    ev = pol ? { allow: false, reason: pol } : accessCore.evaluateAccess(user, door);
+  }
   writeAccessLog({ door, user, method: 'qr', ev, ip });
+  const escorted = ev.allow && user ? completeEscorts(door, user, ip) : [];
   res.json({
     allow: ev.allow, result: ev.allow ? 'allow' : 'deny',
     reason: ev.reason, reason_text: accessCore.REASON_LABEL[ev.reason] || ev.reason,
     user: user ? { uid_seq: user.uid_seq, uid_code: user.uid_code || null, name: user.name } : null,
+    ...(escorted.length ? { escorted } : {}),
     door: { id: door.id, name: door.name },
   });
 });
@@ -4774,12 +4884,16 @@ router.post('/v1/access/check', requireApiKey('access:verify'), (req, res) => {
     user = findRealUserByUid(uid);
   }
   m = ['card', 'face', 'remote', 'qr'].includes(m) ? m : 'card';
-  const ev = user ? accessCore.evaluateAccess(user, door) : { allow: false, reason: reasonNoUser };
+  // 卡/人脸不是二维码，不受「只认子码」约束；禁入时段照样生效（v3.5.29）
+  const black = door.blackout && accessCore.inBlackout(door.blackout) ? 'door_blackout' : null;
+  const ev = !user ? { allow: false, reason: reasonNoUser } : black ? { allow: false, reason: black } : accessCore.evaluateAccess(user, door);
   writeAccessLog({ door, user, method: m, ev, ip });
+  const escorted = ev.allow && user ? completeEscorts(door, user, ip) : [];
   res.json({
     allow: ev.allow, result: ev.allow ? 'allow' : 'deny',
     reason: ev.reason, reason_text: accessCore.REASON_LABEL[ev.reason] || ev.reason,
     user: user ? { uid_seq: user.uid_seq, uid_code: user.uid_code || null, name: user.name } : null,
+    ...(escorted.length ? { escorted } : {}),
     door: { id: door.id, name: door.name },
   });
 });

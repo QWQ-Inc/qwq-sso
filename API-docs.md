@@ -1388,8 +1388,16 @@ POST /api/v1/users/:uid/shop/exchange/:goods_id  # 代用户兑换商品/开盲�
 
 门口的扫码机/读卡器用一个门禁 **`sk_live_`** 密钥（后台给本机出口 IP 配可信 IP，支持 CIDR）调用；`sk_test_` 走沙盒。
 
-**开门方式 = 动态二维码**：用户在控制台/App 点「出示开门码」拿到一个 45 秒、一次性的签名码（`qr1.<payload>.<sig>`）。
-码代表「人」不绑死门——门口校验时按该门的授权规则判定；jti 一次性消费，截图重放会被拒。
+**开门方式 = 动态二维码**：用户在控制台/App 点「出示开门码」拿到一个 **60 秒**（`ACCESS_QR_TTL` 可改，15~600）、一次性的签名码（`qr1.<payload>.<sig>`）。
+**主码**代表「人」不绑死门——门口校验时按该门的授权规则判定；jti 一次性消费，截图重放会被拒。
+
+**门子码（v3.5.29）**：用户点某扇门可出示该门的**子码**（同为 `qr1.`，内含门标签，只能开这一扇；有效期按门设定）。每扇门可独立设：
+- **开门码模式**：`any`（主码/子码都收）或 `sub_only`（只收本门子码；主码、静态访客码、跨域码一律 `need_subcode`）；
+- **子码有效期**（秒）；
+- **禁入时段**（星期 / 时段 / 日期区间，可多条）：对所有人生效，含访客、跨域访客与刷卡人脸 → `door_blackout`；
+- **访客须陪同**：访客验码通过后返回 `result:"pending_escort"`，陪同人须在 120 秒内于同一扇门扫自己的码（或刷卡/人脸），陪同人放行时响应带 `escorted:["访客名"]`，访客同时放行并扣次数。
+
+访客也有子码：访客页 `/pass.html` 点某扇门出示该门子码（`vs1.`，短时一次性，`POST /api/public/pass/:code/sub {door_id}`）。访客码可指定**陪同人**（指定后到任何门都要此人带入；未指定时「需陪同」的门由签发人带入）和**自己的禁入时段**（`pass_blackout`）。
 
 ```
 POST /api/v1/access/verify     scope: access:verify
@@ -1402,6 +1410,7 @@ Authorization: Bearer sk_live_xxx
 ```
 
 - `allow=false` 时 `reason` ∈ `denied_by_rule`（被拒绝规则命中）/ `out_of_schedule`（不在时段）/ `not_authorized`（无权限）/ `expired`（码过期）/ `replayed`（码已用）/ `bad_sig` / `user_disabled` / `door_disabled` 等，`reason_text` 为中文。
+- v3.5.29 新增 `reason`：`need_subcode`（此门只认子码）/ `wrong_door_code`（子码不属于此门）/ `door_blackout`（门禁入时段）/ `pass_blackout`（访客码禁入时段）/ `need_escort`（`result="pending_escort"`，附 `escort.name`、`expires_in`；不是拒绝，是等陪同人）。
 - 无论放行/拒绝都会写一条通行记录 + 一条防篡改审计（`access.granted` / `access.denied`）。
 - **访客通行码也走同一接口**：`code` 不以 `qr1.` 开头时，按访客码处理——校验 时限 + 门在允许集 + 剩余次数，放行即扣一次。访客码由管理员/分组管理员在控制台签发（时限+指定门+次数，可发给无账号访客），访客用 `/pass.html?code=` 打开出示二维码。拒绝 `reason` ∈ `pass_expired`/`pass_not_started`/`pass_wrong_door`/`pass_used_up`/`pass_revoked`/`pass_unknown`。
 - **跨系统联邦码**（`code` 以 `ft1.` 开头，v3.5.5）：伙伴系统用双方登记的**共享密钥**签发的跨域访客码。本系统按 `iss`(peer_code) 找到登记的伙伴 → 用其 secret 本地验签 → 校验 伙伴启用 + 未过合作期 + 码未过期 + 门在「开放给该伙伴」集合内 → 放行（离线可验，不回调对方）。拒绝 `reason` ∈ `fed_bad_sig`/`fed_unknown`/`fed_revoked`/`fed_peer_expired`/`fed_code_expired`/`fed_wrong_door`。联邦伙伴在管理端「门禁管理 → 跨系统联邦」登记（双方填同一对 peer_code+secret），各自决定开放给对方哪些门。

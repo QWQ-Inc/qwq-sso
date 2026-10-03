@@ -54,9 +54,33 @@ function fmt(s){ return s ? String(s).replace('T',' ').slice(0,16) : ''; }
     `<div class="name">${esc(d.visitor_name || '访客')}</div>` +
     `<div class="status ${active?'ok':'bad'}">${active?'有效':'已失效'}</div>` +
     `<div class="meta">可通行：${esc((d.doors||[]).join('、')||'—')}<br>有效期：${esc(win)}</div>` +
+    ((active && (d.door_list||[]).length) ? `<div class="meta" style="margin-top:10px;">按门出示专属子码（标「仅子码」的门必须用子码；「需陪同」的门验码后请等陪同人扫码）：</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:8px 0;">${d.door_list.map(x =>
+        `<button class="door-btn" data-id="${esc(x.id)}" data-name="${esc(x.name)}" style="padding:8px 12px;border-radius:9px;border:1px solid #ccc;background:#fff;font-size:13px;cursor:pointer;">🚪 ${esc(x.name)}${x.sub_only?' · 仅子码':''}${x.escort?' · 需陪同':''}</button>`).join('')}
+        <button class="door-btn" data-id="" style="padding:8px 12px;border-radius:9px;border:1px solid #ccc;background:#fff;font-size:13px;cursor:pointer;">↩ 通用访客码</button></div>
+      <div id="sub-tip" class="meta"></div>` : '') +
     `<div class="code">${esc(d.code)}</div>` +
     ((active && d.wallet) ? `<a class="wallet-btn" href="/api/public/pass/${encodeURIComponent(code)}/pkpass"></a>` : '') +
     `<div class="tip">把这个二维码对准门口扫码机即可通行。请勿外传。</div>`;
+  // 子码（v3.5.29）：短时一次性，到期自动刷新；点「通用访客码」切回静态码
+  let subTimer = null, subTick = null;
+  const qrBox = el.querySelector('.qr');
+  const showCode = (c) => { if (qrBox && window.QRMini) qrBox.innerHTML = QRMini.svg(c, { scale: 6, quiet: 4 }) || esc(c); };
+  async function showSub(id, name) {
+    clearTimeout(subTimer); clearInterval(subTick);
+    const tip = document.getElementById('sub-tip');
+    if (!id) { showCode(d.code); if (tip) tip.textContent = ''; return; }
+    let r;
+    try { r = await (await fetch('/api/public/pass/' + encodeURIComponent(code) + '/sub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ door_id: id }) })).json(); }
+    catch (_) { if (tip) tip.textContent = '网络错误'; return; }
+    if (!r || !r.code) { if (tip) tip.textContent = (r && r.error) || '获取失败'; return; }
+    showCode(r.code);
+    let left = r.expires_in || 60;
+    const upd = () => { if (tip) tip.textContent = `「${name}」子码 · ${left} 秒后自动刷新（一次性）`; };
+    upd(); subTick = setInterval(() => { left--; if (left >= 0) upd(); }, 1000);
+    subTimer = setTimeout(() => showSub(id, name), (r.expires_in || 60) * 1000);
+  }
+  el.querySelectorAll('.door-btn').forEach(b => b.addEventListener('click', () => showSub(b.dataset.id, b.dataset.name)));
 })();
 </script>
 </body>

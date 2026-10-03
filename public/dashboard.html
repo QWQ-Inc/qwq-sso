@@ -1543,7 +1543,7 @@ async function loadMe() {
             <div id="access-qr-box" style="display:inline-block;min-height:40px;"></div>
             <div id="access-qr-tip" style="font-size:12px;color:var(--txd);margin-top:8px;">点下方按钮出示动态二维码，对准门口扫码机即可开门。</div>
             <div style="margin-top:12px;"><button class="btn primary" onclick="showAccessQr()">出示开门码</button></div>
-            <div style="font-size:11px;color:var(--txd);margin-top:8px;">开门码 45 秒失效且一次性，截图无法复用。</div>
+            <div style="font-size:11px;color:var(--txd);margin-top:8px;">主码可开你有权限的所有门，默认 60 秒失效且一次性，截图无法复用。点下方某扇门可出示该门的专属子码。</div>
           </div>
         </div>
         <div class="card">
@@ -5007,9 +5007,14 @@ async function loadMyAccess() {
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const doors = data.doors || [];
   if (box) box.innerHTML = doors.length
-    ? doors.map(d => `<div style="padding:10px 12px;border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;">
-        <div style="font-weight:600;color:var(--tx);">🚪 ${esc(d.name)}</div>
-        ${d.location ? `<div style="font-size:12px;color:var(--txd);margin-top:2px;">${esc(d.location)}</div>` : ''}
+    ? doors.map(d => `<div style="padding:10px 12px;border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;color:var(--tx);">🚪 ${esc(d.name)}
+            ${d.code_mode === 'sub_only' ? '<span style="font-size:10px;color:#B26A00;background:rgba(255,149,0,.14);padding:1px 6px;border-radius:6px;margin-left:4px;">仅子码</span>' : ''}
+            ${d.blackout_now ? '<span style="font-size:10px;color:var(--err);margin-left:4px;">当前禁入</span>' : ''}</div>
+          ${d.location ? `<div style="font-size:12px;color:var(--txd);margin-top:2px;">${esc(d.location)}</div>` : ''}
+        </div>
+        <button class="btn" style="font-size:11px;" data-id="${esc(d.id)}" data-name="${esc(d.name)}" onclick="showAccessQr(this.dataset.id, this.dataset.name)">该门子码</button>
       </div>`).join('')
     : '<div style="color:var(--txd);">暂无你有权限通行的门。如需开通请联系管理员。</div>';
   loadFaceStatus();
@@ -5048,27 +5053,30 @@ async function deleteFace() {
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); loadFaceStatus();
 }
-async function showAccessQr() {
+// doorId 为空 = 主码（我有权限的所有门）；带 doorId = 该门子码（只开这一扇，有效期按门设定，v3.5.29）
+async function showAccessQr(doorId, doorName) {
   const box = document.getElementById('access-qr-box');
   const tip = document.getElementById('access-qr-tip');
   if (!box) return;
   box.innerHTML = '<span style="font-size:12px;color:var(--txd);">生成中…</span>';
-  const { ok, data } = await api('POST', '/user/access/qr');
-  if (!ok) { box.innerHTML = '<span style="color:var(--err);font-size:12px;">生成失败</span>'; return; }
+  const { ok, data } = await api('POST', '/user/access/qr', doorId ? { door_id: doorId } : {});
+  if (!ok) { box.innerHTML = `<span style="color:var(--err);font-size:12px;">${esc(data?.error || '生成失败')}</span>`; return; }
+  document.getElementById('page-access')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   const svg = (window.QRMini && QRMini.svg) ? QRMini.svg(data.code, { scale: 5, quiet: 4 }) : null;
   box.innerHTML = svg
     ? `<div style="background:#fff;padding:10px;border-radius:10px;line-height:0;display:inline-block;">${svg}</div>`
     : `<div style="font-family:monospace;font-size:12px;word-break:break-all;max-width:280px;margin:0 auto;">${esc(data.code)}</div>`;
-  let left = data.expires_in || 45;
-  const upd = () => { if (tip) tip.textContent = `对准门口扫码机 · 剩余 ${left} 秒后自动刷新`; };
+  let left = data.expires_in || 60;
+  const label = doorId ? `「${doorName || data.door?.name || ''}」子码` : '主码（所有可通行的门）';
+  const upd = () => { if (tip) tip.textContent = `${label} · 对准门口扫码机 · 剩余 ${left} 秒后自动刷新`; };
   upd();
   clearInterval(_accessQrTick); clearTimeout(_accessQrTimer);
   _accessQrTick = setInterval(() => { left--; if (left >= 0) upd(); }, 1000);
   // 到期自动刷新（仅当仍在门禁页）
   _accessQrTimer = setTimeout(() => {
-    if (document.getElementById('page-access')?.classList.contains('active')) showAccessQr();
+    if (document.getElementById('page-access')?.classList.contains('active')) showAccessQr(doorId, doorName);
     else { clearInterval(_accessQrTick); }
-  }, (data.expires_in || 45) * 1000);
+  }, (data.expires_in || 60) * 1000);
 }
 
 // ── 管理端：设备管理（v3.5.21）──
@@ -5514,7 +5522,7 @@ async function loadAccessPasses() {
           <span style="font-weight:600;color:var(--tx);">👤 ${esc(p.visitor_name)}</span>
           ${revoked?'<span style="color:var(--err);margin-left:6px;">已撤销</span>':''}
           <span style="color:var(--txd);margin-left:6px;">门：${esc((p.door_names||[]).join('、')||'—')}</span>
-          <div style="color:var(--txd);margin-top:3px;">${esc(win)} · ${esc(uses)} · 由 ${esc(p.issued_by_name||'—')} 签发</div>
+          <div style="color:var(--txd);margin-top:3px;">${esc(win)} · ${esc(uses)} · 由 ${esc(p.issued_by_name||'—')} 签发${p.escort_name?` · 陪同人 ${esc(p.escort_name)}`:''}${(p.blackout&&p.blackout!=='[]')?' · 有禁入时段':''}</div>
         </div>
         <div style="display:flex;gap:6px;">
           <button class="btn" style="font-size:11px;" onclick="showPassQr('${esc(p.code)}','${esc(p.visitor_name)}')">二维码/链接</button>
@@ -5524,6 +5532,38 @@ async function loadAccessPasses() {
     </div>`;
   }).join('') : '<div style="color:var(--txd);">还没有访客码。点右上「+ 签发访客码」。</div>';
 }
+// ── 禁入时段编辑器（v3.5.29，门 / 访客码共用）──
+// 一行 = 一个窗口：星期（不勾=每天）+ 时段（不填=全天）+ 日期区间（不填=长期）；三者至少填一项。
+const _BW_WD = ['日','一','二','三','四','五','六'];
+function bwRowHtml(w) {
+  w = w || {};
+  const wd = new Set(w.wd || []);
+  const inp = 'padding:5px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:12px;';
+  return `<div class="bw-row" style="border:1px solid var(--bd);border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:12px;">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+      ${_BW_WD.map((n, i) => `<label style="display:inline-flex;align-items:center;gap:2px;color:var(--tx);"><input type="checkbox" class="bw-wd" value="${i}"${wd.has(i)?' checked':''}>${n}</label>`).join('')}
+      <button class="btn" style="font-size:11px;padding:1px 8px;margin-left:auto;color:var(--err);border-color:var(--err);" onclick="this.closest('.bw-row').remove()">删除</button>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;color:var(--txd);">
+      时段 <input type="time" class="bw-s" value="${esc(w.s||'')}" style="${inp}"> – <input type="time" class="bw-e" value="${esc(w.e||'')}" style="${inp}">
+      日期 <input type="date" class="bw-from" value="${esc(w.from||'')}" style="${inp}"> ~ <input type="date" class="bw-to" value="${esc(w.to||'')}" style="${inp}">
+    </div>
+  </div>`;
+}
+function bwEditorHtml(prefix, windows) {
+  let arr = windows; if (typeof arr === 'string') { try { arr = arr ? JSON.parse(arr) : []; } catch (_) { arr = []; } }
+  return `<div id="${prefix}-bw">${(arr || []).map(bwRowHtml).join('')}</div>
+    <button class="btn" style="font-size:11px;" onclick="document.getElementById('${prefix}-bw').insertAdjacentHTML('beforeend', bwRowHtml())">＋ 添加禁入时段</button>
+    <div style="font-size:11px;color:var(--txd);margin-top:4px;">星期不勾=每天；时段不填=全天（跨夜如 22:00–06:00 可用）；日期不填=长期。每行至少填一项。</div>`;
+}
+function bwCollect(prefix) {
+  return Array.from(document.querySelectorAll(`#${prefix}-bw .bw-row`)).map(r => ({
+    wd: Array.from(r.querySelectorAll('.bw-wd:checked')).map(c => +c.value),
+    s: r.querySelector('.bw-s').value, e: r.querySelector('.bw-e').value,
+    from: r.querySelector('.bw-from').value, to: r.querySelector('.bw-to').value,
+  })).filter(w => w.wd.length || (w.s && w.e) || w.from || w.to);
+}
+
 function openPassModal() {
   const doors = _accessDoorsCache.filter(d => d.status === 'enabled');
   const ov = document.createElement('div'); ov.className = 'modal-mask show';
@@ -5544,6 +5584,10 @@ function openPassModal() {
       </div>
       <label style="font-size:12px;color:var(--txd);margin-top:10px;display:block;">使用次数（0=不限）</label>
       <input id="pass-uses" type="number" value="0" min="0" style="width:100%;padding:9px;margin:4px 0 4px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+      <label style="font-size:12px;color:var(--txd);margin-top:10px;display:block;">陪同人（可选：填了则访客到任何门都要此人扫码带入；不填则只在「需陪同」的门由签发人带入）</label>
+      <input id="pass-escort" placeholder="邮箱 / 手机 / UID / 用户名" style="width:100%;padding:9px;margin:4px 0 4px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+      <details style="margin-top:10px;"><summary style="font-size:12px;color:var(--txd);cursor:pointer;">禁入时段（可选：这些时间该访客码不能进门）</summary>
+        <div style="margin-top:6px;">${bwEditorHtml('pass', [])}</div></details>
     </div>
     <div class="modal-foot" style="padding:12px 16px;text-align:right;">
       <button class="btn" onclick="this.closest('.modal-mask').remove()">取消</button>
@@ -5561,6 +5605,8 @@ async function savePass() {
     valid_from: document.getElementById('pass-from').value.trim(),
     valid_to: document.getElementById('pass-to').value.trim(),
     max_uses: parseInt(document.getElementById('pass-uses').value, 10) || 0,
+    escort: document.getElementById('pass-escort').value.trim(),
+    blackout: bwCollect('pass'),
   };
   if (!body.visitor_name) { showToast('请填写访客姓名'); return; }
   if (!door_ids.length) { showToast('请至少选一扇门'); return; }
@@ -5745,6 +5791,19 @@ function openDoorModal(door) {
       </select>
       <label style="font-size:12px;color:var(--txd);">备注</label>
       <input id="door-note" value="${esc(d.note||'')}" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+      <div style="border-top:1px solid var(--bd);margin-top:4px;padding-top:10px;">
+        <div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:6px;">开门码规则（本门独立）</div>
+        <label style="font-size:12px;color:var(--txd);">开门码模式</label>
+        <select id="door-codemode" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+          <option value="any"${d.code_mode!=='sub_only'?' selected':''}>主码 / 子码都可（默认）</option>
+          <option value="sub_only"${d.code_mode==='sub_only'?' selected':''}>只认本门子码（主码、静态访客码、跨域码都不收）</option>
+        </select>
+        <label style="font-size:12px;color:var(--txd);">本门子码有效期（秒，15~600；留空/0 = 跟随全局，默认 60）</label>
+        <input id="door-subttl" type="number" min="0" max="600" value="${d.sub_ttl||''}" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx);margin-bottom:10px;"><input type="checkbox" id="door-escort"${d.escort_required?' checked':''}> 访客须陪同带入（访客验码后，由陪同人在 2 分钟内于此门扫码才放行）</label>
+        <div style="font-size:12px;color:var(--txd);margin-bottom:4px;">禁入时段（对所有人生效，含访客 / 跨域访客；刷卡人脸同样拦）</div>
+        ${bwEditorHtml('door', d.blackout)}
+      </div>
     </div>
     <div class="modal-foot" style="padding:12px 16px;text-align:right;">
       <button class="btn" onclick="this.closest('.modal-mask').remove()">取消</button>
@@ -5759,6 +5818,10 @@ async function saveDoor(id) {
     location: document.getElementById('door-loc').value.trim(),
     status: document.getElementById('door-status').value,
     note: document.getElementById('door-note').value.trim(),
+    code_mode: document.getElementById('door-codemode').value,
+    sub_ttl: parseInt(document.getElementById('door-subttl').value, 10) || 0,
+    escort_required: document.getElementById('door-escort').checked,
+    blackout: bwCollect('door'),
   };
   if (!body.name) { showToast('请填写门名称'); return; }
   const { ok, data } = id
@@ -5909,7 +5972,9 @@ function accessReasonText(r) {
     pass_unknown:'访客码无效', pass_revoked:'访客码已撤销', pass_not_started:'访客码未生效',
     pass_expired:'访客码已过期', pass_wrong_door:'访客码不含此门', pass_used_up:'访客码次数用完',
     fed_unknown:'跨域伙伴未知', fed_revoked:'跨域伙伴停用', fed_peer_expired:'跨域合作到期',
-    fed_code_expired:'跨域码过期', fed_wrong_door:'跨域码不含此门', fed_bad_sig:'跨域码签名无效' }[r] || r || '');
+    fed_code_expired:'跨域码过期', fed_wrong_door:'跨域码不含此门', fed_bad_sig:'跨域码签名无效',
+    door_blackout:'禁入时段', need_subcode:'需本门子码', wrong_door_code:'子码不属于此门',
+    pass_blackout:'访客码禁入时段', need_escort:'等待陪同人', escort_ok:'陪同带入' }[r] || r || '');
 }
 
 // ══════════════════════════════════════════
@@ -7942,6 +8007,7 @@ const ENV_GROUPS = [
     key: 'access', category: 'system', label: '门禁', icon: '🚪', color: '#C0392B',
     desc: '动态开门码的签名密钥。门/通道、授权规则在「门禁管理」页配置；门口设备经开放 API（scope access:verify/read）或扫码终端页接入。',
     vars: [
+      { key: 'ACCESS_QR_TTL', label: '主码有效期（秒）', desc: '用户「主码」（能开有权限的所有门）的有效秒数，默认 60，范围 15~600。各门的子码有效期在门禁管理里单独设，留空则跟随本值', required: false, placeholder: '60', value: '' },
       { key: 'ACCESS_QR_SECRET', label: '开门码签名密钥', desc: '用于给动态二维码签名的独立密钥；留空则回退用 JWT_SECRET。更换后，已出示但未使用的旧码立即失效（建议设一个独立的长随机串）', required: false, secret: true, placeholder: '一串长随机字符', value: '' },
       { key: 'FED_ALLOWED_DOMAINS', label: '联邦可用域（白名单）', desc: '逗号分隔的域名/后缀（子域自动匹配），如 sso.xubainet.cn,qwq.us。只有白名单内的伙伴域能「直接推送」联邦配对到本系统；留空=不接受任何推送（粘贴跨域码不受此限）', required: false, secret: false, placeholder: 'sso.xubainet.cn,qwq.us', value: '' },
     ]

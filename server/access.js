@@ -1,11 +1,21 @@
-// 门禁核心逻辑（v3.5.0）
+// 门禁核心逻辑（v3.5.0；v3.5.29 加门子码 / 禁入时段 / 陪同带入）
 // ① 动态二维码：45 秒一次性签名码（HMAC-SHA256），代表「人」而非某扇门——
 //    一个码能开用户有权限的所有门；门口校验时按该门的授权规则判定。jti 一次性消费防截图重放。
 // ② 权限判定 evaluateAccess(user, door, now)：拒绝规则优先于允许规则（满足「按分组批量放行 + 单独排除某人」）。
 const crypto = require('crypto');
 const { access, orgMembers, tags } = require('./db');
 
-const QR_TTL = 45; // 秒
+// 主码（代表人）默认 60 秒（v3.5.29 起；ACCESS_QR_TTL 可改，夹 15~600）
+const QR_TTL = 60;
+function qrTtl() {
+  const v = parseInt(process.env.ACCESS_QR_TTL, 10);
+  return Number.isFinite(v) ? Math.min(600, Math.max(15, v)) : QR_TTL;
+}
+// 门子码有效期：门设了 sub_ttl 用门的，否则跟随主码
+function subTtl(door) {
+  const v = parseInt(door && door.sub_ttl, 10);
+  return v > 0 ? Math.min(600, Math.max(15, v)) : qrTtl();
+}
 
 function qrSecret() {
   return process.env.ACCESS_QR_SECRET || process.env.JWT_SECRET || 'qwqsso-access-dev-secret';
@@ -14,10 +24,17 @@ function b64u(buf) { return Buffer.from(buf).toString('base64').replace(/\+/g, '
 function hmacWith(data, secret) { return b64u(crypto.createHmac('sha256', secret).update(data).digest()); }
 function hmac(data) { return hmacWith(data, qrSecret()); }
 
+// 门标签：子码里不放完整门 id（UUID 36 字符），放它的 11 字符哈希标签——
+// 自研 QR 编码器最多到版本 10（纠错 M，213 字节），完整 UUID 会让子码超长出不了码（v3.5.29 实测 228 字节）。
+function doorTag(doorId) { return b64u(crypto.createHash('sha256').update('door:' + String(doorId)).digest()).slice(0, 11); }
+function doorMatches(tag, door) { return !!door && (tag === doorTag(door.id) || tag === door.id); }
+
 // 为用户签一个动态开门码：qr1.<payload>.<sig>
-function signQr(user, ttl = QR_TTL) {
+// 不带 doorId = 主码（能开该用户有权限的所有门）；带 doorId = 该门的子码（只能开这一扇，payload.d=门 id）。
+function signQr(user, ttl = qrTtl(), doorId = null) {
   const now = Math.floor(Date.now() / 1000);
   const payload = { u: user.id, s: user.uid_seq, j: crypto.randomBytes(9).toString('hex'), e: now + ttl };
+  if (doorId) payload.d = doorTag(doorId);
   const body = b64u(JSON.stringify(payload));
   return { code: `qr1.${body}.${hmac(body)}`, expires_in: ttl, exp: payload.e };
 }
@@ -123,10 +140,63 @@ function evaluateAccess(user, door, now = new Date()) {
   return { allow: false, reason: matchedButOffHours ? 'out_of_schedule' : 'not_authorized' };
 }
 
-// 访客通行码判定（与用户无关：时限 + 指定门 + 使用次数）
+// ── 禁入时段（v3.5.29）──
+// 存储格式：JSON 数组 [{wd:[0..6], s:'HH:MM', e:'HH:MM', from:'YYYY-MM-DD', to:'YYYY-MM-DD'}]，任一字段空=该维度不限，
+// 但一条窗口至少要有 星期/时段/日期 之一（否则等于永久禁入，视为无效丢弃——永久停用请直接停用门）。
+function normalizeWindows(input) {
+  let arr = input;
+  if (typeof arr === 'string') { try { arr = arr.trim() ? JSON.parse(arr) : []; } catch (_) { arr = []; } }
+  if (!Array.isArray(arr)) return [];
+  const hhmm = v => (typeof v === 'string' && /^([01]?\d|2[0-3]):[0-5]\d$/.test(v.trim())) ? v.trim().padStart(5, '0') : '';
+  const ymd = v => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim())) ? v.trim() : '';
+  return arr.slice(0, 20).map(w => {
+    const wd = (Array.isArray(w && w.wd) ? w.wd : []).map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+    const o = { wd: [...new Set(wd)].sort(), s: hhmm(w && w.s), e: hhmm(w && w.e), from: ymd(w && w.from), to: ymd(w && w.to) };
+    if (!o.s || !o.e) { o.s = ''; o.e = ''; }   // 时段要么两端都填，要么都不填
+    return o;
+  }).filter(o => o.wd.length || o.s || o.from || o.to);
+}
+function inBlackout(windows, now = new Date()) {
+  return normalizeWindows(windows).some(w => withinSchedule(
+    { weekdays: w.wd.join(','), time_start: w.s, time_end: w.e, valid_from: w.from, valid_to: w.to }, now));
+}
+// 门级策略（对所有凭证生效）：禁入时段 → door_blackout；只认子码而出示的是主码/静态码 → need_subcode
+function doorPolicyCheck(door, { isSub = false, now = new Date() } = {}) {
+  if (door && door.blackout && inBlackout(door.blackout, now)) return 'door_blackout';
+  if (door && door.code_mode === 'sub_only' && !isSub) return 'need_subcode';
+  return null;
+}
+
+// ── 访客子码（v3.5.29）：vs1.<payload>.<sig>，payload={c:访客码(短码), d:门标签, j, e}，短时一次性 ──
+// 访客页点某扇门即出这扇门的子码；静态访客码本身仍可用于 code_mode=any 的门。
+function signVisitorSub(pass, door) {
+  const now = Math.floor(Date.now() / 1000), ttl = subTtl(door);
+  const payload = { c: pass.code, d: doorTag(door.id), j: crypto.randomBytes(9).toString('hex'), e: now + ttl };
+  const body = b64u(JSON.stringify(payload));
+  return { code: `vs1.${body}.${hmac('vs1.' + body)}`, expires_in: ttl, exp: payload.e };
+}
+function verifyVisitorSub(code, { consume = true } = {}) {
+  const parts = String(code || '').split('.');
+  if (parts.length !== 3 || parts[0] !== 'vs1') return { ok: false, reason: 'bad_code' };
+  if (hmac('vs1.' + parts[1]) !== parts[2]) return { ok: false, reason: 'bad_sig' };
+  let payload;
+  try { payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); }
+  catch (_) { return { ok: false, reason: 'bad_code' }; }
+  const now = Math.floor(Date.now() / 1000);
+  if (!payload || !payload.e || payload.e < now) return { ok: false, reason: 'expired' };
+  if (!payload.j || !payload.c || !payload.d) return { ok: false, reason: 'bad_code' };
+  if (consume) {
+    if (access.qrUsed.get(payload.j)) return { ok: false, reason: 'replayed' };
+    access.qrUse.run(payload.j, payload.e);
+  }
+  return { ok: true, payload };
+}
+
+// 访客通行码判定（与用户无关：时限 + 指定门 + 使用次数 + 访客码自己的禁入时段）
 function evaluatePass(pass, door, now = new Date()) {
   if (!pass) return { allow: false, reason: 'pass_unknown' };
   if (pass.status !== 'active') return { allow: false, reason: 'pass_revoked' };
+  if (pass.blackout && inBlackout(pass.blackout, now)) return { allow: false, reason: 'pass_blackout' };
   const parse = s => s ? new Date(String(s).replace(' ', 'T')) : null;
   const from = parse(pass.valid_from), to = parse(pass.valid_to);
   if (from && now < from) return { allow: false, reason: 'pass_not_started' };
@@ -211,7 +281,9 @@ function doorsForUser(user, now = new Date()) {
   return access.enabledDoors.all()
     .map(d => ({ door: d, ev: evaluateAccess(user, d, now) }))
     .filter(x => x.ev.allow)
-    .map(x => ({ id: x.door.id, name: x.door.name, location: x.door.location }));
+    .map(x => ({ id: x.door.id, name: x.door.name, location: x.door.location,
+                 code_mode: x.door.code_mode || 'any', sub_ttl: subTtl(x.door),
+                 blackout_now: !!(x.door.blackout && inBlackout(x.door.blackout, now)) }));
 }
 
 const REASON_LABEL = {
@@ -223,10 +295,13 @@ const REASON_LABEL = {
   pass_expired: '访客码已过期', pass_wrong_door: '访客码不含此门', pass_used_up: '访客码次数已用完',
   fed_unknown: '跨域伙伴未知', fed_revoked: '跨域伙伴已停用', fed_peer_expired: '跨域合作已到期',
   fed_code_expired: '跨域码已过期', fed_wrong_door: '跨域码不含此门', fed_bad_sig: '跨域码签名无效',
+  door_blackout: '该门当前为禁入时段', need_subcode: '此门需出示该门的专属子码', wrong_door_code: '该子码不属于此门',
+  pass_blackout: '访客码当前为禁入时段', need_escort: '需由陪同人扫码带入', escort_ok: '陪同带入',
 };
 
 module.exports = {
-  QR_TTL, signQr, verifyQr, evaluateAccess, evaluatePass, doorsForUser,
+  QR_TTL, qrTtl, subTtl, signQr, verifyQr, evaluateAccess, evaluatePass, doorsForUser,
+  normalizeWindows, inBlackout, doorPolicyCheck, signVisitorSub, verifyVisitorSub, doorTag, doorMatches,
   signFedCode, fedParse, fedVerifySig, evaluateFed,
   signFedLaunch, fedLaunchParse, makePairCode, parsePairCode,
   ruleMatchesUser, withinSchedule, levelTagOf, localDateStr, REASON_LABEL,

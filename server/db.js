@@ -527,6 +527,26 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS visitor_passes (
   note          TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// 门禁子码 / 禁入时段 / 陪同带入（v3.5.29）
+//   门：code_mode=any（主码/子码都认）| sub_only（只认本门子码）；sub_ttl=本门子码有效秒（0=跟随全局）；
+//       escort_required=访客须陪同人扫码带入；blackout=禁入时段 JSON [{wd:[0-6],s:'HH:MM',e:'HH:MM',from:'YYYY-MM-DD',to:'YYYY-MM-DD'}]（对所有人生效，含访客/跨域）。
+//   访客码：escort_user_id=指定陪同人（空则由签发人陪同）；blackout=该访客码自己的禁入时段。
+try { db.exec("ALTER TABLE access_doors ADD COLUMN code_mode TEXT NOT NULL DEFAULT 'any'"); } catch(_) {}
+try { db.exec("ALTER TABLE access_doors ADD COLUMN sub_ttl INTEGER NOT NULL DEFAULT 0"); } catch(_) {}
+try { db.exec("ALTER TABLE access_doors ADD COLUMN escort_required INTEGER NOT NULL DEFAULT 0"); } catch(_) {}
+try { db.exec("ALTER TABLE access_doors ADD COLUMN blackout TEXT NOT NULL DEFAULT ''"); } catch(_) {}
+try { db.exec("ALTER TABLE visitor_passes ADD COLUMN escort_user_id TEXT"); } catch(_) {}
+try { db.exec("ALTER TABLE visitor_passes ADD COLUMN blackout TEXT NOT NULL DEFAULT ''"); } catch(_) {}
+// 待陪同：访客在门口验码通过后挂一条，陪同人在有效期内到同一扇门扫自己的码即双双放行
+try { db.exec(`CREATE TABLE IF NOT EXISTS access_escort_pending (
+  id             TEXT PRIMARY KEY,
+  door_id        TEXT NOT NULL,
+  pass_id        TEXT NOT NULL,
+  escort_user_id TEXT NOT NULL,
+  visitor_name   TEXT NOT NULL DEFAULT '',
+  expire_at      INTEGER NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // 跨系统联邦伙伴（v3.5.5）：共享密钥 + peer_code 配对。door_ids/app_ids = 本系统开放给该伙伴的门/应用。
 // 作为被访问方(host)：用 secret 验对方跨域码、用 door_ids 判门；作为签发方：用 peer_code+secret 签跨域码。
 try { db.exec(`CREATE TABLE IF NOT EXISTS federation_peers (
@@ -1033,6 +1053,7 @@ const accessStmts = {
   insertDoor:   db.prepare('INSERT INTO access_doors (id,name,location,subject_id,status,note) VALUES (@id,@name,@location,@subject_id,@status,@note)'),
   updateDoor:   db.prepare("UPDATE access_doors SET name=@name,location=@location,subject_id=@subject_id,status=@status,note=@note,updated_at=datetime('now') WHERE id=@id"),
   removeDoor:   db.prepare('DELETE FROM access_doors WHERE id=?'),
+  setDoorPolicy:db.prepare('UPDATE access_doors SET code_mode=@code_mode, sub_ttl=@sub_ttl, escort_required=@escort_required, blackout=@blackout WHERE id=@id'),
   // 授权规则（deny 优先，故 ORDER BY effect DESC 让 deny 排前）
   rulesByDoor:  db.prepare("SELECT * FROM access_rules WHERE door_id=? ORDER BY effect DESC, created_at ASC"),
   insertRule:   db.prepare('INSERT INTO access_rules (id,door_id,grant_type,grant_value,effect,weekdays,time_start,time_end,valid_from,valid_to,label) VALUES (@id,@door_id,@grant_type,@grant_value,@effect,@weekdays,@time_start,@time_end,@valid_from,@valid_to,@label)'),
@@ -1080,6 +1101,13 @@ const accessStmts = {
                             VALUES (@id,@code,@visitor_name,@visitor_phone,@door_ids,@issued_by,@issued_by_name,@valid_from,@valid_to,@max_uses,@note)`),
   revokePass:   db.prepare("UPDATE visitor_passes SET status='revoked' WHERE id=?"),
   bumpPassUse:  db.prepare('UPDATE visitor_passes SET used_count=used_count+1 WHERE id=?'),
+  setPassExtra: db.prepare('UPDATE visitor_passes SET escort_user_id=?, blackout=? WHERE id=?'),
+  // 待陪同（v3.5.29）
+  escortInsert: db.prepare('INSERT INTO access_escort_pending (id,door_id,pass_id,escort_user_id,visitor_name,expire_at) VALUES (@id,@door_id,@pass_id,@escort_user_id,@visitor_name,@expire_at)'),
+  escortFor:    db.prepare('SELECT * FROM access_escort_pending WHERE door_id=? AND escort_user_id=? AND expire_at>=?'),
+  escortDel:    db.prepare('DELETE FROM access_escort_pending WHERE id=?'),
+  escortDelPass:db.prepare('DELETE FROM access_escort_pending WHERE pass_id=? AND door_id=?'),
+  escortClean:  db.prepare('DELETE FROM access_escort_pending WHERE expire_at < ?'),
   // 跨系统联邦伙伴
   fedByCode:    db.prepare('SELECT * FROM federation_peers WHERE peer_code=?'),
   fedById:      db.prepare('SELECT * FROM federation_peers WHERE id=?'),

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.28**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.29**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -427,6 +427,30 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.29 门禁：门子码 + 禁入时段 + 访客陪同带入，主码默认 60 秒（用户反馈）
+
+三级版本。用户：门禁二维码默认 60 秒；主码按用户授权，点门禁/区域可显示子码，子码可设独立规则；访客码同理；可设某时间段无法进入；访客码通过设备验证后需由指定人员带入，指定人扫码则校验成功。
+
+### 模型（我的落地方式，改之前先理解）
+- **主码** = 原 qr1（无门信息，开有权限的所有门）。TTL 默认 60（`qrTtl()`，env `ACCESS_QR_TTL` 夹 15~600）。
+- **门子码** = 同为 qr1，payload 多 `d=门标签`。「子码的独立规则」落在**门级策略**（`access_doors` 新列）：`code_mode`(any|sub_only)、`sub_ttl`(0=跟随主码)、`escort_required`、`blackout`(JSON 窗口)。`POST /user/access/qr {door_id}` 出子码（先 `evaluateAccess` 有权才签）。
+- ⚠️ **门标签而非门 id**：`doorTag(id)=base64url(sha256('door:'+id))[:11]`，`doorMatches(tag,door)` 校验。原因：自研 `qr-mini.js` 最多版本 10（纠错 M=213 字节），子码带完整 UUID 实测 228 字节出不了码（浏览器端 svg=null 回退成文本）。访客子码同理用访客**短码**而非 pass UUID。现长度：主码≈175 / 门子码≈199 / 访客子码≈154。**以后往 qr1/vs1 payload 加字段先算长度。**
+- **访客子码** `vs1.<{c:访客码, d:门标签, j, e}>.<sig>`（`signVisitorSub`/`verifyVisitorSub`，HMAC 用同一 qrSecret，签名串前缀 'vs1.' 防与 qr1 混用；jti 一次性，复用 access_qr_used）。公开 `POST /api/public/pass/:code/sub {door_id}`；`GET /api/public/pass/:code` 多回 `door_list[{id,name,sub_only,escort}]`。
+- **禁入时段** `normalizeWindows`/`inBlackout`：`[{wd:[0-6],s,e,from,to}]`，复用 `withinSchedule`（跨夜、日期区间）；**每条至少有星期/时段/日期之一，否则丢弃**（防误配成永久禁入）。门的禁入对所有凭证生效；访客码自己的禁入 `visitor_passes.blackout` → `pass_blackout`。
+- **门策略统一入口** `doorPolicyCheck(door,{isSub})`：先禁入 `door_blackout`，再 sub_only 且非子码 `need_subcode`。`/v1/access/verify` 四类码都过它：qr1（主/子码；子码门不符 `wrong_door_code`）、vs1、静态访客码、ft1（跨域码无子码机制，sub_only 门不收）。`/v1/access/check`（卡/人脸）**只受禁入约束、不受 sub_only 约束**（不是二维码）。
+- **陪同带入**：`visitor_passes.escort_user_id`（签发时填账号，resolveUser）；需陪同 = 门 `escort_required` **或** 访客码指定了陪同人。陪同人 = 指定人，否则签发人。访客验码通过 → `passGrantOrEscort` 写一条 `access_escort_pending`（120 秒，同访客同门去重）并返回 `result:'pending_escort'`（日志 deny/need_escort）；陪同人在同门**自己放行后** `completeEscorts` 消费待陪同、**再核一次访客码**（防等待期间撤销/用尽）、扣次数、日志 allow/escort_ok，响应带 `escorted:[访客名]`。卡/人脸放行也能完成陪同。
+- ⚠️ 陪同人本人必须对这扇门有通行权（只在其 ev.allow 时才完成陪同）。
+
+### 前端
+- 管理端门弹窗「开门码规则（本门独立）」：模式 / 子码有效期 / 访客须陪同 / 禁入时段编辑器（`bwEditorHtml/bwRowHtml/bwCollect` 门与访客码共用）。签发访客码弹窗加陪同人 + 禁入时段；访客码列表显示陪同人 / 有禁入时段。
+- 用户门禁页：每扇门「该门子码」按钮（`showAccessQr(doorId, name)`），标「仅子码 / 当前禁入」。
+- `pass.html`：门按钮出该门子码（到期自动刷新）+「通用访客码」切回。`access-terminal.html`：`pending_escort` 黄底「等待陪同人」+ 陪同放行时显示带入名单。
+- 系统配置「门禁」组加 `ACCESS_QR_TTL`；init.js ENV_KEYS 同步。iOS `AccessView` 点门出子码（`accessQr(token:doorId:)`）。
+
+### 测试
+- 真实服务端 e2e 25 项全过（门策略落库、主码 60s、主码开不了 sub_only、子码 TTL 按门、子码跨门拒、子码一次性、门禁入、无效窗口丢弃、访客码陪同人、门列表、静态访客码过不了 sub_only、访客子码跨门拒、访客子码→pending_escort、别人扫码不带入、陪同人扫码双双放行且扣次数、陪同只消费一次、门需陪同→签发人陪同、等待期间撤销不带入、访客码禁入、无权限不给子码、我能开的门带子码信息）；另两套 35+16 回归全过。
+- playwright：门弹窗回填+保存禁入时段、签发弹窗字段、用户门列表出子码 QR（修长度后 svg=true）、访客页门子码 QR、终端等待陪同态，零 JS 报错。
 
 ## v3.5.28 应用图片图标 + 我的应用文件夹 + iOS 应用中心桌面式（用户反馈）
 

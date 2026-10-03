@@ -22,6 +22,7 @@
   .result.show { display:flex; }
   .result.allow { background:#064e3b; }
   .result.deny { background:#7f1d1d; }
+  .result.wait { background:#78350f; }
   .result .icon { font-size:96px; }
   .result .big { font-size:34px; font-weight:800; margin:8px 0; }
   .result .who { font-size:20px; opacity:.95; }
@@ -161,15 +162,17 @@ function beep(ok) {
 let resultTimer = null;
 function showResult(d) {
   const allow = !!d.allow;
+  const wait = d.result === 'pending_escort';   // v3.5.29：访客已核验，等陪同人扫码
   const box = $('result');
-  box.className = 'result show ' + (allow ? 'allow' : 'deny');
-  $('rIcon').textContent = allow ? '✅' : '⛔';
-  $('rBig').textContent = allow ? '通行' : '拒绝';
-  $('rWho').textContent = d.user ? (d.user.name + ' #' + String(d.user.uid_seq).padStart(5, '0')) : '';
+  box.className = 'result show ' + (allow ? 'allow' : wait ? 'wait' : 'deny');
+  $('rIcon').textContent = allow ? '✅' : wait ? '⏳' : '⛔';
+  $('rBig').textContent = allow ? '通行' : wait ? '等待陪同人' : '拒绝';
+  const who = d.user ? (d.user.name + ' #' + String(d.user.uid_seq).padStart(5, '0')) : (d.visitor && d.visitor.name ? '访客 ' + d.visitor.name : '');
+  $('rWho').textContent = who + (d.escorted && d.escorted.length ? '　带入：' + d.escorted.join('、') : '');
   $('rReason').textContent = d.reason_text || d.reason || '';
   beep(allow);
   clearTimeout(resultTimer);
-  resultTimer = setTimeout(() => { box.className = 'result'; }, 2600);
+  resultTimer = setTimeout(() => { box.className = 'result'; }, wait ? 5000 : 2600);
 }
 // 自动尝试加载（已存 key 时）
 if ($('key').value) loadDoors();
