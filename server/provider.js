@@ -12,7 +12,7 @@
 const express = require('express');
 const crypto  = require('crypto');
 const jwt     = require('jsonwebtoken');
-const { db, idp, users, apps, groups, tags, appVisibleToUser, access } = require('./db');
+const { db, idp, users, apps, groups, tags, appVisibleToUser, appVisibleInSession, access } = require('./db');
 const { audit } = require('./audit');
 const { requireAuth } = require('./auth');
 const accessCore = require('./access');
@@ -213,7 +213,7 @@ router.get('/oauth/consent-info', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(401).json({ error: '用户不存在' });
   // 组织隔离：应用只开放给指定组织时，非成员在授权页就明确拒绝（而非走到 /oauth/consent 才 403）
-  if (!appVisibleToUser(app.id, user.id)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
+  if (!appVisibleInSession(app.id, user.id, req.user.org_scoped ? req.user.org : null)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
 
   const required = appRequired(app);
   // 展示的 scope = 应用申请的 ∪ 应用配置的必传（去重，openid 置顶）
@@ -255,7 +255,7 @@ router.post('/oauth/consent', requireAuth, (req, res) => {
   if (!user) return res.status(401).json({ error: '用户不存在' });
   if (user.status !== 'active') return res.status(403).json({ error: '账号已被停用，无法授权' });
   // 组织隔离：应用若只开放给指定组织，非成员不得授权登录
-  if (!appVisibleToUser(app.id, user.id)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
+  if (!appVisibleInSession(app.id, user.id, req.user.org_scoped ? req.user.org : null)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
 
   if (!approve) {
     const u = new URL(redirect_uri);
@@ -436,7 +436,7 @@ router.post('/oauth/launch', requireAuth, (req, res) => {
   if (!app) return res.status(404).json({ error: '应用不存在' });
   if (app.status !== 'enabled') return res.status(403).json({ error: '该应用尚未启用' });
   // 组织隔离：应用若只开放给指定组织，非成员不得发起
-  if (!appVisibleToUser(app.id, req.user.uid)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
+  if (!appVisibleInSession(app.id, req.user.uid, req.user.org_scoped ? req.user.org : null)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
 
   // 应用自建入口优先
   if (app.launch_url && /^https?:\/\//i.test(app.launch_url)) {

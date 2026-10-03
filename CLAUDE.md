@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.25**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.26**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -428,6 +428,27 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 
 ---
 
+## v3.5.26 组织登录收尾：验证码通道 + org-scoped 会话后端收口（承接 v3.5.20 遗留，至此组织登录遗留项清零）
+
+三级版本。
+
+### ① 组织登录验证码通道
+- `api.js` `handleOrgCodeLogin` → `POST /api/account/org-login-code {account(邮箱/手机), code, org}`。顺序：`directLoginSubject` → `subjectGateError`（IP/时段）→ 独立安全组织直接拒（须组织密码）→ 校验 OTP（复用 `email:`/`sms:` 键，5 次上限、一次性）→ 按邮箱/手机找用户，**须为该组织成员、绝不建号**、排公共账号 → 停用 → 强制 2FA → `finishLogin(..., {org, org_scoped:false})`。
+- 发码复用 `/email/send-code`、`/sms/send` 带 `org`（v3.5.17 已支持组织专属凭证）。
+- `login.html` 组织登录浮层加「组织密码 / 验证码」切换（`olSetMode`/`olSendCode`），复用 `countdown`。
+
+### ② org-scoped 会话后端收口（之前只是前端横幅 + 下拉禁用）
+- `auth.js` `requireAuth`：`org_scoped` 令牌每次请求校验组织仍 enabled + allow_direct_login 且本人仍是成员，否则 401「组织会话已失效」；`requireAdmin`：org_scoped 一律 403。
+- `api.js`：`isSysAdmin` 对 org_scoped 恒 false；新增 `scopedOrgOf(req)` / `myManagedOrgs(req)`（scoped 时只剩当前组织）。`canManageOrg`/`canManageDevice` 限当前组织；`canManageGroup` 对 scoped 恒 false（分组是平台维度）；`canIssuePass` scoped 时仅当前组织的组织管理员；设备列表/managed-orgs 走 `myManagedOrgs`；`/account/public/switch` scoped 403；`/apps/market` scoped 强制 `org=token.org`（忽略 query）。
+- `db.js` 新增 `appVisibleInSession(appId, userId, scopedOrg)`：scoped = 全局应用 + 该组织开放应用（且仍为成员）；否则同 `appVisibleToUser`。`/apps/:id/auth` + `provider.js` 的 consent-info / consent / launch 三处改用它。
+- `dashboard.html`：`_isOrgScoped()` 以 **token 的 org_scoped** 为准（localStorage 兜底）；scoped 时隐藏 mode-admin / 公共账号入口，不加载公共账号切换器，按非管理员走（bootToLastPage 丢弃 adm-* 页），组织管理员菜单照常点亮。
+- ⚠️ org_scoped 的语义仍是「独立安全组织」才锁定；非独立组织登录（含验证码通道）带 org 但不锁定。
+
+### 测试
+- **首次在本仓库跑真实服务端端到端**：`npm install --omit=dev --no-save` 装真依赖（better-sqlite3 等），临时库 seed 后起 `server/index.js`，HTTP 跑 31 项全过：验证码登录（邮箱/手机/错码/一次性/非成员/不建号/独立组织拒绝/用户名拒绝）、IP 白名单对两条通道生效（顺带实测 v3.5.24）、scoped 下管理端 403 / 市场锁 OB / 授权与 OIDC launch 拦 OA 应用 / managed-orgs 与设备只剩 OB / 不能管 OC / 不能切公共账号、普通会话不受影响、移出组织与停用组织后令牌 401。
+- playwright 打真服务：登录浮层验证码模式发码→登录→跳 login-success 且 `sso_current_org=OA`；scoped 管理员控制台有横幅、无管理端切换、陈旧 adm-users 记录回退首页；scoped 组织管理员「我的组织」只见 OB + 设备卡，零 JS 报错。
+- ⚠️ `node_modules/` 已 gitignore，`--no-save` 不产生 lock 文件。
+
 ## v3.5.25 组织管理员的设备管理 UI 入口（承接 v3.5.21 遗留）
 
 三级版本（Web）。v3.5.21 后端已按组织管理员限权（`GET/POST /admin/devices` 走 managedBy、PATCH/DELETE 走 `canManageDevice`），但 UI 只在系统管理员菜单。本版补用户端入口：
@@ -444,7 +465,7 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ 语义变更：组织登录的「强制 2FA」从 `independent_security && require_2fa` 改为只看 `require_2fa`，与三方登录通道一致（之前非独立组织勾了强制 2FA 但组织登录不拦，属漏洞）。
 - 主体弹窗「登录策略」标题改为「经该主体三方登录 /『登录到组织』时强制执行」。
 - ⚠️ 测试：`scratchpad/org-policy-test.js` 15 项全过（日内/跨夜/边界/非法放行、CIDR/精确/::ffff:/空白列表、时段拒、只填一端不拦、IP 优先）。HTTP 层同既有约束未端到端跑（无 node_modules）。
-- 仍未做（v3.5.20 遗留）：org-login 走验证码、dashboard 更彻底的「不可切换」收口。（v3.5.21 遗留的组织管理员设备 UI 入口已在 v3.5.25 补上）
+- （v3.5.20 遗留的 org-login 验证码、「不可切换」收口已在 v3.5.26 做完；v3.5.21 遗留的组织管理员设备 UI 入口已在 v3.5.25 补上）
 
 ## v3.5.23 API-docs 逐接口补全（开放 API 全覆盖）（用户反馈）
 

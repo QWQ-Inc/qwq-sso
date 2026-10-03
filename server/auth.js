@@ -45,6 +45,15 @@ function requireAuth(req, res, next) {
   const { valid, data, error } = verifyToken(auth.slice(7));
   if (!valid) return res.status(401).json({ error: `Token 无效: ${error}` });
   req.user = data;
+  // org-scoped 会话（v3.5.26）：组织被停用/关闭直登、或本人已被移出组织 → 会话立即失效，不能留着继续用
+  if (data.org_scoped) {
+    try {
+      const { db } = require('./db');
+      const s = db.prepare('SELECT enabled, allow_direct_login FROM oauth_subjects WHERE id=?').get(data.org);
+      const m = db.prepare('SELECT 1 FROM org_members WHERE subject_id=? AND user_id=?').get(data.org, data.uid);
+      if (!s || !s.enabled || !s.allow_direct_login || !m) return res.status(401).json({ error: '组织会话已失效，请重新登录' });
+    } catch (_) {}
+  }
   next();
 }
 
@@ -53,6 +62,10 @@ function requireAdmin(level = 3) {
     requireAuth(req, res, () => {
       if (req.user.role !== 'admin') {
         return res.status(403).json({ error: '需要管理员权限' });
+      }
+      // org-scoped 会话只代表「登录到某组织」，不带系统管理员权限（v3.5.26）
+      if (req.user.org_scoped) {
+        return res.status(403).json({ error: '组织会话不能使用管理端，请用个人账号登录' });
       }
       if ((req.user.adminLevel || 99) > level) {
         return res.status(403).json({ error: `需要管理员 Lv.${level} 或更高` });

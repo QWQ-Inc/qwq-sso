@@ -1581,8 +1581,16 @@
         <input id="ol-code" placeholder="或输入组织码搜索不公开的组织" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:12.5px;text-transform:uppercase;"/>
         <button class="btn" style="white-space:nowrap;font-size:12px;" onclick="olSearchCode()">搜索</button>
       </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;" id="ol-mode">
+        <button type="button" class="btn" id="ol-mode-pw" style="flex:1;font-size:12px;" onclick="olSetMode('pw')">组织密码</button>
+        <button type="button" class="btn" id="ol-mode-code" style="flex:1;font-size:12px;" onclick="olSetMode('code')">验证码</button>
+      </div>
       <input id="ol-account" placeholder="账号：邮箱 / 手机 / UID / 用户名" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;"/>
       <input id="ol-pass" type="password" placeholder="组织密码（未设则用平台密码）" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;"/>
+      <div id="ol-code-row" style="display:none;gap:6px;margin-bottom:8px;">
+        <input id="ol-vcode" inputmode="numeric" maxlength="8" placeholder="验证码" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;"/>
+        <button type="button" class="btn" id="ol-send" style="white-space:nowrap;font-size:12px;" onclick="olSendCode()">获取验证码</button>
+      </div>
       <div id="ol-tip" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
       <div style="display:flex;gap:8px;">
         <button class="btn" style="flex:1;" onclick="document.getElementById('org-login-ov').remove()">取消</button>
@@ -1590,6 +1598,7 @@
       </div>
     </div>`;
     document.body.appendChild(ov);
+    olSetMode('pw');
     try {
       const r = await fetch('/api/public/orgs'); const d = await r.json();
       const sel = document.getElementById('ol-org');
@@ -1610,14 +1619,42 @@
       olTip('ok', '✓ 已选择「' + d.org.name + '」');
     } catch (e) { olTip('error', e.message || '组织码无效'); }
   }
+  // 组织登录方式：pw = 组织密码 / code = 邮箱·手机验证码（v3.5.26；独立安全组织后端会拒绝验证码）
+  let _olMode = 'pw';
+  function olSetMode(m) {
+    _olMode = m;
+    const on = (id, a) => { const b = document.getElementById(id); if (b) { b.style.background = a ? '#0071E3' : ''; b.style.color = a ? '#fff' : ''; b.style.borderColor = a ? '#0071E3' : ''; } };
+    on('ol-mode-pw', m === 'pw'); on('ol-mode-code', m === 'code');
+    document.getElementById('ol-pass').style.display = m === 'pw' ? '' : 'none';
+    document.getElementById('ol-code-row').style.display = m === 'code' ? 'flex' : 'none';
+    document.getElementById('ol-account').placeholder = m === 'pw' ? '账号：邮箱 / 手机 / UID / 用户名' : '邮箱 / 手机号';
+    olTip('', '');
+  }
+  async function olSendCode() {
+    const org = document.getElementById('ol-org').value;
+    const account = document.getElementById('ol-account').value.trim();
+    if (!org) return olTip('error', '请选择组织（或用组织码搜索）');
+    const byEmail = isEmailStr(account), byPhone = !byEmail && isPhoneStr(account);
+    if (!byEmail && !byPhone) return olTip('error', '验证码登录请填写邮箱或手机号');
+    try {
+      const r = await fetch(byEmail ? '/api/email/send-code' : '/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(byEmail ? { email: account, org } : { phone: account, org }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error || '发送失败');
+      olTip('ok', d.dev ? '验证码已生成（开发模式，见服务端日志）' : '验证码已发送');
+      countdown('ol-send', 60);
+    } catch (e) { olTip('error', e.message || '发送失败'); }
+  }
   async function doOrgLogin() {
     const org = document.getElementById('ol-org').value;
     const account = document.getElementById('ol-account').value.trim();
     const password = document.getElementById('ol-pass').value;
+    const vcode = (document.getElementById('ol-vcode')?.value || '').trim();
     if (!org) return olTip('error', '请选择组织（或用组织码搜索）');
-    if (!account || !password) return olTip('error', '请填写账号和组织密码');
+    if (_olMode === 'code' ? (!account || !vcode) : (!account || !password)) return olTip('error', _olMode === 'code' ? '请填写邮箱/手机号和验证码' : '请填写账号和组织密码');
     try {
-      const r = await fetch('/api/account/org-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account, password, org }) });
+      const r = _olMode === 'code'
+        ? await fetch('/api/account/org-login-code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account, code: vcode, org }) })
+        : await fetch('/api/account/org-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account, password, org }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
       try { localStorage.setItem('sso_current_org', org); localStorage.setItem('sso_org_scoped', d.org_scoped ? '1' : ''); } catch (_) {}
       const ov = document.getElementById('org-login-ov'); if (ov) ov.remove();

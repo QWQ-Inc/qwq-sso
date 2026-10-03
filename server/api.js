@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, appOrgs, appVisibleToUser, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, appOrgs, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
@@ -522,6 +522,46 @@ async function handleOrgLogin(req, res) {
   return finishLogin(res, user, req, '组织登录·' + s.name, { org: s.id, org_scoped: !!s.independent_security });
 }
 router.post('/account/org-login', handleOrgLogin);
+
+// ── 登录到组织：验证码通道（v3.5.26）──
+// 账号=邮箱/手机号；验证码由 /sms/send、/email/send-code（带 org）下发，走该组织专属消息凭证。
+// 规则与密码通道一致：组织 IP/时段门先行；只认已存在且为本组织成员的账号（绝不自动建号）；
+// 独立安全组织要求组织密码，不接受验证码；强制 2FA 照常；org_scoped 同密码通道。
+async function handleOrgCodeLogin(req, res) {
+  const { account, code, org } = req.body || {};
+  const ua = req.headers['user-agent'];
+  const ident = String(account || '').trim();
+  if (!ident || !code || !org) return res.status(400).json({ error: '请选择组织并填写邮箱/手机号和验证码' });
+  const s = directLoginSubject(org);
+  if (!s) return res.status(400).json({ error: '该组织未开放登录' });
+  const method = '组织登录·验证码·' + s.name;
+  const gate = subjectGateError(s, req.ip);
+  if (gate) {
+    logLogin({ method, ip: req.ip, ua, status: 'failed', failReason: gate === 'ip_denied' ? '不在组织 IP 白名单内' : '不在组织允许登录时段内' });
+    return res.status(403).json({ error: gate === 'ip_denied'
+      ? '当前网络不在该组织允许的登录 IP 范围内'
+      : `当前不在该组织允许的登录时段内（${s.login_start}~${s.login_end}）`, code: gate });
+  }
+  if (s.independent_security) return res.status(400).json({ error: '该组织启用了独立安全策略，请使用组织密码登录' });
+  const byEmail = isEmail(ident), byPhone = !byEmail && isPhone(ident);
+  if (!byEmail && !byPhone) return res.status(400).json({ error: '验证码登录请填写邮箱或手机号' });
+  const key = (byEmail ? 'email:' : 'sms:') + ident;
+  const entry = otp.get.get(key);
+  if (!entry || Date.now() > entry.expire_at) { otp.del.run(key); return res.status(400).json({ error: '验证码不存在或已过期' }); }
+  otp.incAtt.run(key);
+  if (entry.attempts >= 5) { otp.del.run(key); return res.status(400).json({ error: '错误次数过多，请重新获取' }); }
+  if (entry.code !== String(code).trim()) return res.status(400).json({ error: '验证码错误' });
+  otp.del.run(key);
+  const user = byEmail ? users.findByEmail.get(ident) : users.findByPhone.get(ident);
+  const member = (user && !user.is_public) ? orgMembers.get.get(s.id, user.id) : null;
+  if (!member) { logLogin({ method, ip: req.ip, ua, status: 'failed', failReason: '非该组织成员' }); return res.status(401).json({ error: '该账号不是此组织的成员' }); }
+  if (user.status === 'disabled') { logLogin({ userId: user.id, method, ip: req.ip, ua, status: 'disabled' }); return res.status(403).json({ error: '账号已停用，请联系管理员' }); }
+  if (s.require_2fa && !user.twofa_enabled) {
+    return res.status(403).json({ error: '该组织要求两步验证，请先在账号设定里开启两步验证后再登录' });
+  }
+  return finishLogin(res, user, req, method, { org: s.id, org_scoped: false });
+}
+router.post('/account/org-login-code', handleOrgCodeLogin);
 
 // ── 忘记密码（公开，无需登录）──
 // 隐私：无论账号是否存在都返回同样的成功文案，不泄露账号存在性。
@@ -1433,9 +1473,7 @@ router.put('/admin/orgs/:sid/admins', requireAdmin(2), (req, res) => {
 // 我管理的组织（真实用户视角）：组织管理员在用户端管理自己组织的成员
 router.get('/account/managed-orgs', requireAuth, (req, res) => {
   // 系统管理员看全部组织；否则看自己是组织管理员的
-  const list = (req.user.role === 'admin' && (req.user.adminLevel || 9) <= 3)
-    ? oauthSubjects.all.all()
-    : oauthSubjects.managedBy.all(req.user.uid);
+  const list = isSysAdmin(req, 3) ? oauthSubjects.all.all() : myManagedOrgs(req);
   res.json({ success: true, orgs: list.map(s => ({
     id: s.id, name: s.name, uid_prefix: s.uid_prefix || '', uid_len: s.uid_len || 4,
     members: orgMembers.listBySubject.all(s.id),
@@ -2031,7 +2069,8 @@ router.get('/apps/market', requireAuth, (req, res) => {
   // 只显示：全局(通用)应用 + 开放给「我所属组织」的应用
   let list = apps.findEnabled.all().filter(a => appVisibleToUser(a.id, req.user.uid));
   // 指定了当前组织且我是其成员 → 进一步收窄为「全局应用 + 该组织开放的应用」
-  const orgId = req.query.org;
+  // org-scoped 会话：强制锁定为当前组织，忽略前端传的 org（v3.5.26）
+  const orgId = scopedOrgOf(req) || req.query.org;
   if (orgId && orgMembers.get.get(orgId, req.user.uid)) {
     list = list.filter(a => !appOrgs.isRestricted.get(a.id) || appOrgs.openToSubject.get(a.id, orgId));
   }
@@ -2040,7 +2079,7 @@ router.get('/apps/market', requireAuth, (req, res) => {
 router.post('/apps/:id/auth', requireAuth, (req, res) => {
   const app = apps.findById.get(req.params.id);
   if (!app || app.status !== 'enabled') return res.status(404).json({ error: '应用不存在' });
-  if (!appVisibleToUser(app.id, req.user.uid)) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
+  if (!appVisibleInSession(app.id, req.user.uid, scopedOrgOf(req))) return res.status(403).json({ error: '该应用未对你所属的组织开放' });
   if (!apps.isAuthed.get(req.user.uid, app.id)) { apps.authUser.run(req.user.uid, app.id); apps.incAuthUsers.run(app.id); }
   res.json({ success: true });
 });
@@ -2188,6 +2227,8 @@ const DEVICE_KINDS = ['apple', 'google', 'microsoft', 'access_controller', 'card
 const DEVICE_STATUS = ['active', 'disabled', 'lost'];
 function canManageDevice(req, dev, write = true) {
   if (isSysAdmin(req, write ? 2 : 3)) return true;
+  const so = scopedOrgOf(req);
+  if (so && (!dev || dev.subject_id !== so)) return false;
   return !!(dev && dev.subject_id && oauthSubjects.isAdmin.get(dev.subject_id, req.user.uid));
 }
 // 把前端传的归属/关联字段解析成落库值（校验组织/门/所有者存在）。返回 {ok, val|error}
@@ -2221,21 +2262,21 @@ function resolveDeviceFields(req, body) {
 // 列表：系统管理员看全部；组织管理员看自己管理组织的设备。附带可归属组织 + 门列表供表单用。
 router.get('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 3);
-  if (!sys && !oauthSubjects.managedBy.all(req.user.uid).length) return res.status(403).json({ error: '无权管理设备' });
+  if (!sys && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权管理设备' });
   let list;
   if (sys) list = devices.all.all();
   else {
-    const myOrgs = oauthSubjects.managedBy.all(req.user.uid).map(o => o.id);
+    const myOrgs = myManagedOrgs(req).map(o => o.id);
     list = myOrgs.length ? devices.bySubjects.all(JSON.stringify(myOrgs)) : [];
   }
   const orgs = sys ? oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name }))
-                   : oauthSubjects.managedBy.all(req.user.uid).map(s => ({ id: s.id, name: s.name }));
+                   : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
   const doors = access.allDoors.all().map(d => ({ id: d.id, name: d.name }));
   res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys });
 });
 router.post('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 2);
-  if (!sys && !oauthSubjects.managedBy.all(req.user.uid).length) return res.status(403).json({ error: '无权管理设备' });
+  if (!sys && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权管理设备' });
   const r = resolveDeviceFields(req, req.body || {});
   if (r.error) return res.status(400).json({ error: r.error });
   const id = uuidv4();
@@ -2343,14 +2384,24 @@ const safePubUser = p => ({ id: p.id, name: p.name, uid_code: p.uid_code || null
   owner_group_id: p.owner_group_id, member_count: p.member_count });
 
 // 系统管理员判定（按等级）
-const isSysAdmin = (req, maxLevel = 2) => req.user.role === 'admin' && (req.user.adminLevel || 9) <= maxLevel;
+const isSysAdmin = (req, maxLevel = 2) => !req.user.org_scoped && req.user.role === 'admin' && (req.user.adminLevel || 9) <= maxLevel;
+// org-scoped 会话（v3.5.26）：组织管理员权限只限当前登录的组织
+const scopedOrgOf = req => (req.user && req.user.org_scoped ? req.user.org : null);
+function myManagedOrgs(req) {
+  const list = oauthSubjects.managedBy.all(req.user.uid);
+  const so = scopedOrgOf(req);
+  return so ? list.filter(o => o.id === so) : list;
+}
 // 能否管理某分组：系统管理员 或 该分组的分组管理员
 function canManageGroup(req, gid, write = true) {
+  if (req.user.org_scoped) return false;           // 分组是平台维度，组织会话不能管
   if (isSysAdmin(req, write ? 2 : 3)) return true;
   return !!groups.isAdmin.get(gid, req.user.uid);
 }
 // 能否管理某登录主体(组织)：系统管理员 或 该组织的组织管理员（v3.5.8，套用分组管理员）
 function canManageOrg(req, sid, write = true) {
+  const so = scopedOrgOf(req);
+  if (so && sid !== so) return false;              // 组织会话只能管当前组织
   if (isSysAdmin(req, write ? 2 : 3)) return true;
   return !!oauthSubjects.isAdmin.get(sid, req.user.uid);
 }
@@ -2447,6 +2498,7 @@ router.get('/account/public/available', requireAuth, (req, res) => {
 });
 // 切换到公共账号：校验授权 + 仍在分组内 → 签发公共账号令牌（前端整会话切换过去）
 router.post('/account/public/switch', requireAuth, (req, res) => {
+  if (req.user.org_scoped) return res.status(403).json({ error: '组织会话不可切换到公共账号' });
   const me = users.findById.get(req.user.uid);
   if (!me || me.is_public) return res.status(403).json({ error: '当前身份不能切换公共账号' });
   const p = publicAccounts.get.get(req.body.public_id || '');
@@ -4286,6 +4338,7 @@ router.get('/v1/access/faces/:uid/image', requireApiKey('access:read'), (req, re
 
 // ── 访客通行码（主人邀请：管理员 + 分组/组织管理员可签发；记录签发人，可追溯）──
 function canIssuePass(req) {
+  if (req.user?.org_scoped) return myManagedOrgs(req).length > 0;   // 组织会话：仅当前组织的组织管理员
   if (req.user?.role === 'admin') return true;
   try {
     return groups.managedBy.all(req.user.uid).length > 0

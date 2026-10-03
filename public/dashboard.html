@@ -992,10 +992,17 @@ async function loadMe() {
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     showPublicSessionBanner();
   }
-  if (_isOrgScoped()) showOrgScopedBanner();   // 独立安全组织登录：顶部提示仅组织会话（v3.5.20）
-  loadPublicSwitcher();
-  loadManagedGroups();
-  const isAdmin = isPublic ? false : ME.role === 'admin';
+  // 独立安全组织登录（org-scoped）：顶部提示 + 收口一切「切换」入口（v3.5.20 横幅；v3.5.26 收口，后端同步拦截）
+  const orgScoped = _isOrgScoped();
+  if (orgScoped) {
+    showOrgScopedBanner();
+    ['mode-admin','pub-acct-card','ni-public','pub-switch-wrap']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  } else {
+    loadPublicSwitcher();
+    loadManagedGroups();
+  }
+  const isAdmin = (isPublic || orgScoped) ? false : ME.role === 'admin';
   const lvlLabel = isAdmin ? `管理员 Lv.${ME.admin_level}` : `用户 Lv.${ME.user_level}`;
   document.getElementById('nav-urole').textContent = lvlLabel + ' · ' + uidOf(ME);
 
@@ -1021,11 +1028,11 @@ async function loadMe() {
   setTimeout(bootToLastPage, 0);
   initWatermark();
   // 管理员进控制台静默检查版本更新
-  if (ME.role === 'admin' && !_IS_DEV) setTimeout(bootVersionCheck, 1200);
+  if (isAdmin && !_IS_DEV) setTimeout(bootVersionCheck, 1200);
   // 非管理员若是某组织的组织管理员 → 点亮「组织管理」菜单
-  if (ME.role !== 'admin' && !_IS_PUBLIC_SESSION) checkOrgAdminNav();
+  if ((ME.role !== 'admin' || orgScoped) && !_IS_PUBLIC_SESSION) checkOrgAdminNav();
   // 本人是核验员 → 点亮「身份核验」菜单（管理员端另有入口，这里只给非管理员用户）
-  if (ME.role !== 'admin' && !_IS_PUBLIC_SESSION) checkVerifierNav();
+  if ((ME.role !== 'admin' || orgScoped) && !_IS_PUBLIC_SESSION) checkVerifierNav();
 }
 </script>
 </head>
@@ -3014,7 +3021,7 @@ const USER_PAGES = ['home','apps','shop','account','public','memo','access','org
 function bootToLastPage() {
   let target = null;
   try { target = localStorage.getItem('sso_last_page'); } catch (_) {}
-  const isAdmin     = !!(ME && ME.role === 'admin') && !_PUBLIC_ACCT;
+  const isAdmin     = !!(ME && ME.role === 'admin') && !_PUBLIC_ACCT && !_isOrgScoped();
   const isAdminPage = !!target && target.indexOf('adm-') === 0;
 
   // 校验目标页在当前身份下是否可达，不可达则丢弃（回退默认）
@@ -4132,7 +4139,11 @@ async function loadMarketOrgs() {
   // org-scoped（独立安全组织登录，v3.5.20）：锁定当前组织，不可切换
   if (_isOrgScoped()) { sel.value = saved; sel.disabled = true; sel.title = '仅组织会话，不可切换组织'; }
 }
-function _isOrgScoped() { try { return localStorage.getItem('sso_org_scoped') === '1'; } catch (_) { return false; } }
+// 以 token 里的 org_scoped 为准（后端签发、不可篡改）；localStorage 标记仅作兜底
+function _isOrgScoped() {
+  try { if (jwtPayload(getToken())?.org_scoped) return true; } catch (_) {}
+  try { return localStorage.getItem('sso_org_scoped') === '1'; } catch (_) { return false; }
+}
 function onMarketOrgChange() {
   const sel = document.getElementById('market-org');
   try { localStorage.setItem('sso_current_org', sel.value || ''); } catch (_) {}

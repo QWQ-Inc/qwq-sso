@@ -922,6 +922,14 @@ function appVisibleToUser(appId, userId) {
   return !!appOrgStmts.openToAnyOfUser.get(appId, userId);    // 受限：需为某开放组织的成员
 }
 
+// 会话感知的可见性（v3.5.26）：org-scoped 会话（独立安全组织登录）只能用「全局应用 + 该组织开放的应用」，
+// 且须仍是该组织成员；普通会话同 appVisibleToUser。scopedOrg = token 里的 org（仅 org_scoped 时传）。
+function appVisibleInSession(appId, userId, scopedOrg) {
+  if (!scopedOrg) return appVisibleToUser(appId, userId);
+  if (!appOrgStmts.isRestricted.get(appId)) return true;
+  return !!appOrgStmts.openToSubject.get(appId, scopedOrg) && !!orgMemberStmts.get.get(scopedOrg, userId);
+}
+
 // 应用↔组织开放关系（app_orgs 无行 = 全局应用）
 const appOrgStmts = {
   forApp:     db.prepare('SELECT subject_id FROM app_orgs WHERE app_id=?'),
@@ -1228,6 +1236,7 @@ module.exports = {
   oauthSubjects: oauthSubjectStmts,
   orgMembers: orgMemberStmts,
   appOrgs: appOrgStmts,
+  appVisibleInSession,
   appVisibleToUser,
   memos: memoStmts,
   memoAtt: memoAttStmts,

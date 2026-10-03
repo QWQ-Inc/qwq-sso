@@ -379,6 +379,31 @@ POST /api/public/forgot-password/reset      # 用验证码重置密码
 
 ---
 
+### 3.6.3 登录到组织（IAM 用户）
+
+复用平台账号、限定到某组织登录。组织须 `enabled` 且开启「允许直接登录」；两个通道都会先执行该组织的 **IP 白名单 / 登录时段** 策略（不符返回 `403`，`code` 为 `ip_denied` / `time_denied`），再校验身份；组织开了「强制两步验证」而本人未开 2FA 时返回 `403`。开了 2FA 的用户返回 `twofa_required` + `twofa_token`，走 `/api/2fa/login-verify` 二段（`org` / `org_scoped` 会保留）。
+
+**密码通道** `POST /api/account/org-login`
+
+```json
+{ "account": "邮箱/手机/UID/用户名", "password": "组织密码", "org": "组织 id" }
+```
+
+优先校验组织自有密码；成员没有组织密码时，非独立安全组织回退平台密码，独立安全组织直接拒绝。
+
+**验证码通道** `POST /api/account/org-login-code`（v3.5.26）
+
+```json
+{ "account": "邮箱或手机号", "code": "123456", "org": "组织 id" }
+```
+
+验证码先用 `POST /api/email/send-code {email, org}` 或 `POST /api/sms/send {phone, org}` 获取（会走该组织的专属消息凭证）。只接受**已存在且是该组织成员**的账号，绝不自动建号；**独立安全组织不接受验证码**（返回 `400`，须用组织密码）。
+
+**成功响应**：`{ success, token, user, org, org_scoped }`。`org_scoped=true`（独立安全组织）的会话：
+- 不能使用管理端接口（`403`），不能切换公共账号；
+- 组织管理员权限只限当前组织；应用市场 / 授权 / OIDC 发起只认「全局应用 + 该组织开放的应用」；
+- 组织被停用或关闭直登、或本人被移出该组织后，令牌立即失效（`401`）。
+
 ### 3.7 验证用户 Token（SSO 回调验证）
 
 ```
