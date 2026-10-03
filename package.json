@@ -1,6 +1,6 @@
 {
   "name": "unified-sso-system",
-  "version": "3.5.24",
+  "version": "3.5.25",
   "description": "统一登录系统 SSO - 多渠道登录 + 用户/管理后台",
   "main": "server/index.js",
   "scripts": {

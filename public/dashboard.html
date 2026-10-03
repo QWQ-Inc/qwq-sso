@@ -1552,8 +1552,23 @@ async function loadMe() {
         <div class="card">
           <div class="card-header"><h3>我管理的组织</h3></div>
           <div class="card-body"><div id="my-orgs-list" style="font-size:13px;color:var(--txd);">加载中…</div>
-            <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 作为组织管理员，你可以管理本组织的成员（加入/移出/组织内 UID）。如需签发访客码/跨域码，去「门禁」相关入口。</div>
+            <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 作为组织管理员，你可以管理本组织的成员（加入/移出/组织内 UID）和设备。如需签发访客码/跨域码，去「门禁」相关入口。</div>
           </div>
+        </div>
+        <!-- 本组织设备（组织管理员入口，v3.5.25；复用管理端设备管理的列表/弹窗，ctx='org'） -->
+        <div class="card" id="org-dev-card" style="display:none;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>本组织设备</h3>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <select id="org-dev-filter-org" onchange="renderDevices('org')" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><option value="">全部我管理的组织</option></select>
+              <select id="org-dev-filter-kind" onchange="renderDevices('org')" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><option value="">全部类型</option></select>
+              <input id="org-dev-search" oninput="renderDevices('org')" placeholder="搜索名称/序列号" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
+              <button class="btn primary" style="font-size:11px;" onclick="openDeviceModal(null,'org')">+ 登记设备</button>
+              <button class="btn" style="font-size:11px;" onclick="loadDevices('org')">刷新</button>
+            </div>
+          </div>
+          <div class="card-body"><div id="org-dev-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">💡 只显示归属你所管理组织的设备；登记的设备必须归属其中一个组织。</div>
         </div>
       </div>
 
@@ -2370,10 +2385,10 @@ async function loadMe() {
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3>设备管理</h3>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <select id="dev-filter-kind" onchange="renderDevices()" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><option value="">全部类型</option></select>
-              <input id="dev-search" oninput="renderDevices()" placeholder="搜索名称/序列号" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
-              <button class="btn primary" style="font-size:11px;" onclick="openDeviceModal()">+ 登记设备</button>
-              <button class="btn" style="font-size:11px;" onclick="loadDevices()">刷新</button>
+              <select id="dev-filter-kind" onchange="renderDevices('adm')" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><option value="">全部类型</option></select>
+              <input id="dev-search" oninput="renderDevices('adm')" placeholder="搜索名称/序列号" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
+              <button class="btn primary" style="font-size:11px;" onclick="openDeviceModal(null,'adm')">+ 登记设备</button>
+              <button class="btn" style="font-size:11px;" onclick="loadDevices('adm')">刷新</button>
             </div>
           </div>
           <div class="card-body"><div id="dev-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
@@ -3118,7 +3133,7 @@ function goto(page) {
   if(page === 'adm-oauth') { loadOauthSubjects(); }
   if(page === 'adm-api-logs') { loadAdmApiLogs(); }
   if(page === 'adm-audit') { loadAuditChain(); }
-  if(page === 'adm-devices') loadDevices();
+  if(page === 'adm-devices') loadDevices('adm');
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
   if(page === 'adm-env')   { renderEnvPage(); loadEnvPollStrategy(); loadFooterItems(); }
@@ -4967,23 +4982,41 @@ async function showAccessQr() {
 const DEVICE_KIND_LABEL = { apple:'Apple 设备', google:'Google 设备', microsoft:'Microsoft 设备', access_controller:'门禁机', card_reader:'读卡器' };
 const DEVICE_STATUS_LABEL = { active:'正常', disabled:'停用', lost:'丢失' };
 let _devCache = { devices: [], orgs: [], doors: [], kinds: [] };
-async function loadDevices() {
-  const box = document.getElementById('dev-list');
+// ctx：'adm' = 管理端「设备管理」页；'org' = 用户端「我的组织」页（组织管理员入口，v3.5.25）。两处共用一份缓存/弹窗。
+let _devCtx = 'adm';
+const _devId = (ctx, s) => (ctx === 'org' ? 'org-dev-' : 'dev-') + s;
+async function loadDevices(ctx) {
+  ctx = ctx || _devCtx; _devCtx = ctx;
+  const box = document.getElementById(_devId(ctx, 'list'));
   if (box) box.innerHTML = '加载中…';
   const { ok, data } = await api('GET', '/admin/devices');
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
   _devCache = { devices: data.devices || [], orgs: data.orgs || [], doors: data.doors || [], kinds: data.kinds || [] };
   // 类型筛选下拉
-  const fk = document.getElementById('dev-filter-kind');
+  const fk = document.getElementById(_devId(ctx, 'filter-kind'));
   if (fk && fk.options.length <= 1) _devCache.kinds.forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = DEVICE_KIND_LABEL[k] || k; fk.appendChild(o); });
-  renderDevices();
+  // 组织筛选下拉（仅「我的组织」页；多个组织时才显示）
+  const fo = document.getElementById('org-dev-filter-org');
+  if (ctx === 'org' && fo) {
+    const cur = fo.value;
+    fo.innerHTML = '<option value="">全部我管理的组织</option>' + _devCache.orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
+    fo.value = cur; fo.style.display = _devCache.orgs.length > 1 ? '' : 'none';
+  }
+  renderDevices(ctx);
 }
-function renderDevices() {
-  const box = document.getElementById('dev-list');
+function renderDevices(ctx) {
+  ctx = ctx || _devCtx;
+  const box = document.getElementById(_devId(ctx, 'list'));
   if (!box) return;
-  const kf = document.getElementById('dev-filter-kind')?.value || '';
-  const q = (document.getElementById('dev-search')?.value || '').toLowerCase();
+  const kf = document.getElementById(_devId(ctx, 'filter-kind'))?.value || '';
+  const q = (document.getElementById(_devId(ctx, 'search'))?.value || '').toLowerCase();
   let rows = _devCache.devices;
+  if (ctx === 'org') {
+    // 「我的组织」只看归属我所管理组织的设备（系统管理员也一样，无组织设备去管理端看）
+    const mine = new Set(_devCache.orgs.map(o => o.id));
+    const of = document.getElementById('org-dev-filter-org')?.value || '';
+    rows = rows.filter(d => d.subject_id && mine.has(d.subject_id) && (!of || d.subject_id === of));
+  }
   if (kf) rows = rows.filter(d => d.kind === kf);
   if (q) rows = rows.filter(d => (d.name||'').toLowerCase().includes(q) || (d.serial||'').toLowerCase().includes(q));
   if (!rows.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">没有设备。点「+ 登记设备」添加。</div>'; return; }
@@ -5001,16 +5034,18 @@ function renderDevices() {
         <br><span style="color:var(--txd);font-size:11px;">${d.serial?('SN:'+esc(d.serial)+' '):''}${owner} ${org} ${door} ${seen}</span>
         ${d.tags?`<br><span style="color:var(--txd);font-size:10px;">🏷 ${esc(d.tags)}</span>`:''}
       </span>
-      <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openDeviceModal(${JSON.stringify(d).replace(/'/g,"&#39;")})'>编辑</button>
-      <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delDevice(${JSON.stringify(d.id)},${JSON.stringify(d.name||"")})'>删除</button>
+      <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openDeviceModal(${JSON.stringify(d).replace(/'/g,"&#39;")},${JSON.stringify(ctx)})'>编辑</button>
+      <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delDevice(${JSON.stringify(d.id)},${JSON.stringify(d.name||"")},${JSON.stringify(ctx)})'>删除</button>
     </div>`;
   }).join('');
 }
-function openDeviceModal(dev) {
+function openDeviceModal(dev, ctx) {
+  if (ctx) _devCtx = ctx;
   const editing = !!(dev && dev.id);
   const kindOpts = (_devCache.kinds.length ? _devCache.kinds : Object.keys(DEVICE_KIND_LABEL))
     .map(k => `<option value="${k}" ${editing&&dev.kind===k?'selected':''}>${esc(DEVICE_KIND_LABEL[k]||k)}</option>`).join('');
-  const orgOpts = `<option value="">（不归属组织）</option>` + _devCache.orgs.map(o => `<option value="${esc(o.id)}" ${editing&&dev.subject_id===o.id?'selected':''}>${esc(o.name)}</option>`).join('');
+  // 「我的组织」入口：设备必须归属某个我管理的组织（后端也会校验），不给「不归属」选项
+  const orgOpts = (_devCtx === 'org' ? '' : `<option value="">（不归属组织）</option>`) + _devCache.orgs.map(o => `<option value="${esc(o.id)}" ${editing&&dev.subject_id===o.id?'selected':''}>${esc(o.name)}</option>`).join('');
   const doorOpts = `<option value="">（不关联门）</option>` + _devCache.doors.map(o => `<option value="${esc(o.id)}" ${editing&&dev.door_id===o.id?'selected':''}>${esc(o.name)}</option>`).join('');
   const stOpts = Object.entries(DEVICE_STATUS_LABEL).map(([k,v]) => `<option value="${k}" ${editing&&dev.status===k?'selected':''}>${esc(v)}</option>`).join('');
   const inp = 'box-sizing:border-box;width:100%;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
@@ -5056,13 +5091,14 @@ async function saveDevice() {
     note: document.getElementById('dev-note').value.trim(),
   };
   const { ok, data } = id ? await api('PATCH', '/admin/devices/' + id, body) : await api('POST', '/admin/devices', body);
-  if (ok) { document.getElementById('device-modal').classList.remove('show'); showToast('已保存'); loadDevices(); }
+  if (ok) { document.getElementById('device-modal').classList.remove('show'); showToast('已保存'); loadDevices(_devCtx); }
   else showToast('保存失败：' + (data?.error || '未知错误'));
 }
-async function delDevice(id, name) {
+async function delDevice(id, name, ctx) {
+  if (ctx) _devCtx = ctx;
   if (!confirm(`删除设备「${name||id}」？`)) return;
   const { ok, data } = await api('DELETE', '/admin/devices/' + id);
-  if (ok) { showToast('已删除'); loadDevices(); } else showToast('删除失败：' + (data?.error || '未知错误'));
+  if (ok) { showToast('已删除'); loadDevices(_devCtx); } else showToast('删除失败：' + (data?.error || '未知错误'));
 }
 
 // ── 管理端：门禁管理 ──
@@ -5816,6 +5852,8 @@ async function loadMyOrgs() {
       <div><div style="font-weight:600;color:var(--tx);">🏢 ${esc(o.name)}</div><div style="font-size:12px;color:var(--txd);">${(o.members||[]).length} 名成员</div></div>
       <button class="btn primary" style="font-size:12px;" onclick='openOrgMembers(${JSON.stringify(o.id)},${JSON.stringify(o.name)})'>成员管理</button>
     </div>`).join('') : '<div style="color:var(--txd);">你当前不是任何组织的管理员。</div>';
+  const dc = document.getElementById('org-dev-card');
+  if (dc) { dc.style.display = orgs.length ? '' : 'none'; if (orgs.length) loadDevices('org'); }
 }
 // 判断本人是否为某组织管理员 → 点亮「组织管理」菜单
 async function checkOrgAdminNav() {

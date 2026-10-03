@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.24**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.25**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -428,6 +428,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 
 ---
 
+## v3.5.25 组织管理员的设备管理 UI 入口（承接 v3.5.21 遗留）
+
+三级版本（Web）。v3.5.21 后端已按组织管理员限权（`GET/POST /admin/devices` 走 managedBy、PATCH/DELETE 走 `canManageDevice`），但 UI 只在系统管理员菜单。本版补用户端入口：
+- `page-orgadmin`（「我的组织」）加 `org-dev-card`「本组织设备」卡，`loadMyOrgs()` 有组织时显示并 `loadDevices('org')`。
+- 设备 JS 参数化：`_devCtx`（`adm`|`org`）+ `_devId(ctx, s)` 映射元素 id（`dev-*` / `org-dev-*`）；`loadDevices/renderDevices/openDeviceModal/delDevice` 都收 `ctx`，保存/删除后按当前 ctx 刷新。管理端按钮显式传 `'adm'`。
+- `org` 视图：只列 `subject_id ∈ 我管理的组织` 的设备（系统管理员在此页也一样，无组织设备去管理端看）；多组织时出组织筛选下拉；登记弹窗不给「不归属组织」选项（后端 `resolveDeviceFields` 对非系统管理员本就拒绝）。
+- ⚠️ 测试：dev 浏览器（playwright）实测——组织管理员看到卡片+设备列表、弹窗组织下拉只含所管组织、新增「李四的 iPad」入列、搜索、删除；管理端设备页仍有「不归属组织」选项；全程无 JS 报错。后端未改。
+
 ## v3.5.24 组织登录通道执行组织登录策略（IP 白名单 / 登录时段）（安全修复，承接 v3.5.20 遗留）
 
 三级版本。v3.5.20 遗留「独立安全组织的 IP/时段策略在 org-login 路径的执行」——之前 v3.4.32 的主体策略只在 `oauth.js` `loginSuccess`（三方登录）执行，`/account/org-login` 可绕过 IP 白名单与登录时段。
@@ -436,7 +444,7 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ 语义变更：组织登录的「强制 2FA」从 `independent_security && require_2fa` 改为只看 `require_2fa`，与三方登录通道一致（之前非独立组织勾了强制 2FA 但组织登录不拦，属漏洞）。
 - 主体弹窗「登录策略」标题改为「经该主体三方登录 /『登录到组织』时强制执行」。
 - ⚠️ 测试：`scratchpad/org-policy-test.js` 15 项全过（日内/跨夜/边界/非法放行、CIDR/精确/::ffff:/空白列表、时段拒、只填一端不拦、IP 优先）。HTTP 层同既有约束未端到端跑（无 node_modules）。
-- 仍未做（v3.5.20 遗留）：org-login 走验证码、dashboard 更彻底的「不可切换」收口；v3.5.21 遗留：组织管理员的设备管理 UI 入口。
+- 仍未做（v3.5.20 遗留）：org-login 走验证码、dashboard 更彻底的「不可切换」收口。（v3.5.21 遗留的组织管理员设备 UI 入口已在 v3.5.25 补上）
 
 ## v3.5.23 API-docs 逐接口补全（开放 API 全覆盖）（用户反馈）
 
