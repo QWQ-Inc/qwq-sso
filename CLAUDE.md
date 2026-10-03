@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.29**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.30**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -427,6 +427,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.30 iOS 应用中心加入管理工具（门禁 / 设备 / 用户）（用户反馈）
+
+三级版本。用户：「门禁、设备管理、用户管理这些都可以做到手机端的应用中心，区别于入口罢了。」
+- 后端 `GET /api/user/app-center`（requireAuth）：`tools.users`=系统管理员（Lv.3 读，`write`=Lv.2）；`tools.devices`=系统管理员或组织管理员（`orgs`=myManagedOrgs，`all`=系统管理员）；`tools.access`=系统管理员（`admin`）或 `canIssuePass`（`passes`）；`pass_doors`=签发访客码可选的门（管理员=全部启用门，其它=自己能通行的门）。org-scoped 会话自然只算当前组织（走 isSysAdmin/myManagedOrgs/canIssuePass）。**只决定磁贴显隐，真正权限仍由各接口自己校验。**
+- iOS 新 `ManageViews.swift`：`ToolTile`、`AdminUsersView`（`/admin/users?q=`，左滑停用/启用）、`DevicesManageView` + `DeviceEditView`（`/admin/devices` CRUD；非系统管理员登记时默认选第一个所管组织、无「不归属」项）、`AccessManageView`（分段：访客码 `/access/passes` 签发/撤销/二维码+`ShareLink` 分享 `/pass.html?code=`；管理员另有门列表 `/admin/access/doors`、通行记录 `/admin/access/logs`）+ `PassIssueView` + `PassQRView`。门的规则/子码/禁入时段仍只在网页配。
+- `AppsTabView` 顶部「管理工具」磁贴区（搜索/分类筛选时隐藏）；`APIClient.request(method,path,body,token)` 通用方法。
+- ⚠️ 本机无 Swift 工具链，靠 push 后 GitHub Actions 编译验证；ForEach 刻意不用元组 key path（`id: \.0`），改 indices。
+- ⚠️ 测试：app-center 权限 4 项（管理员全有 / 组织管理员设备+访客码无用户管理 / 普通用户全无 / 组织会话只剩当前组织）真实服务端跑通。
 
 ## v3.5.29 门禁：门子码 + 禁入时段 + 访客陪同带入，主码默认 60 秒（用户反馈）
 

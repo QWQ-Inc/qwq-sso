@@ -2628,6 +2628,24 @@ router.get('/public/app-icon/:id', (req, res) => {
   res.send(ic.data);
 });
 
+// ── App 应用中心的内置工具（v3.5.30）：按权限告诉客户端显示哪些「管理类」磁贴 ──
+// 只是入口不同：权限仍以各接口自己的校验为准（这里算错了最多是多显示/少显示一个磁贴）。
+router.get('/user/app-center', requireAuth, (req, res) => {
+  const sysRead = isSysAdmin(req, 3), sysWrite = isSysAdmin(req, 2);
+  const managed = myManagedOrgs(req);
+  const issue = canIssuePass(req);
+  let passDoors = [];
+  if (issue) {
+    if (sysRead) passDoors = access.enabledDoors.all().map(d => ({ id: d.id, name: d.name }));
+    else { const u = users.findById.get(req.user.uid); passDoors = u ? accessCore.doorsForUser(u).map(d => ({ id: d.id, name: d.name })) : []; }
+  }
+  res.json({ success: true, tools: {
+    users:   sysRead ? { write: sysWrite } : null,                        // 用户管理（系统管理员）
+    devices: (sysRead || managed.length) ? { orgs: managed.map(o => ({ id: o.id, name: o.name })), all: sysRead } : null,  // 设备管理
+    access:  (sysRead || issue) ? { admin: sysRead, passes: issue } : null,  // 门禁：管理员看门/记录；可签发者管访客码
+  }, pass_doors: passDoors });
+});
+
 // ── 我的应用文件夹（v3.5.28，个人整理用；只影响自己的展示，不改可见性/授权）──
 router.get('/user/app-folders', requireAuth, (req, res) => {
   const items = appFolders.items.all(req.user.uid);

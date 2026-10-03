@@ -17,6 +17,8 @@ struct AppsTabView: View {
     @State private var movingApp: [String: Any]?
     @State private var newFolderFor: String??   // nil=未弹；.some(nil)=新建空文件夹；.some(id)=新建并放入该应用
     @State private var newFolderName = ""
+    @State private var tools: [String: Any] = [:]          // 管理工具权限（v3.5.30，/api/user/app-center）
+    @State private var passDoors: [[String: Any]] = []
 
     private let cols = [GridItem(.adaptive(minimum: 72), spacing: 14)]
 
@@ -65,6 +67,11 @@ struct AppsTabView: View {
                             }.padding(.horizontal)
                         }
                     }
+                    if !filtering && hasTools {
+                        Text("管理工具").font(.footnote).foregroundColor(.secondary).padding(.horizontal)
+                        LazyVGrid(columns: cols, spacing: 18) { toolTiles }.padding(.horizontal)
+                        Text("应用").font(.footnote).foregroundColor(.secondary).padding(.horizontal)
+                    }
                     if apps.isEmpty && !loading {
                         Text("暂无可用应用").foregroundColor(.secondary).padding()
                     }
@@ -112,6 +119,24 @@ struct AppsTabView: View {
             .alert("提示", isPresented: Binding(get: { msg != nil }, set: { if !$0 { msg = nil } })) {
                 Button("好") { msg = nil }
             } message: { Text(msg ?? "") }
+        }
+    }
+
+    // ── 管理工具磁贴（同一套管理接口，只是手机上的入口）──
+    private var hasTools: Bool { tools["users"] is [String: Any] || tools["devices"] is [String: Any] || tools["access"] is [String: Any] }
+    @ViewBuilder private var toolTiles: some View {
+        if let acc = tools["access"] as? [String: Any] {
+            NavigationLink { AccessManageView(isAdmin: (acc["admin"] as? Bool) ?? false, canPass: (acc["passes"] as? Bool) ?? false, passDoors: passDoors) }
+                label: { ToolTile(title: "门禁", symbol: "door.left.hand.closed", color: .blue) }
+                .buttonStyle(.plain)
+        }
+        if tools["devices"] is [String: Any] {
+            NavigationLink { DevicesManageView() } label: { ToolTile(title: "设备管理", symbol: "laptopcomputer.and.iphone", color: .teal) }
+                .buttonStyle(.plain)
+        }
+        if let us = tools["users"] as? [String: Any] {
+            NavigationLink { AdminUsersView(canWrite: (us["write"] as? Bool) ?? false) } label: { ToolTile(title: "用户管理", symbol: "person.2.fill", color: .indigo) }
+                .buttonStyle(.plain)
         }
     }
 
@@ -254,7 +279,12 @@ struct AppsTabView: View {
         await MainActor.run { loading = true }
         let list = (try? await state.api().appsMarket(token: state.token)) ?? []
         let fs = (try? await state.api().appFolders(token: state.token)) ?? []
-        await MainActor.run { apps = list; folders = fs; loading = false }
+        let ac = (try? await state.api().request("GET", "/api/user/app-center", token: state.token)) ?? [:]
+        await MainActor.run {
+            apps = list; folders = fs; loading = false
+            tools = (ac["tools"] as? [String: Any]) ?? [:]
+            passDoors = (ac["pass_doors"] as? [[String: Any]]) ?? []
+        }
     }
 }
 

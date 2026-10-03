@@ -330,6 +330,11 @@ final class APIClient {
         return (j["doors"] as? [[String: Any]]) ?? []
     }
 
+    /// 通用请求（v3.5.30 应用中心管理工具用）：任意方法 + 可选 JSON body
+    func request(_ method: String, _ path: String, body: [String: Any]? = nil, token: String) async throws -> [String: Any] {
+        try await sendBody(method, path, body: body, token: token)
+    }
+
     /// PATCH/DELETE 等带可选 body 的通用请求
     private func sendBody(_ method: String, _ path: String, body: [String: Any]?, token: String?) async throws -> [String: Any] {
         var req = URLRequest(url: try makeURL(path))
