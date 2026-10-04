@@ -3652,6 +3652,64 @@ async function deletionItemAction(r, key, action, req, admin) {
   lifecycle.tryExecute(r.id);
 }
 
+// ── 企业微信残留成员（v3.5.57）：账号在本系统已删除，企业微信里的成员却还在（之前登录绑定不挡删除、或升级前删的）──
+// 来源：已删除账号被封存的外部身份（identity_blocks）——通讯录映射直接带着连接；企业微信登录绑定按企业找同步源。
+// 同一 UserId 现在又对应着正常账号的（被别人用了）不列、也不让动。
+function wecomLeftoverCandidates() {
+  const rows = db.prepare(`SELECT b.kind, b.provider, b.conn_id, b.ext_id, u.id AS uid, u.name, u.uid_seq, u.uid_code, u.deleted_at
+    FROM identity_blocks b JOIN users u ON u.id=b.user_id WHERE u.deletion_state='deleted' ORDER BY u.deleted_at DESC`).all();
+  const map = new Map();
+  for (const b of rows) {
+    let sid = null;
+    if (b.kind === 'dir') sid = b.conn_id;
+    else if (String(b.provider || '').split(':')[0] === 'wecom') sid = lifecycle.wecomSourceFor(b.provider);
+    const src = sid && dirSources.get.get(sid);
+    if (!src || src.type !== 'wecom') continue;
+    const cfg = dirsyncWecom.effectiveCfg(src);
+    const corp = String(cfg.corp_id || '').trim();
+    const key = corp.toLowerCase() + '|' + String(b.ext_id).toLowerCase();
+    if (map.has(key)) continue;
+    if (dirsyncWecom.corpUsers(corp, b.ext_id).length) continue;   // 这个 UserId 现在属于正常账号
+    map.set(key, { key, source_id: src.id, source_label: src.label || '企业微信', corp_id: corp, ext_id: b.ext_id, can_write: !!cfg.write_secret,
+      user: { id: b.uid, name: b.name, uid: b.uid_code || '#' + String(b.uid_seq).padStart(5, '0'), deleted_at: b.deleted_at }, _cfg: cfg });
+  }
+  return [...map.values()];
+}
+const canLeftover = (req, item) => isSysAdmin(req, 3) || hasGrant(req, 'user.delete', users.findById.get(item.user.id));
+router.get('/admin/deletions/leftovers', requireAuth, async (req, res) => {
+  const list = wecomLeftoverCandidates().filter(i => canLeftover(req, i)).slice(0, 300);
+  if (!isSysAdmin(req, 3) && !list.length && !db.prepare("SELECT 1 FROM admin_grants WHERE user_id=? AND perm='user.delete'").get(req.user.uid)) return res.status(403).json({ error: '无权查看' });
+  let i = 0;
+  const worker = async () => { while (i < list.length) { const it = list[i++];
+    try { it.status = (await dirsyncWecom.memberStatus(it._cfg, it.ext_id)).status; } catch (e) { it.status = 'error'; it.error = String(e.message || e).slice(0, 200); } } };
+  await Promise.all(Array.from({ length: Math.min(5, list.length) }, worker));
+  const out = list.map(({ _cfg, ...x }) => x);
+  res.json({ success: true, items: out, remaining: out.filter(x => x.status === 'active' || x.status === 'disabled' || x.status === 'quit' || x.status === 'error').length });
+});
+const LEFTOVER_VERB = { disable: '禁用', remove_member: '删除' };
+router.post('/admin/deletions/leftovers/action', requireAuth, async (req, res) => {
+  const action = String(req.body?.action || '');
+  if (!LEFTOVER_VERB[action]) return res.status(400).json({ error: '不支持的操作' });
+  const want = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 200).map(x => String(x && x.key || '')).filter(Boolean);
+  if (!want.length) return res.status(400).json({ error: '请先勾选' });
+  const phrase = `${LEFTOVER_VERB[action]} ${want.length} 个企业微信成员`;
+  if (String(req.body?.confirm || '').trim() !== phrase) return res.status(400).json({ error: `请原样输入「${phrase}」确认`, confirm_text: phrase });
+  const byKey = new Map(wecomLeftoverCandidates().map(x => [x.key, x]));
+  const results = [];
+  for (const k of want) {
+    const it = byKey.get(k);
+    try {
+      if (!it) throw new Error('不是已删除账号的残留成员（可能已恢复账号，或这个 UserId 现在属于别的账号）');
+      if (!canLeftover(req, it)) throw new Error('无权操作');
+      if (action === 'disable') await dirsyncWecom.setMemberEnabled(it._cfg, it.ext_id, false);
+      else await dirsyncWecom.deleteMember(it._cfg, it.ext_id);
+      audit(action === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(users.findById.get(it.user.id)?.uid_seq || ''), actor: actorOf(req), detail: { source: it.source_id, ext_id: it.ext_id, leftover: true } });
+      results.push({ key: k, ext_id: it.ext_id, name: it.user.name, ok: true });
+    } catch (e) { results.push({ key: k, ext_id: it ? it.ext_id : '', name: it ? it.user.name : '', ok: false, error: e.message + (/48002|48004|权限/.test(e.message) ? '（要在同步源里填「通讯录同步 Secret（管理用）」）' : '') }); }
+  }
+  res.json({ success: true, done: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, results });
+});
+
 // 管理端：删除预检（交接清单 + 会直接执行还是要审批）
 router.get('/admin/users/:id/deletion', requireAuth, (req, res) => {
   const u = users.findById.get(req.params.id);

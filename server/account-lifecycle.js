@@ -53,7 +53,7 @@ function preflight(user) {
   for (const o of db.prepare('SELECT provider, open_id FROM user_oauth WHERE user_id=?').all(user.id)) {
     const platform = String(o.provider).split(':')[0];
     if (!PLATFORM_ZH[platform] || extKeys.has(o.open_id)) continue;
-    items.push({ key: `bind:${o.provider}:${o.open_id}`, kind: 'external', check: 'bind', auto: true,
+    items.push({ key: `bind:${o.provider}:${o.open_id}`, kind: 'external', check: 'bind', auto: true, provider: o.provider, ext_id: o.open_id,
       label: `${PLATFORM_ZH[platform]}登录账号 ${o.open_id}：删除时系统自动解除绑定并封存（之后不能再用它登录）` });
   }
   for (const r of db.prepare('SELECT a.subject_id, s.name FROM oauth_subject_admins a JOIN oauth_subjects s ON s.id=a.subject_id WHERE a.user_id=?').all(user.id))
@@ -84,14 +84,46 @@ function itemCheck(i) {
   }
   return i.check;
 }
+// 企业微信登录绑定对应的通讯录（同一企业配了同步源 / 文件夹通讯录才有）：有就能实时核验、禁用、删除这个成员（v3.5.57）
+// 返回同步源 id（文件夹通讯录返回连接 id），优先有「管理用 Secret」的、启用的
+function wecomSourceFor(provider) {
+  const W = require('./dirsync-wecom');
+  const corp = W.corpOfProvider(provider);
+  if (!corp) return null;
+  const rows = [...W.corpScope(corp).sources].map(id => db.prepare('SELECT * FROM dir_sync_sources WHERE id=?').get(id)).filter(Boolean)
+    .map(s => (s.parent_id && db.prepare('SELECT * FROM dir_sync_sources WHERE id=?').get(s.parent_id)) || s);
+  const score = s => { const c = W.effectiveCfg(s); return (c.write_secret ? 4 : 0) + (s.enabled ? 2 : 0) + (c.secret ? 1 : 0); };
+  rows.sort((a, b) => score(b) - score(a));
+  return rows[0] ? rows[0].id : null;
+}
+// v3.5.57 之前：企业微信登录绑定一律「删除时自动解除」，不挡执行——于是账号删了、企业微信里人还在职。
+// 现在同企业有通讯录可查时，把它当成通讯录成员核验（旧申请里的这类项读取时一并升级）。
+function upgradeBind(i) {
+  if (itemCheck(i) !== 'bind') return i;
+  let provider = i.provider, ext = i.ext_id;
+  if (!provider) {   // 旧清单项只有 key：bind:wecom:<UserId> 或 bind:wecom:<凭证 id>:<UserId>
+    const m = String(i.key).match(/^bind:wecom:(.+)$/); if (!m) return i;
+    const j = m[1].indexOf(':'), cid = j > 0 ? m[1].slice(0, j) : '';
+    if (cid && db.prepare("SELECT 1 FROM oauth_providers WHERE id=? AND platform='wecom'").get(cid)) { provider = 'wecom:' + cid; ext = m[1].slice(j + 1); }
+    else { provider = 'wecom'; ext = m[1]; }
+  }
+  if (String(provider).split(':')[0] !== 'wecom') return i;
+  const sid = wecomSourceFor(provider);
+  if (!sid) return i;
+  return { ...i, check: 'ext', auto: false, provider, ext_id: ext, source_id: sid,
+    label: `企业微信登录账号 ${ext}：在企业微信里删除或禁用该成员（系统核验）` };
+}
 function evalItem(userId, i, executed) {
+  if (!executed) i = upgradeBind(i);
   const c = itemCheck(i);
   const id = String(i.key).split(':').slice(1).join(':');
   let done = false, note = '';
   if (c === 'app') { done = !!i.done; note = i.done ? '管理员已确认' : '等待管理员确认'; }
   else if (c === 'bind') { done = true; note = executed ? '已解除并封存' : '删除时自动解除并封存'; }
   else if (c === 'ext') {
-    const linked = db.prepare('SELECT 1 FROM dir_source_links WHERE source_id=? AND ext_id=? AND user_id=?').get(i.source_id, i.ext_id, userId);
+    const linked = i.provider   // 登录绑定升级来的：看绑定还在不在，而不是同步映射
+      ? db.prepare('SELECT 1 FROM user_oauth WHERE provider=? AND open_id=? AND user_id=?').get(i.provider, i.ext_id, userId)
+      : db.prepare('SELECT 1 FROM dir_source_links WHERE source_id=? AND ext_id=? AND user_id=?').get(i.source_id, i.ext_id, userId);
     const v = i.verified;
     if (v && DONE_WITH[v.status]) { done = true; note = DONE_WITH[v.status] + `（${String(v.at).slice(0, 16)} 核验）`; }
     else if (!linked) { done = true; note = executed ? '已解除并封存' : '同步已不再包含该成员'; }
@@ -335,4 +367,4 @@ function log(event, user, by, detail) {
   try { hooks.audit(event, { subject: String(user ? user.uid_seq : ''), actor: by ? 'user:' + (users.findById.get(by)?.uid_seq || by) : 'system', detail }); } catch (_) {}
 }
 
-module.exports = { detachExternal, reattachExternal, isBlockedOauth, isBlockedDir, detachLegacyDeleted, setVerification, connOf, init, config, preflight, request, setChecklist, approve, cancel, reject, tryExecute, restore, purge, tick, pendingOf, getReq, sqlTime };
+module.exports = { wecomSourceFor, detachExternal, reattachExternal, isBlockedOauth, isBlockedDir, detachLegacyDeleted, setVerification, connOf, init, config, preflight, request, setChecklist, approve, cancel, reject, tryExecute, restore, purge, tick, pendingOf, getReq, sqlTime };

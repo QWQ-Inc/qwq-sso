@@ -161,7 +161,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 
 /* User detail panel */
 .detail-grid{display:grid;grid-template-columns:200px 1fr;gap:0;border:1px solid var(--bd);border-radius:3px;align-items:start;}
-.detail-list{border-right:1px solid var(--bd);overflow-y:auto;position:sticky;top:0;max-height:calc(100vh - 170px);min-height:240px;}
+.detail-list{border-right:1px solid var(--bd);overflow-y:auto;position:sticky;top:0;max-height:calc(100vh - var(--hdr-h) - 48px);min-height:240px;}
 .detail-list-count{position:sticky;top:0;z-index:1;padding:6px 14px;font-size:11px;color:var(--txd);background:var(--sf2);border-bottom:1px solid var(--bd);}
 .detail-list-item{padding:10px 14px;border-bottom:1px solid var(--bd);cursor:pointer;transition:background .15s;}
 .detail-list-item:hover{background:var(--sf4);}
@@ -2624,6 +2624,15 @@ async function loadMe() {
           <div id="del-config" style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;"></div>
           <div id="del-bulk" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:0 20px 4px;font-size:12px;color:var(--txd);"></div>
           <div class="card-body"><div id="del-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>企业微信残留成员</h3>
+            <button class="btn" style="font-size:11px;padding:4px 10px;" onclick="loadLeftovers()">检查企业微信</button>
+          </div>
+          <div style="padding:0 20px 6px;font-size:12px;color:var(--txd);line-height:1.8;">账号在这里已删除，但企业微信里对应的成员还在的，会列在这里（查的是保留期内已删除账号绑定过的企业微信账号，会实时调用企业微信接口）。勾选后可在企业微信里禁用或删除；禁用 / 删除要用同步源里的「通讯录同步 Secret（管理用）」。</div>
+          <div id="lo-bulk" style="display:none;gap:6px;align-items:center;padding:0 20px 6px;font-size:12px;"></div>
+          <div class="card-body"><div id="lo-list" style="font-size:12px;color:var(--txd);">点「检查企业微信」查看。</div></div>
         </div>
         <div class="card" style="margin-top:16px;">
           <div class="card-header"><h3>账号合并记录</h3></div>
@@ -5308,6 +5317,53 @@ async function admPurgeUser(uid) {
   if (ok) { showToast('已彻底清除'); loadAdmUsers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
 }
 // 管理端：「注销与删除」页
+// ── 企业微信残留成员（v3.5.57）──
+let _loItems = [];
+const LO_ST = { active: ['在职', 'var(--err)'], disabled: ['已禁用', 'var(--warn)'], quit: ['已退出企业', 'var(--warn)'], gone: ['已不存在', '#1F7A3A'], unknown: ['无法确认', 'var(--txd)'], error: ['核验失败', 'var(--err)'] };
+async function loadLeftovers() {
+  const box = document.getElementById('lo-list');
+  box.innerHTML = '正在向企业微信核验…';
+  const { ok, data } = await api('GET', '/admin/deletions/leftovers');
+  if (!ok) { box.innerHTML = '<span style="color:var(--err);">' + esc(data?.error || '加载失败') + '</span>'; return; }
+  _loItems = data.items || [];
+  if (!_loItems.length) { box.innerHTML = '没有残留：已删除账号绑定过的企业微信成员都已不在。'; _loBulkSync(); return; }
+  box.innerHTML = `<div style="margin-bottom:6px;">共 ${_loItems.length} 个，其中 <b style="color:var(--err);">${_loItems.filter(x => x.status === 'active').length}</b> 个仍在职</div>` + _loItems.map(x => {
+    const st = LO_ST[x.status] || LO_ST.unknown, can = x.status !== 'gone';
+    return `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--bd);">
+      <input type="checkbox" class="lo-sel" value="${esc(x.key)}" ${can ? '' : 'disabled'} onchange="_loBulkSync()">
+      <span style="flex:1;min-width:0;"><b style="color:var(--txt);">${esc(x.user.name || '')}</b> <span style="color:var(--txd);">${esc(x.user.uid)}</span> · ${esc(x.source_label)} · UserId <code>${esc(x.ext_id)}</code>
+        ${x.user.deleted_at ? `<span style="color:var(--txd);"> · ${esc(String(x.user.deleted_at).slice(0, 10))} 删除</span>` : ''}${x.can_write ? '' : ' <span style="color:var(--warn);">· 未填管理用 Secret</span>'}${x.error ? `<div style="color:var(--err);">${esc(x.error)}</div>` : ''}</span>
+      <span style="color:${st[1]};font-weight:600;white-space:nowrap;">${st[0]}</span></label>`;
+  }).join('');
+  _loBulkSync();
+}
+function _loPicked() { return [...document.querySelectorAll('#lo-list .lo-sel:checked')].map(c => _loItems.find(x => x.key === c.value)).filter(Boolean); }
+function _loBulkSync() {
+  const bar = document.getElementById('lo-bulk'); if (!bar) return;
+  const sel = _loPicked(), actable = _loItems.filter(x => x.status !== 'gone');
+  bar.style.display = actable.length ? 'flex' : 'none';
+  bar.innerHTML = `<label style="display:flex;gap:4px;align-items:center;"><input type="checkbox" ${sel.length && sel.length === actable.length ? 'checked' : ''} onchange="document.querySelectorAll('#lo-list .lo-sel:not(:disabled)').forEach(c=>c.checked=this.checked);_loBulkSync()"> 全选</label>
+    <span>已选 ${sel.length}</span><span style="flex:1;"></span>
+    <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--warn);" ${sel.length ? '' : 'disabled'} onclick="leftoverAction('disable')">在企业微信中禁用…</button>
+    <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--err);" ${sel.length ? '' : 'disabled'} onclick="leftoverAction('remove_member')">在企业微信中删除…</button>`;
+}
+async function leftoverAction(act) {
+  const sel = _loPicked(); if (!sel.length) return;
+  const verb = act === 'disable' ? '禁用' : '删除';
+  const names = sel.slice(0, 15).map(x => `· ${x.user.name || ''} ${x.user.uid}（UserId ${x.ext_id}）`).join('\n') + (sel.length > 15 ? `\n…等 ${sel.length} 个` : '');
+  if (!await uiConfirm(`在企业微信里${verb}下面 ${sel.length} 个成员？${act === 'remove_member' ? '\n删除后企业微信里的聊天、文档等归属由企业微信处理，无法在本系统恢复。' : '\n禁用后对方不能再登录企业微信，可在企业微信后台重新启用。'}\n\n${names}`, { title: `在企业微信中${verb}`, danger: true })) return;
+  const phrase = `${verb} ${sel.length} 个企业微信成员`;
+  const v = await uiPrompt(`请原样输入「${phrase}」确认`, '', { title: '再次确认' });
+  if (v == null) return;
+  if (v.trim() !== phrase) { showToast('确认内容不正确，已取消'); return; }
+  showToast('正在调用企业微信…');
+  const { ok, data } = await api('POST', '/admin/deletions/leftovers/action', { action: act, items: sel.map(x => ({ key: x.key })), confirm: phrase });
+  if (!ok) { showToast('操作失败：' + (data?.error || '未知错误')); return; }
+  showToast(`已${verb} ${data.done} 个` + (data.failed ? `，${data.failed} 个失败` : ''));
+  if (data.failed) await uiAlert('以下没有成功：\n' + data.results.filter(r => !r.ok).map(r => `· ${r.name || ''} ${r.ext_id}：${r.error}`).join('\n'), { title: '部分失败' });
+  loadLeftovers();
+}
+
 async function loadDeletions() {
   const box = document.getElementById('del-list');
   const st = document.getElementById('del-filter').value;
