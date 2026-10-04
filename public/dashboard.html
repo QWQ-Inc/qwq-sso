@@ -720,7 +720,8 @@ function _devApi(method, path, body) {
   }
 
   // 商城
-  if (path === '/shop/config')  return ok({ success:true, checkin_points:10, redeem_code_on:true, kyc_cost_type:'free' });
+  if (path === '/shop/config')  return ok({ success:true, checkin_points:10, redeem_code_on:true, kyc_cost_type:'free', leaderboard_on:true });
+  if (path === '/shop/leaderboard') return ok({ success:true, size:50, total:3, list:[{rank:1,uid_seq:2,name:'李四',points:980},{rank:2,uid_seq:1,name:'许睿',points:520,me:true},{rank:3,uid_seq:3,name:'王五',points:100}], me:{rank:2,points:520} });
   if (path === '/shop/goods')   return ok({ success:true, goods: db.mockGoods });
   if (path === '/shop/records') return ok({ success:true, records: [] });
   if (path === '/shop/redeem-records') return ok({ success:true, records: [] });
@@ -1352,6 +1353,7 @@ async function loadMe() {
           <div class="tab"        id="stab-transfer" onclick="switchShopTab('transfer')">积分转账</div>
           <div class="tab"        id="stab-records"  onclick="switchShopTab('records')">兑换记录</div>
           <div class="tab"        id="stab-pts-log"  onclick="switchShopTab('pts-log')">积分日志</div>
+          <div class="tab"        id="stab-rank"     onclick="switchShopTab('rank')" style="display:none;">积分排行</div>
         </div>
 
         <!-- 商品列表 -->
@@ -1465,6 +1467,17 @@ async function loadMe() {
         </div>
 
         <!-- 积分日志 -->
+        <div id="shop-rank" style="display:none;">
+          <div class="card">
+            <div class="card-header"><h3>积分排行</h3><span id="rank-me" class="badge ac"></span></div>
+            <div style="padding:0">
+              <table class="tbl">
+                <thead><tr><th style="width:70px;">名次</th><th>用户</th><th>UID</th><th style="text-align:right;">积分</th></tr></thead>
+                <tbody id="rank-tbody"><tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
         <div id="shop-pts-log" style="display:none;">
           <div class="card">
             <div class="card-header"><h3>积分变动日志</h3><span id="pts-log-total" class="badge ac"></span></div>
@@ -2159,6 +2172,23 @@ async function loadMe() {
               </div>
               <div style="font-size:11px;color:var(--txd);line-height:1.7;">
                 关闭后用户端「兑换码」Tab 将显示「功能未开放」，已生成的兑换码不可使用。
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:14px;">
+            <div class="card-header"><h3>积分排行</h3></div>
+            <div class="card-body">
+              <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:8px;">
+                <label style="font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="cfg-rank-on" style="width:16px;height:16px;accent-color:var(--ac);cursor:pointer;"/>
+                  向用户开放积分排行
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:6px;">显示前
+                  <input type="number" id="cfg-rank-size" min="10" max="100" placeholder="50" style="width:70px;"/> 名</label>
+              </div>
+              <div style="font-size:11px;color:var(--txd);line-height:1.7;">
+                默认开放。关闭后用户端积分商城不再显示「积分排行」Tab。只统计正常在用的账号（不含公共账号、停用、已合并、注销中 / 已删除的账号）。
               </div>
             </div>
           </div>
@@ -4214,6 +4244,27 @@ async function saveProfile() {
 }
 
 // ── 积分日志 ──
+async function loadPointsRank() {
+  const tb = document.getElementById('rank-tbody'), meEl = document.getElementById('rank-me');
+  if (!tb) return;
+  const { ok, data } = await api('GET', '/shop/leaderboard');
+  if (!ok) {
+    tb.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;">${esc(data.error || '加载失败')}</td></tr>`;
+    if (data.error === '积分排行未开放') { shopRankOn = false; const rt = document.getElementById('stab-rank'); if (rt) rt.style.display = 'none'; switchShopTab('goods'); }
+    return;
+  }
+  if (meEl) meEl.textContent = data.me ? `我：第 ${data.me.rank} 名 · ${data.me.points.toLocaleString()} 积分` : '';
+  const medal = r => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : r;
+  tb.innerHTML = (data.list || []).map(r => `<tr${r.me ? ' style="background:var(--acl,rgba(0,120,255,.08));font-weight:600;"' : ''}>
+      <td style="font-size:${r.rank <= 3 ? '18px' : '13px'};">${medal(r.rank)}</td>
+      <td>${esc(r.name || '—')}${r.me ? ' <span class="badge ac" style="font-size:10px;">我</span>' : ''}</td>
+      <td style="color:var(--txd);font-size:12px;">${esc(uidOf(r))}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${(r.points || 0).toLocaleString()}</td></tr>`).join('')
+    || '<tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;">暂无数据</td></tr>';
+  if (data.me && !(data.list || []).some(r => r.me)) tb.insertAdjacentHTML('beforeend',
+    `<tr><td colspan="4" style="text-align:center;color:var(--txd);font-size:12px;padding:8px;">… 前 ${data.size} 名之外 · 你排第 ${data.me.rank} 名（共 ${data.total} 人）</td></tr>`);
+}
+
 async function loadPointsLog() {
   const tbody = document.getElementById('pts-log-tbody');
   const total = document.getElementById('pts-log-total');
@@ -9777,6 +9828,7 @@ function exportEnv() {
 let shopCurrentPts = 0;
 let shopPendingItem = null;
 let shopRedeemOn = true;
+let shopRankOn = false;
 
 async function loadShop() {
   // 获取积分 + 配置
@@ -9799,6 +9851,11 @@ async function loadShop() {
     // 兑换码 tab 禁用样式
     const tab = document.getElementById('stab-redeem');
     if (tab) tab.style.opacity = shopRedeemOn ? '1' : '0.4';
+    // 积分排行：管理员关闭则整个 tab 不显示；当前停在排行页则切回商品
+    shopRankOn = cfgRes.data.leaderboard_on !== false;
+    const rt = document.getElementById('stab-rank');
+    if (rt) rt.style.display = shopRankOn ? '' : 'none';
+    if (!shopRankOn && document.getElementById('shop-rank')?.style.display !== 'none') switchShopTab('goods');
   }
   // 加载商品
   const { ok, data } = await api('GET', '/shop/goods');
@@ -9854,7 +9911,8 @@ function renderShopGrid() {
 }
 
 function switchShopTab(tab) {
-  ['goods','coupons','redeem','transfer','records','pts-log'].forEach(t => {
+  if (tab === 'rank' && !shopRankOn) tab = 'goods';
+  ['goods','coupons','redeem','transfer','records','pts-log','rank'].forEach(t => {
     const el = document.getElementById('shop-' + t);
     const tb = document.getElementById('stab-' + t);
     if (el) el.style.display   = t === tab ? '' : 'none';
@@ -9863,6 +9921,7 @@ function switchShopTab(tab) {
   if (tab === 'records')  loadShopRecords();
   if (tab === 'coupons')  loadUserCoupons();
   if (tab === 'pts-log')  loadPointsLog();
+  if (tab === 'rank')     loadPointsRank();
   if (tab === 'redeem')   { if (!shopRedeemOn) { showToast('⚠️ 兑换码功能暂未开放'); switchShopTab('goods'); return; } loadRedeemRecords(); }
   if (tab === 'transfer') loadShopTransfer();
 }
@@ -10346,6 +10405,8 @@ async function loadAdmShopConfig() {
   if (el('cfg-checkin-min'))     el('cfg-checkin-min').value       = c.checkin_min     || '1';
   if (el('cfg-checkin-max'))     el('cfg-checkin-max').value       = c.checkin_max     || '10';
   if (el('cfg-redeem-on'))       el('cfg-redeem-on').checked       = c.redeem_code_on  === '1';
+  if (el('cfg-rank-on'))         el('cfg-rank-on').checked         = c.leaderboard_on  !== '0';
+  if (el('cfg-rank-size'))       el('cfg-rank-size').value         = c.leaderboard_size || '50';
   if (el('cfg-kyc-type'))        el('cfg-kyc-type').value          = c.kyc_cost_type   || 'free';
   if (el('cfg-kyc-pts-val'))     el('cfg-kyc-pts-val').value       = c.kyc_cost_value  || '0';
   if (el('cfg-kyc-feat'))        el('cfg-kyc-feat').value          = c.kyc_feature_key || 'kyc';
@@ -10430,6 +10491,8 @@ async function saveShopConfig() {
     checkin_min:         el('cfg-checkin-min')?.value,
     checkin_max:         el('cfg-checkin-max')?.value,
     redeem_code_on:      el('cfg-redeem-on')?.checked,
+    leaderboard_on:      el('cfg-rank-on')?.checked,
+    leaderboard_size:    el('cfg-rank-size')?.value || 50,
     kyc_cost_type:       el('cfg-kyc-type')?.value,
     kyc_cost_value:      el('cfg-kyc-pts-val')?.value,
     kyc_feature_key:     el('cfg-kyc-feat')?.value,

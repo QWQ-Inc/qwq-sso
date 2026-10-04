@@ -151,6 +151,15 @@ final class APIClient {
         let j = try await getJSON("/api/shop/records", token: token)
         return (j["records"] as? [[String: Any]]) ?? []
     }
+    /// 积分排行是否开放（管理员可在「积分配置」关闭）
+    func leaderboardOn(token: String) async throws -> Bool {
+        let j = try await getJSON("/api/shop/config", token: token)
+        return (j["leaderboard_on"] as? Bool) ?? true
+    }
+    /// 积分排行
+    func leaderboard(token: String) async throws -> [String: Any] {
+        try await getJSON("/api/shop/leaderboard", token: token)
+    }
     /// 积分日志
     func pointsLog(token: String) async throws -> [[String: Any]] {
         let j = try await getJSON("/api/user/points-log", token: token)

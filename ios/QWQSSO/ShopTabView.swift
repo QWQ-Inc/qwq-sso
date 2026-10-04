@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 积分商城（原生）：在售商品 + 兑换 + 我的兑换券（使用/转让/丢弃）+ 积分转账/兑换记录/积分明细。
+/// 积分商城（原生）：在售商品 + 兑换 + 我的兑换券（使用/转让/丢弃）+ 积分转账/兑换记录/积分明细/积分排行。
 struct ShopTabView: View {
     @EnvironmentObject var state: AppState
     @State private var goods: [[String: Any]] = []
@@ -11,6 +11,7 @@ struct ShopTabView: View {
     @State private var exchangingId: String?
     @State private var reveal: BlindReward?
     @State private var transferCoupon: CouponRef?
+    @State private var rankOn = false
 
     var body: some View {
         NavigationStack {
@@ -35,6 +36,9 @@ struct ShopTabView: View {
                     NavigationLink { PointsTransferView() } label: { Label("积分转账", systemImage: "arrow.left.arrow.right") }
                     NavigationLink { ShopRecordsView() } label: { Label("兑换记录", systemImage: "clock.arrow.circlepath") }
                     NavigationLink { PointsLogView() } label: { Label("积分明细", systemImage: "list.number") }
+                    if rankOn {
+                        NavigationLink { LeaderboardView() } label: { Label("积分排行", systemImage: "trophy") }
+                    }
                 }
             }
             .navigationTitle("积分商城")
@@ -178,10 +182,12 @@ struct ShopTabView: View {
         guard !state.token.isEmpty else { return }
         async let g = try? state.api().shopGoods(token: state.token)
         async let c = try? state.api().coupons(token: state.token)
-        let (gg, cc) = await (g, c)
+        async let r = try? state.api().leaderboardOn(token: state.token)
+        let (gg, cc, rr) = await (g, c, r)
         await MainActor.run {
             goods = gg ?? []
             coupons = cc ?? []
+            rankOn = rr ?? false
         }
     }
 }

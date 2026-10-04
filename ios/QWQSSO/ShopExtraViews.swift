@@ -138,3 +138,68 @@ struct PointsLogView: View {
     }
     private func fmt(_ s: String?) -> String { (s ?? "").replacingOccurrences(of: "T", with: " ").replacingOccurrences(of: "Z", with: "") }
 }
+
+/// 积分排行（管理员关闭时入口不显示；接口 403 时提示）
+struct LeaderboardView: View {
+    @EnvironmentObject var state: AppState
+    @State private var list: [[String: Any]] = []
+    @State private var me: [String: Any]?
+    @State private var size = 50
+    @State private var total = 0
+    @State private var error: String?
+    var body: some View {
+        List {
+            if let e = error { Text(e).foregroundColor(.secondary) }
+            if let m = me {
+                Section {
+                    HStack {
+                        Text("我的名次").font(.subheadline)
+                        Spacer()
+                        Text("第 \((m["rank"] as? Int) ?? 0) 名 · \((m["points"] as? Int) ?? 0) 积分").font(.subheadline).bold()
+                    }
+                }
+            }
+            Section("前 \(size) 名（共 \(total) 人）") {
+                if list.isEmpty && error == nil { Text("暂无数据").foregroundColor(.secondary) }
+                ForEach(list.indices, id: \.self) { i in
+                    let r = list[i]
+                    let rank = (r["rank"] as? Int) ?? (i + 1)
+                    let mine = (r["me"] as? Bool) == true
+                    HStack(spacing: 12) {
+                        Text(rank == 1 ? "🥇" : rank == 2 ? "🥈" : rank == 3 ? "🥉" : "\(rank)")
+                            .font(rank <= 3 ? .title3 : .subheadline).frame(width: 34)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(((r["name"] as? String) ?? "—") + (mine ? "（我）" : "")).font(.subheadline).bold(mine)
+                            Text(uidText(r)).font(.caption2).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Text("\((r["points"] as? Int) ?? 0)").font(.subheadline.monospacedDigit()).bold()
+                    }
+                    .listRowBackground(mine ? Color.accentColor.opacity(0.12) : nil)
+                }
+            }
+        }
+        .navigationTitle("积分排行").navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load() }
+        .task { await load() }
+    }
+    private func uidText(_ r: [String: Any]) -> String {
+        if let c = r["uid_code"] as? String, !c.isEmpty { return c }
+        let seq = (r["uid_seq"] as? Int) ?? 0
+        return "#" + String(format: "%05d", seq)
+    }
+    private func load() async {
+        do {
+            let j = try await state.api().leaderboard(token: state.token)
+            await MainActor.run {
+                list = (j["list"] as? [[String: Any]]) ?? []
+                me = j["me"] as? [String: Any]
+                size = (j["size"] as? Int) ?? 50
+                total = (j["total"] as? Int) ?? 0
+                error = nil
+            }
+        } catch {
+            await MainActor.run { self.error = (error as? APIError)?.message ?? error.localizedDescription }
+        }
+    }
+}

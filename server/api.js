@@ -4845,6 +4845,8 @@ const defaultConfigs = {
   'transfer_max_once':   '20',
   'transfer_month_limit':'3',
   'transfer_show_uid':   '1',
+  'leaderboard_on':      '1',
+  'leaderboard_size':    '50',
 };
 Object.entries(defaultConfigs).forEach(([k, v]) => {
   const existing = db.prepare('SELECT 1 FROM shop_config WHERE key_name=?').get(k);
@@ -4865,7 +4867,30 @@ router.get('/shop/config', requireAuth, (req, res) => {
     redeem_code_on:  shopCfg('redeem_code_on') === '1',
     kyc_cost_type:   shopCfg('kyc_cost_type')  || 'free',
     kyc_cost_value:  parseInt(shopCfg('kyc_cost_value') || '0'),
+    leaderboard_on:  shopCfg('leaderboard_on') !== '0',
   });
+});
+
+// ── 积分排行（v3.5.54）：默认开放，管理员可在「积分配置」关闭；关闭后用户端不显示该 tab、接口 403 ──
+// 只算正常在用的真实账号：排除公共账号、停用、已合并、注销中 / 已删除
+const RANK_WHERE = "is_public=0 AND status='active' AND merged_into IS NULL AND deletion_state IS NULL";
+const leaderboardSize = () => Math.min(100, Math.max(10, parseInt(shopCfg('leaderboard_size'), 10) || 50));
+function pointsLeaderboard(limit) {
+  return db.prepare(`SELECT id, uid_seq, uid_code, name, avatar, points FROM users WHERE ${RANK_WHERE} ORDER BY points DESC, uid_seq ASC LIMIT ?`).all(limit)
+    .map((r, i) => ({ ...r, points: r.points || 0, rank: i + 1 }));
+}
+function pointsRankOf(u) {
+  const p = u.points || 0;
+  return 1 + db.prepare(`SELECT COUNT(*) n FROM users WHERE ${RANK_WHERE} AND (COALESCE(points,0) > ? OR (COALESCE(points,0) = ? AND uid_seq < ?))`).get(p, p, u.uid_seq).n;
+}
+router.get('/shop/leaderboard', requireAuth, (req, res) => {
+  if (shopCfg('leaderboard_on') === '0') return res.status(403).json({ error: '积分排行未开放' });
+  const me = users.findById.get(req.user.uid);
+  const size = leaderboardSize();
+  const list = pointsLeaderboard(size).map(r => ({ rank: r.rank, uid_seq: r.uid_seq, uid_code: r.uid_code || null, name: r.name, avatar: r.avatar || null, points: r.points, me: !!me && r.id === me.id }));
+  const ranked = me && !me.is_public && me.status === 'active' && !me.merged_into && !me.deletion_state;
+  const total = db.prepare(`SELECT COUNT(*) n FROM users WHERE ${RANK_WHERE}`).get().n;
+  res.json({ success: true, size, total, list, me: ranked ? { rank: pointsRankOf(me), points: me.points || 0 } : null });
 });
 
 // ── 用户端：获取商品列表 ──
@@ -5326,8 +5351,10 @@ router.get('/admin/shop/config', requireAdmin(2), (req, res) => {
 router.post('/admin/shop/config', requireAdmin(2), (req, res) => {
   const { checkin_enabled, checkin_period, checkin_min, checkin_max,
           redeem_code_on, kyc_cost_type, kyc_cost_value, kyc_feature_key,
-          sms_poll_strategy, email_poll_strategy, kyc_poll_strategy } = req.body;
+          sms_poll_strategy, email_poll_strategy, kyc_poll_strategy, leaderboard_on, leaderboard_size } = req.body;
   const updates = {};
+  if (leaderboard_on   !== undefined) updates['leaderboard_on']   = leaderboard_on ? '1' : '0';
+  if (leaderboard_size !== undefined) updates['leaderboard_size'] = String(Math.min(100, Math.max(10, parseInt(leaderboard_size, 10) || 50)));
   if (checkin_enabled !== undefined) updates['checkin_enabled']  = checkin_enabled ? '1' : '0';
   if (checkin_period  !== undefined) updates['checkin_period']   = ['hour','day','week','month','quarter','year'].includes(checkin_period) ? checkin_period : 'day';
   if (checkin_min     !== undefined) updates['checkin_min']      = String(Math.max(1, parseInt(checkin_min)||1));
@@ -5722,8 +5749,8 @@ router.get('/v1/shop/blind-boxes', requireApiKey('shop:read'), (req, res) => {
 router.get('/v1/points/leaderboard', requireApiKey('points:read'), (req, res) => {
   if (req.isSandbox) return res.json({ _sandbox: true, data: [{ rank: 1, uid_seq: 1, name: '沙盒用户A', points: 9999 }] });
   const lim = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
-  const rows = db.prepare("SELECT uid_seq,uid_code,name,points FROM users WHERE is_public=0 ORDER BY points DESC, uid_seq ASC LIMIT ?").all(lim);
-  res.json({ total: rows.length, data: rows.map((r, i) => ({ rank: i + 1, uid_seq: r.uid_seq, uid_code: r.uid_code || null, name: r.name, points: r.points || 0 })) });
+  const rows = pointsLeaderboard(lim);
+  res.json({ total: rows.length, data: rows.map(r => ({ rank: r.rank, uid_seq: r.uid_seq, uid_code: r.uid_code || null, name: r.name, points: r.points })) });
 });
 
 // 用户的商城兑换记录
