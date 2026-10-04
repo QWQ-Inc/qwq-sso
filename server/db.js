@@ -387,6 +387,18 @@ try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN deny_code_login INTEGER NOT
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN org_code TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN direct_listed INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_subjects_org_code ON oauth_subjects(org_code) WHERE org_code IS NOT NULL'); } catch(_) {}
+// 外部通讯录同步（v3.5.35，先做企业微信）：dir_sync=配置 JSON（含通讯录 secret），dir_sync_state=上次同步结果 JSON
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync_state TEXT'); } catch(_) {}
+// 外部身份 ↔ 本系统用户的稳定映射（企业微信 UserId 不一定带邮箱/手机，靠它保证每次同步落到同一账号）
+try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_links (
+  subject_id TEXT NOT NULL,
+  ext_id     TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  depts      TEXT,
+  updated_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (subject_id, ext_id)
+)`); } catch(_) {}
 // 应用按组织开放：一个应用可开放给若干组织；该应用在 app_orgs 里没有任何行 = 全局（通用）应用。
 try { db.exec(`CREATE TABLE IF NOT EXISTS app_orgs (
   app_id     TEXT NOT NULL,
@@ -920,6 +932,9 @@ const oauthSubjectStmts = {
   setMembersOpen: db.prepare('UPDATE oauth_subjects SET members_open=? WHERE id=?'),
   setIndependentSecurity: db.prepare('UPDATE oauth_subjects SET independent_security=? WHERE id=?'),
   setOrgControls: db.prepare('UPDATE oauth_subjects SET require_org_password=?, deny_code_login=? WHERE id=?'),
+  setDirSync:      db.prepare('UPDATE oauth_subjects SET dir_sync=? WHERE id=?'),        // v3.5.35
+  setDirSyncState: db.prepare('UPDATE oauth_subjects SET dir_sync_state=? WHERE id=?'),
+  withDirSync:     db.prepare("SELECT * FROM oauth_subjects WHERE dir_sync IS NOT NULL AND dir_sync<>'' AND enabled=1"),
   setDirectListed: db.prepare('UPDATE oauth_subjects SET direct_listed=? WHERE id=?'),
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),

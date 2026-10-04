@@ -1262,6 +1262,7 @@ router.delete('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   oauthProviders.removeBySubject.run(row.id);   // 连带删除其下所有凭证（登录入口消失；已绑用户 user_oauth 行保留可查）
   orgMembers.removeBySubject.run(row.id);        // 连带清成员关系
   appOrgs.removeBySubject.run(row.id);           // 连带清应用开放关系
+  db.prepare('DELETE FROM dir_sync_links WHERE subject_id=?').run(row.id);   // 连带清通讯录同步映射
   oauthSubjects.clearAdmins.run(row.id);         // 连带清组织管理员
   oauthSubjects.remove.run(row.id);
   res.json({ success: true });
@@ -1754,6 +1755,97 @@ router.post('/v1/orgs/:sid/members/import', requireApiKey('org:sync'), (req, res
   audit('org.members_imported', { subject: s.id, actor: actorOf(req), detail: { total: out.total, ok: out.ok, removed: out.removed } });
   res.json({ success: true, ...out });
 });
+
+// ══════════════════════════════════════════
+// 外部通讯录同步（v3.5.35，先做企业微信）：组织 ← 企业微信某部门（含子部门）的成员
+// 配置存 oauth_subjects.dir_sync（JSON，含通讯录 secret），结果存 dir_sync_state。
+// ══════════════════════════════════════════
+const dirsyncWecom = require('./dirsync-wecom');
+const SECRET_MASK = '••••••••';
+const _dirSyncRunning = new Set();
+function dirSyncCfg(s) { try { return s.dir_sync ? JSON.parse(s.dir_sync) : null; } catch (_) { return null; } }
+function dirSyncState(s) { try { return s.dir_sync_state ? JSON.parse(s.dir_sync_state) : null; } catch (_) { return null; } }
+async function runDirSync(subject, actor) {
+  const cfg = dirSyncCfg(subject);
+  if (!cfg || !cfg.corp_id || !cfg.secret) throw Object.assign(new Error('还没配置企业微信通讯录同步（企业 ID / 通讯录 Secret）'), { status: 400 });
+  if (_dirSyncRunning.has(subject.id)) throw Object.assign(new Error('该组织正在同步中，请稍后'), { status: 409 });
+  _dirSyncRunning.add(subject.id);
+  const at = new Date().toISOString();
+  try {
+    const out = await dirsyncWecom.syncWecom(subject, cfg, { genOrgUid, isEmail, isPhone });
+    const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
+      removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, errors: out.errors.slice(0, 20) };
+    oauthSubjects.setDirSyncState.run(JSON.stringify(state), subject.id);
+    audit('org.dir_synced', { subject: subject.id, actor, detail: { source: 'wecom', total: out.total, created: out.created, added: out.added, removed: out.removed, errors: out.errors.length } });
+    return state;
+  } catch (e) {
+    const state = { at, ok: false, error: String(e.message || e).slice(0, 300) };
+    oauthSubjects.setDirSyncState.run(JSON.stringify(state), subject.id);
+    throw e;
+  } finally {
+    _dirSyncRunning.delete(subject.id);
+  }
+}
+router.get('/admin/orgs/:sid/dir-sync', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
+  const cfg = dirSyncCfg(s);
+  res.json({ success: true,
+    config: cfg ? { ...cfg, secret: cfg.secret ? SECRET_MASK : '' } : null,
+    state: dirSyncState(s),
+    bind_provider: cfg?.corp_id ? dirsyncWecom.loginProviderFor(s, cfg.corp_id) : null,
+    running: _dirSyncRunning.has(s.id) });
+});
+router.put('/admin/orgs/:sid/dir-sync', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const b = req.body || {};
+  if (b.clear === true) { oauthSubjects.setDirSync.run(null, s.id); oauthSubjects.setDirSyncState.run(null, s.id); return res.json({ success: true, cleared: true }); }
+  const old = dirSyncCfg(s) || {};
+  const corp_id = String(b.corp_id || '').trim().slice(0, 64);
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(corp_id)) return res.status(400).json({ error: '请填写正确的企业 ID（corpid）' });
+  let secret = String(b.secret || '').trim();
+  if (!secret || /^•+$/.test(secret)) secret = old.secret || '';   // 打码串 / 留空 = 不改（同系统配置的 secret 规矩）
+  if (!secret) return res.status(400).json({ error: '请填写通讯录同步 Secret' });
+  const cfg = {
+    type: 'wecom', corp_id, secret: secret.slice(0, 200),
+    dept_id: Math.max(1, parseInt(b.dept_id, 10) || 1),
+    uid_mode: ['userid', 'rule', 'none'].includes(b.uid_mode) ? b.uid_mode : 'userid',
+    remove_missing: b.remove_missing !== false,
+    interval_hours: Math.min(168, Math.max(0, parseInt(b.interval_hours, 10) || 0)),
+    enabled: b.enabled !== false,
+  };
+  oauthSubjects.setDirSync.run(JSON.stringify(cfg), s.id);
+  audit('org.dir_sync_configured', { subject: s.id, actor: actorOf(req), detail: { source: 'wecom', corp_id, dept_id: cfg.dept_id, interval_hours: cfg.interval_hours } });
+  res.json({ success: true, config: { ...cfg, secret: SECRET_MASK }, bind_provider: dirsyncWecom.loginProviderFor(s, corp_id) });
+});
+router.post('/admin/orgs/:sid/dir-sync/run', requireAuth, async (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  try { res.json({ success: true, state: await runDirSync(s, actorOf(req)) }); }
+  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+router.post('/v1/orgs/:sid/dir-sync/run', requireApiKey('org:sync'), async (req, res) => {
+  if (req.isSandbox) return res.json({ success: true, _sandbox: true, state: { at: new Date().toISOString(), ok: true, total: 2, created: 1, linked: 1, added: 2, removed: 0, skipped: 0, errors: [] } });
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  try { res.json({ success: true, state: await runDirSync(s, actorOf(req)) }); }
+  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+// 定时同步：每 10 分钟看一眼，到点（interval_hours）的组织跑一次。0 = 只手动。
+function runDueDirSyncs() {
+  for (const s of oauthSubjects.withDirSync.all()) {
+    const cfg = dirSyncCfg(s);
+    if (!cfg || cfg.enabled === false || !(cfg.interval_hours > 0)) continue;
+    const last = Date.parse(dirSyncState(s)?.at || '') || 0;
+    if (Date.now() - last < cfg.interval_hours * 3600e3) continue;
+    runDirSync(s, 'system:scheduler').catch(e => console.warn('[通讯录同步]', s.name, e.message));
+  }
+}
+setInterval(runDueDirSyncs, 10 * 60 * 1000).unref();
 
 // ══════════════════════════════════════════
 // 站点法律文档（服务条款 / 隐私政策）

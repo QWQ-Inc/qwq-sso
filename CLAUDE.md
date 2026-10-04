@@ -6,16 +6,16 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.34**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.35**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.34，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.35，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
-- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员、外部通讯录导入、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
+- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员、外部通讯录导入、**企业微信通讯录同步**、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
 - **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
@@ -54,6 +54,7 @@ server/
 ├── passkey.js    # Passkey(WebAuthn/FIDO2)，用 @simplewebauthn/server（v3.3.8）
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
+├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId
 ├── org-policy.js # 组织登录策略判定（IP 白名单/登录时段，v3.5.24）：三方登录与「登录到组织」两条通道共用
 ├── updater.js    # 系统版本更新（v3.5.6）：checkUpdate 查 GitHub tag + applyUpdate 自托管一键拉取（默认关）
 ├── pkpass.js     # Apple Wallet 访客码 .pkpass 生成+签名（v3.5.10，passkit-generator 懒加载，需 Apple 证书）
@@ -198,7 +199,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.34）
+## 数据库表清单（截至 v3.5.35）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
@@ -207,7 +208,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`dir_sync_links`（通讯录同步 UserId→用户 映射，v3.5.35；`oauth_subjects.dir_sync`/`dir_sync_state` 存配置与结果）、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -430,6 +431,19 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.35 企业微信通讯录同步（用户：「SCIM：目前先做企业微信的」）
+
+三级版本。企业微信**没有标准 SCIM**，所以落地为「用它自己的通讯录 API 拉取 → 同步成某组织的成员」（入站方向，补 v3.4.20 的手动导入）。出站 SCIM（推给第三方应用）仍未做。
+- 新 `server/dirsync-wecom.js`：`fetchDirectory`（gettoken → department/list(id=根) → user/list?fetch_child=1；**user/list 被拒时回退 user/list_id 分页 + user/get**，按部门子树过滤，按 userid 去重）+ `syncWecom(subject,cfg,helpers)` + `loginProviderFor`。API 根地址 `WECOM_API_BASE`（默认 qyapi.weixin.qq.com，测试指向 mock）。
+- 匹配同一自然人：`dir_sync_links`（本组织 UserId→用户，**保证无邮箱手机的人每次落到同一账号**）→ `user_oauth`(该企业的企业微信登录 provider, UserId) → 邮箱(email/biz_mail) → 手机 → `users.create`。同 corp 的企业微信登录凭证（该组织下 `oauth_providers` 的 WECOM_CORP_ID 相同 → `wecom:<id>`，否则 env `WECOM_CORP_ID` 相同 → `wecom`）存在时，把 UserId **绑定进 user_oauth**，之后企业微信登录的 `findOrCreate` 直接命中同一账号；UserId 已被别人占用或此人已绑该 provider 则不绑。
+- 状态 1/4 计入，2/5 视为离开。组织成员 `source='wecom'`；`remove_missing`（默认开）**只移出 source=wecom 且本次不在的**，手动/导入成员不动；原是手动成员的人被匹配到时来源保持不变（不接管）。**拉到 0 人时不移除**（防权限/部门配错把组织清空）。不在范围的映射行删除（人回来时靠 user_oauth 绑定连回原账号）。
+- 组织内 UID：`uid_mode` = userid（默认，冲突则不设）/ rule（本组织规则）/ none。
+- 配置存 `oauth_subjects.dir_sync`（JSON：corp_id/secret/dept_id/uid_mode/remove_missing/interval_hours/enabled），结果 `dir_sync_state`。接口：`GET/PUT /admin/orgs/:sid/dir-sync`（`canManageOrg`；secret 读时打码 `••••••••`，提交打码串/空=不改；`{clear:true}` 清除）、`POST /admin/orgs/:sid/dir-sync/run`、开放 API `POST /v1/orgs/:sid/dir-sync/run`（`org:sync`，有 sandbox 桩）。`runDirSync` 带组织级锁（并发 409），审计 `org.dir_synced` / `org.dir_sync_configured`。定时：`setInterval` 每 10 分钟检查 `interval_hours`(0/1/6/24…≤168) 到点的组织（`unref`）。删组织连带清 `dir_sync_links`。
+- ⚠️ 已核对：所有返回组织的接口都是**显式挑字段**，`dir_sync`（含 secret）不会经列表下发。
+- 前端：组织成员弹窗加「🔄 企业微信通讯录同步」折叠区（企业 ID / Secret / 部门 ID / 组织内 UID 方式 / 自动同步 / 离开即移出 + 绑定提示 + 上次结果 + 停用清除 / 保存 / 立即同步），成员行显示「企业微信同步」标记；AUDIT 标签补两项。
+- ⚠️ 测试：mock 企业微信（`scratchpad/e2e/mock-wecom.js`，含 errcode、list_id 分页、部门外成员）+ 真实服务端 20 项全过（权限 3 项、secret 打码与不覆盖、首次同步计数、邮箱关联/手机建号/无联系方式建号/离职跳过、UserId 绑定、幂等、离开移出且手动成员保留、0 人不移除、user/list 被拒回退且不越部门、回来连回原账号、错 secret 502+状态、审计、清除后 400）+ 回归 35/16/25/12/4；playwright：组织管理员弹窗配置→立即同步→结果行/绑定提示/打码/成员标记，零 JS 报错。
+- ⚠️ 真实企业微信未联调（本机无企业微信企业）：新建自建应用的 user/list 字段权限（2022 年起手机/邮箱不再下发）以实际为准——拿不到邮箱手机时靠 UserId 映射 + 登录绑定仍能稳定落到同一账号。实时变更回调（通讯录事件推送，需 Token/EncodingAESKey 解密）未做，目前靠定时 + 手动同步。
 
 ## v3.5.34 iOS 主屏幕快捷操作「出示开门码」+ 交接文档总览追平（承接 v3.5.13/v3.5.14 遗留）
 

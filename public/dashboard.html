@@ -2862,6 +2862,31 @@ async function loadMe() {
       <textarea id="orgmem-import" rows="4" placeholder="zhang@x.com, 张三, EMP0001&#10;13800138000, 李四" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:monospace;background:var(--sf);color:var(--tx);"></textarea>
       <div style="display:flex;justify-content:flex-end;margin-top:6px;"><button class="btn primary" style="font-size:12px;" onclick="doOrgImport()">导入</button></div>
     </details>
+    <details id="orgmem-dirsync" style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadDirSync()">
+      <summary style="cursor:pointer;color:var(--txm);">🔄 企业微信通讯录同步</summary>
+      <div style="font-size:11px;color:var(--txd);margin:6px 0;line-height:1.7;">
+        把企业微信某个部门（含子部门）的成员同步进本组织：按企业微信 UserId → 邮箱 → 手机 匹配已有账号，匹配不到才新建；
+        离职 / 禁用的成员会从本组织移出（只动同步进来的成员，手动加入的不动）。
+        需要企业微信后台「管理工具 → 通讯录同步」的 <b>Secret</b>，并把本服务器出口 IP 加进它的可信 IP。
+      </div>
+      <div style="display:grid;grid-template-columns:110px 1fr;gap:6px 8px;align-items:center;">
+        <span style="color:var(--txd);">企业 ID</span><input id="ds-corp" placeholder="ww开头的 corpid" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
+        <span style="color:var(--txd);">通讯录 Secret</span><input id="ds-secret" type="password" autocomplete="new-password" placeholder="通讯录同步 Secret" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
+        <span style="color:var(--txd);">同步部门 ID</span><input id="ds-dept" type="number" min="1" value="1" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
+        <span style="color:var(--txd);">组织内 UID</span>
+        <select id="ds-uid" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);"><option value="userid">用企业微信 UserId</option><option value="rule">按本组织 UID 规则生成</option><option value="none">不设置</option></select>
+        <span style="color:var(--txd);">自动同步</span>
+        <select id="ds-interval" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);"><option value="0">只手动</option><option value="1">每 1 小时</option><option value="6">每 6 小时</option><option value="24">每天</option></select>
+      </div>
+      <label style="display:block;margin-top:6px;color:var(--tx);"><input type="checkbox" id="ds-remove" checked> 企业微信里离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
+      <div id="ds-bind" style="font-size:11px;color:var(--txd);margin-top:6px;"></div>
+      <div id="ds-state" style="font-size:12px;margin-top:6px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap;">
+        <button class="btn" style="font-size:12px;color:var(--err);border-color:var(--err);" onclick="clearDirSync()">停用并清除</button>
+        <button class="btn" style="font-size:12px;" onclick="saveDirSync()">保存配置</button>
+        <button class="btn primary" style="font-size:12px;" id="ds-run" onclick="runDirSyncNow()">立即同步</button>
+      </div>
+    </details>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);">🔗 从开放组织复用成员（v3.5.18）</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">其他已开启「成员开放」的组织里的成员，可直接复用（同一自然人账号），避免重复建号。联系方式脱敏显示。</div>
@@ -4983,7 +5008,7 @@ const AUDIT_EVENT_LABEL = {
   'access.face_enrolled':'录入人脸', 'access.face_deleted':'删除人脸',
   'access.pass_issued':'签发访客码', 'access.pass_revoked':'撤销访客码',
   'access.fed_issued':'签发跨域码', 'fed.app_login':'跨域应用登录', 'fed.pair_received':'接收联邦配对',
-  'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验', 'file.watermarked':'导出文件加水印',
+  'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验', 'file.watermarked':'导出文件加水印', 'org.dir_synced':'通讯录同步', 'org.dir_sync_configured':'配置通讯录同步',
   'org.member_password_set':'设置组织密码', 'org.member_password_cleared':'清除组织密码',
 };
 // 水印追踪码反查（v3.5.33）：外泄的图片/PDF 上「T+8 位」→ 谁、何时、导出了哪个附件
@@ -6604,6 +6629,7 @@ async function openOrgMembers(sid, name) {
   document.getElementById('orgmem-uid').value = '';
   document.getElementById('orgmem-share-q').value = '';
   document.getElementById('orgmem-share-list').innerHTML = '点「搜索」加载可复用成员';
+  const ds = document.getElementById('orgmem-dirsync'); if (ds) ds.open = false;
   document.getElementById('orgmem-modal').classList.add('show');
   await loadOrgMembers();
 }
@@ -6620,7 +6646,7 @@ async function loadOrgMembers() {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
     const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
-      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}</span>
+      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}</span>
       <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:120px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemUid(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存UID</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>组织密码</button>
@@ -6682,6 +6708,69 @@ async function saveOrgUidRule() {
   const uid_len = parseInt(document.getElementById('orgmem-len').value) || 4;
   const { ok, data } = await api('PATCH', '/admin/orgs/' + _orgMemSid + '/uid-rule', { uid_prefix, uid_len });
   if (ok) showToast('规则已保存'); else showToast('保存失败：' + (data?.error || '未知错误'));
+}
+// ── 企业微信通讯录同步（v3.5.35）──
+function renderDirSyncState(st, running) {
+  const el = document.getElementById('ds-state'); if (!el) return;
+  if (running) { el.innerHTML = '<span style="color:var(--txd);">同步中…</span>'; return; }
+  if (!st) { el.innerHTML = '<span style="color:var(--txd);">还没同步过。</span>'; return; }
+  const at = esc(String(st.at || '').replace('T', ' ').slice(0, 19));
+  if (!st.ok) { el.innerHTML = `<span style="color:var(--err);">✗ ${at} 同步失败：${esc(st.error || '')}</span>`; return; }
+  const errs = (st.errors || []).length ? `<div style="color:#B26A00;margin-top:3px;">⚠ ${st.errors.length} 条异常：${esc(st.errors.slice(0, 3).map(e => (e.userid ? e.userid + '：' : '') + e.error).join('；'))}</div>` : '';
+  el.innerHTML = `<span style="color:#1F7A3A;">✓ ${at} 同步完成</span>
+    <span style="color:var(--txd);">· 在册 ${st.total} 人 · 新建账号 ${st.created} · 关联已有账号 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${st.skipped ? ' · 跳过离职/禁用 ' + st.skipped : ''}</span>${errs}`;
+}
+function renderDirSyncBind(bp) {
+  const el = document.getElementById('ds-bind'); if (!el) return;
+  el.innerHTML = bp ? `🔐 已找到同一企业的企业微信登录凭证，同步的成员会绑定其 UserId，之后用企业微信登录会进到同一个账号。`
+    : `ℹ️ 本系统还没配置这家企业的企业微信登录（或企业 ID 不一致）——同步照常进行；配好登录后，再同步一次即可把账号与 UserId 绑定。`;
+}
+async function loadDirSync() {
+  if (_IS_DEV) { renderDirSyncState(null); renderDirSyncBind(null); return; }
+  const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/dir-sync');
+  if (!ok) { renderDirSyncState({ ok: false, error: data.error || '加载失败' }); return; }
+  const c = data.config || {};
+  document.getElementById('ds-corp').value = c.corp_id || '';
+  document.getElementById('ds-secret').value = c.secret || '';
+  document.getElementById('ds-dept').value = c.dept_id || 1;
+  document.getElementById('ds-uid').value = c.uid_mode || 'userid';
+  document.getElementById('ds-interval').value = String(c.interval_hours || 0);
+  document.getElementById('ds-remove').checked = c.remove_missing !== false;
+  renderDirSyncBind(data.bind_provider);
+  renderDirSyncState(data.state, data.running);
+}
+async function saveDirSync(silent) {
+  const body = {
+    corp_id: document.getElementById('ds-corp').value.trim(),
+    secret: document.getElementById('ds-secret').value.trim(),
+    dept_id: parseInt(document.getElementById('ds-dept').value, 10) || 1,
+    uid_mode: document.getElementById('ds-uid').value,
+    interval_hours: parseInt(document.getElementById('ds-interval').value, 10) || 0,
+    remove_missing: document.getElementById('ds-remove').checked,
+  };
+  if (_IS_DEV) { if (!silent) showToast('演示模式：已保存'); return true; }
+  const { ok, data } = await api('PUT', '/admin/orgs/' + _orgMemSid + '/dir-sync', body);
+  if (!ok) { showToast(data.error || '保存失败'); return false; }
+  document.getElementById('ds-secret').value = data.config?.secret || '';
+  renderDirSyncBind(data.bind_provider);
+  if (!silent) showToast('已保存同步配置');
+  return true;
+}
+async function runDirSyncNow() {
+  if (!(await saveDirSync(true))) return;
+  if (_IS_DEV) { renderDirSyncState({ at: new Date().toISOString(), ok: true, total: 3, created: 1, linked: 2, added: 3, removed: 0, errors: [] }); return; }
+  const btn = document.getElementById('ds-run'); btn.disabled = true; renderDirSyncState(null, true);
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/dir-sync/run');
+  btn.disabled = false;
+  if (!ok) { showToast(data.error || '同步失败'); loadDirSync(); return; }
+  renderDirSyncState(data.state);
+  showToast('同步完成'); loadOrgMembers();
+}
+async function clearDirSync() {
+  if (!confirm('停用并清除企业微信通讯录同步配置？已同步进来的成员不会被移出。')) return;
+  if (!_IS_DEV) { const { ok, data } = await api('PUT', '/admin/orgs/' + _orgMemSid + '/dir-sync', { clear: true }); if (!ok) { showToast(data.error || '操作失败'); return; } }
+  ['ds-corp', 'ds-secret'].forEach(id => document.getElementById(id).value = '');
+  renderDirSyncState(null); renderDirSyncBind(null); showToast('已清除');
 }
 async function doOrgImport() {
   const text = document.getElementById('orgmem-import').value.trim();
