@@ -4479,7 +4479,9 @@ async function renderKycCard() {
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bd);border-radius:2px;background:var(--sf2);font-size:11px;">
           <span>🕐</span><span style="font-weight:600;color:var(--txm);">认证时间</span><span>${fmtTime(u.kyc_verified_at)}</span></div>
       </div>
-      <p style="font-size:11px;color:var(--txd);margin-top:10px;">认证后不支持修改，但可删除后重新认证。</p>`;
+      <p style="font-size:11px;color:var(--txd);margin-top:10px;">${_KYC_USER_DELETE ? '认证后不支持修改，但可删除后重新认证。' : '认证后不支持修改；如需删除请联系管理员。'}</p>
+      <div id="kyc-siblings"></div>`;
+    loadKycSiblings();
   } else {
     badge.className = 'badge grey'; badge.textContent = '未认证';
     body.innerHTML = `
@@ -4694,16 +4696,19 @@ function renderUserDetailFromData(u) {
     <div class="detail-section"><h4>分组 / 标签 <span style="font-size:10px;color:var(--txd);font-weight:400;">（组织维度，与等级无关）</span></h4>
       <div id="ud-gt-${u.id}" style="font-size:12px;color:var(--txd);">加载中…</div>
     </div>
+    <div id="ud-sib-${u.id}"></div>
     <div id="ud-del-${u.id}"></div>
     <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">
       <button class="btn" style="font-size:11px;" onclick="admResetPassword('${u.id}')">重置密码</button>
       <button class="btn" style="font-size:11px;color:var(--ac);border-color:var(--ac);" onclick="admTransferPoints('${u.id}','${u.name}',${u.points})">划转积分</button>
+      ${adminRole === 'superadmin' && !u.merged_into && u.deletion_state !== 'deleted' ? `<button class="btn" style="font-size:11px;" onclick='admMergeInto(${JSON.stringify(u.id)}, ${JSON.stringify(uidOf(u))})'>合并其他账号到此…</button>` : ''}
       ${u.deletion_state==='deleted' || u.merged_into ? '' : u.status==='active'
         ? `<button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="admDisableUser('${u.id}')">停用账号</button>`
         : `<button class="btn primary" style="font-size:11px;" onclick="admEnableUser('${u.id}')">启用账号</button>`}
     </div>`;
   renderUserGtSection(u);
   renderUserDeletionSection(u);
+  renderUserSiblings(u);
 }
 
 // ── 分组 / 标签：全局缓存 + 用户详情内的分配 UI ──
@@ -4767,6 +4772,45 @@ async function admDeleteKyc(uid) {
   const { ok, data } = await api('DELETE', `/admin/users/${uid}/kyc`);
   if (ok) { showToast('⚠️ 实名信息已清除'); loadAdmUserDetail(uid); }
   else showToast('清除失败：' + (data?.error || '未知错误'));
+}
+
+// ── 同一实名的其他账号（v3.5.45）──
+async function loadKycSiblings() {
+  const box = document.getElementById('kyc-siblings');
+  if (!box) return;
+  const { ok, data } = await api('GET', '/user/kyc/siblings');
+  if (!ok || !data.accounts.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div style="margin-top:12px;padding:10px;border:1px solid var(--bd);border-radius:6px;">
+    <div style="font-weight:600;color:var(--txt);margin-bottom:4px;">同一实名下还有 ${data.accounts.length} 个账号${data.max ? `（同一实名最多 ${data.max} 个）` : ''}</div>
+    <div style="font-size:11px;color:var(--txd);margin-bottom:6px;">实名一致即视为同一人。合并后它们的登录方式、组织、积分等转到当前账号，那些账号停用。</div>
+    ${data.accounts.map(a => `<label style="display:flex;gap:6px;align-items:center;padding:3px 0;font-size:12px;color:var(--txt);"><input type="checkbox" class="kyc-sib" value="${esc(a.id)}" ${a.role === 'admin' ? 'disabled title="管理员账号不能被合并"' : ''}>
+      ${esc(a.name || '—')} <span style="color:var(--txd);">${esc(a.uid)} · ${esc(a.email || a.phone || '')} · ${esc(String(fmtTime(a.created_at)).slice(0, 10))} 注册${a.role === 'admin' ? ' · 管理员' : ''}</span></label>`).join('')}
+    <button class="btn" style="font-size:12px;margin-top:6px;" onclick="mergeKycSiblings()">合并到当前账号…</button></div>`;
+}
+async function mergeKycSiblings() {
+  const sources = [...document.querySelectorAll('.kyc-sib:checked')].map(c => c.value);
+  if (!sources.length) { showToast('请勾选要合并的账号'); return; }
+  const c = prompt(`把选中的 ${sources.length} 个账号合并到当前账号？此操作不能撤销。请输入「合并账号」确认`);
+  if (c == null) return;
+  const { ok, data } = await api('POST', '/user/kyc/merge', { sources, confirm: c.trim() });
+  if (ok) { showToast(`已合并 ${data.merged.length} 个账号`); loadKycSiblings(); } else showToast('合并失败：' + (data?.error || '未知错误'));
+}
+async function admMergeInto(uid, uidText) {
+  const list = prompt(`把哪些账号合并到 ${uidText}？填 UID / 邮箱 / 手机，多个用逗号隔开`);
+  if (!list) return;
+  const sources = list.split(/[,，\s]+/).map(x => x.trim()).filter(Boolean);
+  const c = prompt(`把 ${sources.join('、')} 合并到 ${uidText}？此操作不能撤销。请输入「合并账号」确认`);
+  if (c == null) return;
+  const { ok, data } = await api('POST', '/admin/users/merge', { target: uidText, sources, confirm: c.trim() });
+  if (ok) { showToast(`已合并 ${data.merged.length} 个账号`); loadAdmUserDetail(uid); } else showToast('合并失败：' + (data?.error || '未知错误'));
+}
+async function renderUserSiblings(u) {
+  const box = document.getElementById('ud-sib-' + u.id);
+  if (!box) return;
+  const { ok, data } = await api('GET', `/admin/users/${u.id}/siblings`);
+  if (!ok || !data.accounts.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="detail-section"><h4>同一实名的其他账号</h4>${_udTable(['显示名', 'UID', '联系方式', '注册'], data.accounts.map(a => [
+    esc(a.name || '—'), `<a href="javascript:void(0)" onclick="loadAdmUserDetail('${esc(a.id)}')">${esc(a.uid)}</a>`, esc(a.email || a.phone || '—'), esc(String(fmtTime(a.created_at)).slice(0, 10))]))}</div>`;
 }
 
 // ── 账号注销 / 删除（v3.5.44）──
@@ -8809,6 +8853,7 @@ const ENV_GROUPS = [
     vars: [
       { key: 'KYC_PROVIDER',     label: '当前 KYC 服务商', desc: '填写 didit / stripe / volcengine / aliyun / tencent，多个用逗号分隔参与轮询', required: false, secret: false, placeholder: 'didit', value: '' },
       { key: 'KYC_ENABLED',      label: '是否启用实名认证', desc: 'true 启用 / false 关闭（关闭后用户端不显示实名入口）',      required: false, secret: false, placeholder: 'true',    value: '' },
+      { key: 'KYC_MAX_ACCOUNTS', label: '同一实名最多账号数', desc: '同一个人（按实名认定）最多能有几个已实名账号，默认 3；超过时新账号的实名认证不会通过，需先把账号合并。0 = 不限。需要配置 KYC_PSEUDONYM_SECRET 才能识别同一人', required: false, secret: false, placeholder: '3', value: '' },
       { key: 'KYC_ALLOW_DELETE', label: '允许用户删除实名', desc: '填 true 才允许用户自己删除实名信息（之后可重新认证）；默认不允许。管理端清除实名只有超级管理员或被授权「清除实名认证」的人能做',     required: false, secret: false, placeholder: 'false',    value: '' },
     ]
   },

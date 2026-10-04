@@ -717,7 +717,23 @@ const kycPending = {
   setOrg: db.prepare('UPDATE kyc_pending SET org_id=? WHERE user_id=?'),
 };
 // 统一写入 KYC 结果（含假名/姓名哈希）——各服务商完成点复用。reverify/source 可选，用于记事件。
+// 同一实名最多几个账号（v3.5.45，KYC_MAX_ACCOUNTS，默认 3，0 = 不限）。按假名 kyc_pseudonym 认同一人（需配 KYC_PSEUDONYM_SECRET）
+function kycMaxAccounts() { const n = parseInt(process.env.KYC_MAX_ACCOUNTS, 10); return Number.isFinite(n) && n >= 0 ? Math.min(n, 100) : 3; }
+const sameIdentityStmt = () => db.prepare(`SELECT * FROM users WHERE kyc_pseudonym=? AND id<>? AND kyc_verified=1 AND is_public=0
+  AND status='active' AND merged_into IS NULL AND deletion_state IS NULL ORDER BY uid_seq`);
+function kycLimitError(userId, pseudonym) {
+  const max = kycMaxAccounts();
+  if (!pseudonym || !max) return null;
+  const n = sameIdentityStmt().all(pseudonym, userId).length;
+  return n >= max ? `同一实名下已有 ${n} 个账号（最多 ${max} 个）。请登录其中一个账号，在「账号设定 → 实名认证」里把其他账号合并进来，或联系管理员` : null;
+}
 function finalizeKyc(userId, { maskedName, idTail, provider, pseudonym, nameHash, reverify = false, source = 'self' }) {
+  const limitErr = kycLimitError(userId, pseudonym);
+  if (limitErr) {
+    const lu = users.findById.get(userId);
+    audit('kyc.account_limit', { subject: lu ? lu.uid_seq : userId, actor: `source:${source}`, detail: { provider: provider || '—', max: kycMaxAccounts() } });
+    return false;
+  }
   db.prepare(`UPDATE users SET kyc_verified=1, kyc_name=?, kyc_id_tail=?, kyc_provider=?,
     kyc_pseudonym=COALESCE(?,kyc_pseudonym), kyc_name_hash=COALESCE(?,kyc_name_hash),
     kyc_verified_at=datetime('now'), updated_at=datetime('now') WHERE id=?`)
@@ -728,6 +744,7 @@ function finalizeKyc(userId, { maskedName, idTail, provider, pseudonym, nameHash
     subject: u ? u.uid_seq : userId, actor: `source:${source}`,
     detail: { provider: provider || '—', id_tail: idTail || null },
   });
+  return true;
 }
 // 判断本次完成是否应放行 finalize：未实名，或存在「重新核验」pending 标记
 function kycShouldFinalize(user, pend) {
@@ -829,9 +846,11 @@ router.post('/user/kyc/direct', requireAuth, noPublic, async (req, res) => {
   if (!name?.trim() || !id_number?.trim()) return res.status(400).json({ error: '姓名和身份证号为必填' });
 
   try {
+    const h = identityHashes(name, id_number);
+    const limitErr = kycLimitError(user.id, h.pseudonym);
+    if (limitErr) return res.status(400).json({ error: limitErr });
     await verifyKycDirect(name.trim(), id_number.trim(), memberKycCfg(user, req.body?.org));
     // 写入认证结果（含假名/姓名哈希，供去重与姓名比对）
-    const h = identityHashes(name, id_number);
     finalizeKyc(user.id, { maskedName: maskName(name.trim()), idTail: id_number.slice(-4), provider: '服务商直接认证', pseudonym: h.pseudonym, nameHash: h.nameHash });
     res.json({ success: true, message: '实名认证成功' });
   } catch (e) {
@@ -2605,6 +2624,58 @@ router.post('/user/checkin', requireAuth, noPublic, (req, res) => {
   res.json({ success: true, points: pts, streak: updated.checkin_streak, total: updated.points });
 });
 
+// 同一实名的其他账号（v3.5.45）：按实名认定为同一人，本人可把它们合并到当前账号
+function siblingView(u) {
+  return { id: u.id, uid: u.uid_code || '#' + String(u.uid_seq).padStart(5, '0'), name: u.name, created_at: u.created_at,
+    email: maskEmail(u.email), phone: maskPhone(u.phone), role: u.role };
+}
+router.get('/user/kyc/siblings', requireAuth, noPublic, (req, res) => {
+  const me = users.findById.get(req.user.uid);
+  const list = me.kyc_verified && me.kyc_pseudonym ? sameIdentityStmt().all(me.kyc_pseudonym, me.id) : [];
+  res.json({ success: true, enabled: !!me.kyc_pseudonym, max: kycMaxAccounts(), accounts: list.map(siblingView) });
+});
+router.post('/user/kyc/merge', requireAuth, noPublic, (req, res) => {
+  if (req.user.org_scoped) return res.status(403).json({ error: '组织会话不能合并账号，请用个人账号登录' });
+  const me = users.findById.get(req.user.uid);
+  if (!me.kyc_verified || !me.kyc_pseudonym) return res.status(400).json({ error: '当前账号还没有实名认证（或系统未开启实名去重），无法按实名合并' });
+  if (String(req.body?.confirm || '').trim() !== '合并账号') return res.status(400).json({ error: '请输入「合并账号」确认' });
+  const ids = [...new Set((Array.isArray(req.body?.sources) ? req.body.sources : []).map(String))];
+  const sources = ids.map(id => users.findById.get(id));
+  if (!ids.length || sources.some(s => !s || s.kyc_pseudonym !== me.kyc_pseudonym || !s.kyc_verified))
+    return res.status(400).json({ error: '只能合并与你实名相同的账号' });
+  try {
+    const r = userMerge.mergeUsers(me.id, ids, {
+      onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+    });
+    audit('user.merged', { subject: String(me.uid_seq), actor: actorOf(req), detail: { via: 'kyc_self', sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+    res.json({ success: true, ...r });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+// 超级管理员：任意两个（或多个）账号合并为同一人（不限组织）
+router.post('/admin/users/merge', requireAdmin(1), (req, res) => {
+  const target = resolveUser(String(req.body?.target || '').trim());
+  if (!target || target === 'AMBIGUOUS') return res.status(400).json({ error: '保留账号找不到（或重名），请用 UID / 邮箱 / 手机' });
+  const sources = [];
+  for (const a of (Array.isArray(req.body?.sources) ? req.body.sources : [])) {
+    const s = resolveUser(String(a || '').trim());
+    if (!s || s === 'AMBIGUOUS') return res.status(400).json({ error: `账号「${a}」找不到（或重名）` });
+    if (s.id !== target.id) sources.push(s);
+  }
+  if (String(req.body?.confirm || '').trim() !== '合并账号') return res.status(400).json({ error: '请输入「合并账号」确认' });
+  try {
+    const r = userMerge.mergeUsers(target.id, sources.map(s => s.id), {
+      onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+    });
+    audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: 'super_admin', sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+    res.json({ success: true, ...r });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+router.get('/admin/users/:id/siblings', requireAdmin(3), (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  res.json({ success: true, accounts: u.kyc_pseudonym && u.kyc_verified ? sameIdentityStmt().all(u.kyc_pseudonym, u.id).map(siblingView) : [] });
+});
+
 // 用户自己删除实名：默认不允许（KYC_ALLOW_DELETE=true/on 才开放）——实名是账号与真人的深度绑定，删了再认证会被滥用来换绑身份
 const kycUserDeleteAllowed = () => ['on', '1', 'true', 'yes'].includes(String(process.env.KYC_ALLOW_DELETE || '').trim().toLowerCase());
 router.delete('/user/kyc', requireAuth, noPublic, (req, res) => {
@@ -3830,8 +3901,10 @@ router.post('/v1/users/:uid/kyc/verify', requireApiKey('kyc:verify'), async (req
   const reverify = !!u.kyc_verified;
   try {
     const orgKyc = req.body?.org ? subjectKycCfg(req.body.org) : userKycCfg(u);
-    await verifyKycDirect(name.trim(), id_number.trim(), orgKyc);
     const h = identityHashes(name, id_number);
+    const limitErr = kycLimitError(u.id, h.pseudonym);
+    if (limitErr) return res.status(400).json({ success: false, verified: false, error: limitErr });
+    await verifyKycDirect(name.trim(), id_number.trim(), orgKyc);
     finalizeKyc(u.id, { maskedName: maskName(name.trim()), idTail: id_number.slice(-4), provider: '服务商直接认证', pseudonym: h.pseudonym, nameHash: h.nameHash, reverify, source: 'api' });
     res.json({ success: true, verified: true, reverify });
   } catch (e) { res.status(400).json({ success: false, verified: false, error: e.message }); }

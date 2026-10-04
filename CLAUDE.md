@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.44**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.45**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.44，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.45，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -434,6 +434,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.45 同一实名多账号：数量上限 + 按实名合并（用户反馈）
+
+三级版本。用户：「某人可能在平台内有多个主账号，通常和实名挂钩，可以以其认定为同一人。默认同一人主账号只能有 3 个，且可以通过已实名信息合并，或者由主管理员合并。」
+- 同一人 = 同一个 `kyc_pseudonym`（`identityHashes` 的 HMAC 假名，**需要 `KYC_PSEUDONYM_SECRET`**，没配就没有假名、这些功能自动不生效）。`sameIdentityStmt`：同假名、已实名、非公共、status active、未合并、未删除。
+- 上限 `KYC_MAX_ACCOUNTS`（默认 3，0 = 不限，≤100）：`kycLimitError(userId, pseudonym)`。两个直认证接口（`/user/kyc/direct`、`/v1/users/:uid/kyc/verify`）在**调服务商之前**先查（省一次认证费用）；`finalizeKyc` 里再兜底——超限不落库、记审计 `kyc.account_limit`、返回 false（Didit/Stripe webhook、支付宝回调走这里，用户看到的是仍未实名）。`finalizeKyc` 现在返回 true/false。
+- 本人合并：`GET /user/kyc/siblings`（同实名其他账号，邮箱手机脱敏）、`POST /user/kyc/merge {sources, confirm:'合并账号'}`（来源必须与本人同假名且已实名；走 `userMerge.mergeUsers`，管理员账号仍不能被并；org_scoped 会话 403）。审计 `user.merged` via `kyc_self`。
+- 超管合并：`POST /admin/users/merge {target, sources[], confirm:'合并账号'}`（requireAdmin(1)，target / sources 用 `resolveUser` 认 UID/邮箱/手机/用户名），via `super_admin`；`GET /admin/users/:id/siblings`。
+- 前端：用户实名卡下「同一实名下还有 N 个账号」勾选 + 合并（`loadKycSiblings`）；实名卡提示文案随 `KYC_ALLOW_DELETE` 变；用户详情「同一实名的其他账号」表 + 超管「合并其他账号到此…」（prompt 填 UID，再输确认词）。系统配置实名组加 `KYC_MAX_ACCOUNTS`，init.js 同步。
+- ⚠️ 测试：run20 12 项（第 4 个账号认证在调服务商前被拦、同实名列表脱敏、确认词、实名不同不能合并、合并后积分转入、名额空出不再拦、未实名看不到、Lv.2 不能全局合并 / 确认词 / 找不到账号 400 / 超管合并、管理端 siblings）；playwright：实名卡勾选合并，零 JS 报错。
 
 ## v3.5.44 账号注销 / 删除 + 停用时同步暂停应用权限（用户反馈）
 
