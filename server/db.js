@@ -420,6 +420,17 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
   updated_at TEXT DEFAULT (datetime('now')),
   PRIMARY KEY (source_id, ext_id)
 )`); } catch(_) {}
+// v3.5.37：同步给成员设过什么（kind=bind/key=provider/value=UserId；kind=pw/key=''/value=密码哈希）。
+// 当前值 ≠ 记录值 = 被人单独改过 → 普通同步不覆盖，只有强确认的「全部覆盖同步」才覆盖。
+try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_applied (
+  source_id  TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  key        TEXT NOT NULL DEFAULT '',
+  value      TEXT,
+  updated_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (source_id, user_id, kind, key)
+)`); } catch(_) {}
 // 一次性迁移 v3.5.35 的「每组织单个配置」→ 同步源（迁完把 dir_sync 置空，所以重启不会重复迁）
 try {
   const rows = db.prepare("SELECT id, dir_sync, dir_sync_state FROM oauth_subjects WHERE dir_sync IS NOT NULL AND dir_sync<>''").all();
@@ -1366,6 +1377,8 @@ const dirSourceStmts = {
   removeBySubject: db.prepare('DELETE FROM dir_sync_sources WHERE subject_id=?'),
   dueList:   db.prepare(`SELECT d.* FROM dir_sync_sources d JOIN oauth_subjects s ON s.id=d.subject_id WHERE d.enabled=1 AND s.enabled=1`),
   removeLinks: db.prepare('DELETE FROM dir_source_links WHERE source_id=?'),
+  removeApplied: db.prepare('DELETE FROM dir_sync_applied WHERE source_id=?'),
+  removeAppliedBySubject: db.prepare('DELETE FROM dir_sync_applied WHERE source_id IN (SELECT id FROM dir_sync_sources WHERE subject_id=?)'),
   removeLinksBySubject: db.prepare('DELETE FROM dir_source_links WHERE source_id IN (SELECT id FROM dir_sync_sources WHERE subject_id=?)'),
 };
 

@@ -14,6 +14,12 @@
 // 离职 / 禁用（status 2、5）或已不在同步范围的成员：从组织里移出——前提是他也不在本组织的其他同步源里，
 // 且只动同步进来的成员（source='wecom'），手动加入 / 批量导入的不动。（v3.5.36 起一个组织可有多个同步源）
 // ⚠️ 防误删：本次一个人都没拉到时不做任何移除（多半是权限/部门配置错了）。
+//
+// v3.5.37：
+//   · 同步范围可多选部门（dept_ids）——集团总公司账号只开了某几个部门权限时，只同步那几个部门（含子部门）
+//   · 每个同步源可指定「要绑定的登录凭证」（bind_mode auto/custom/none + bind_providers）和「默认组织密码」
+//   · 同步只「补上」默认值：成员被单独改过的（解绑/改绑登录凭证、改了或清了组织密码）一律不覆盖，
+//     靠 dir_sync_applied 记住「同步上次给他设了什么」来判断是不是被人动过；除非强确认的「全部覆盖同步」（force）
 const crypto = require('crypto');
 const { db, users, oauth, orgMembers, oauthSubjects } = require('./db');
 
@@ -26,7 +32,11 @@ const linkDelete = db.prepare('DELETE FROM dir_source_links WHERE source_id=? AN
 const stillSynced = db.prepare(`SELECT 1 FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
   WHERE d.subject_id=? AND l.user_id=? LIMIT 1`);
 const userOauthOf = db.prepare('SELECT open_id FROM user_oauth WHERE user_id=? AND provider=?');
-const wecomCredsOf = db.prepare("SELECT id, config FROM oauth_providers WHERE platform='wecom' AND subject_id=?");
+const wecomCredsOf = db.prepare("SELECT id, label, config FROM oauth_providers WHERE platform='wecom' AND subject_id=?");
+// 同步给成员设过什么（登录绑定 / 组织密码），用来判断之后是否被人单独改过
+const appliedGet = db.prepare('SELECT value FROM dir_sync_applied WHERE source_id=? AND user_id=? AND kind=? AND key=?');
+const appliedSet = db.prepare(`INSERT INTO dir_sync_applied (source_id,user_id,kind,key,value,updated_at) VALUES (?,?,?,?,?,datetime('now'))
+  ON CONFLICT(source_id,user_id,kind,key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')`);
 
 function apiBase() { return String(process.env.WECOM_API_BASE || 'https://qyapi.weixin.qq.com').replace(/\/+$/, ''); }
 
@@ -44,16 +54,39 @@ async function call(method, path, params, body) {
   return j;
 }
 
-/** 从企业微信拉取：部门树（以 root 为根）+ 成员（含子部门） */
+/** 同步范围：v3.5.37 起 dept_ids（多选），兼容旧的单个 dept_id */
+function deptIdsOf(cfg) {
+  const arr = Array.isArray(cfg.dept_ids) && cfg.dept_ids.length ? cfg.dept_ids : [cfg.dept_id || 1];
+  return [...new Set(arr.map(x => parseInt(x, 10)).filter(x => x > 0))].slice(0, 50);
+}
+
+async function token(cfg) {
+  return (await call('GET', '/cgi-bin/gettoken', { corpid: cfg.corp_id, corpsecret: cfg.secret })).access_token;
+}
+
+/** 这个 Secret 能看到的部门（不带 id = 应用可见范围内的全部部门），给管理端挑同步范围用 */
+async function fetchScopeTree(cfg) {
+  const access_token = await token(cfg);
+  const depts = (await call('GET', '/cgi-bin/department/list', { access_token })).department || [];
+  return depts.map(d => ({ id: d.id, name: d.name, parent: d.parentid ?? null, order: d.order ?? 0 }));
+}
+
+/** 从企业微信拉取：所选各部门（含子部门）的成员，合并去重 */
 async function fetchDirectory(cfg) {
-  const { access_token } = await call('GET', '/cgi-bin/gettoken', { corpid: cfg.corp_id, corpsecret: cfg.secret });
-  const root = parseInt(cfg.dept_id, 10) || 1;
-  const depts = (await call('GET', '/cgi-bin/department/list', { access_token, id: root })).department || [];
-  const deptName = new Map(depts.map(d => [d.id, d.name]));
-  const inScope = new Set(depts.map(d => d.id)); inScope.add(root);
-  let members;
+  const access_token = await token(cfg);
+  const roots = deptIdsOf(cfg);
+  const deptName = new Map();
+  const inScope = new Set();
+  for (const root of roots) {
+    const depts = (await call('GET', '/cgi-bin/department/list', { access_token, id: root })).department || [];
+    depts.forEach(d => { deptName.set(d.id, d.name); inScope.add(d.id); });
+    inScope.add(root);
+  }
+  let members = [];
   try {
-    members = (await call('GET', '/cgi-bin/user/list', { access_token, department_id: root, fetch_child: 1 })).userlist || [];
+    for (const root of roots) {
+      members.push(...((await call('GET', '/cgi-bin/user/list', { access_token, department_id: root, fetch_child: 1 })).userlist || []));
+    }
   } catch (e) {
     // 新建的自建应用拿不到 user/list：退回 list_id 分页 + user/get
     const ids = [];
@@ -71,7 +104,7 @@ async function fetchDirectory(cfg) {
       batch.forEach(u => { if (u) members.push(u); });
     }
   }
-  // 同一个人在多个部门会出现多次，按 userid 去重
+  // 同一个人在多个部门（或选了父子两个部门）会出现多次，按 userid 去重
   const byId = new Map();
   for (const m of members) if (m && m.userid && !byId.has(m.userid)) byId.set(m.userid, m);
   return { members: [...byId.values()], deptName };
@@ -86,19 +119,76 @@ function loginProviderFor(subject, corpId) {
   return null;
 }
 
+/** 本组织可选的企业微信登录凭证（给管理端勾选「同步后绑定到哪些凭证」） */
+function loginProviderChoices(subject) {
+  const out = [];
+  for (const c of wecomCredsOf.all(subject.id)) {
+    let corp = ''; try { corp = JSON.parse(c.config || '{}').WECOM_CORP_ID || ''; } catch (_) {}
+    out.push({ key: 'wecom:' + c.id, label: '企业微信' + (c.label ? ' · ' + c.label : ''), corp_id: corp });
+  }
+  if (process.env.WECOM_CORP_ID) out.push({ key: 'wecom', label: '企业微信（本站默认凭证）', corp_id: process.env.WECOM_CORP_ID });
+  return out;
+}
+
+/** 本次要绑定的登录凭证：auto=同 corp 的那个；custom=管理员勾的（只留仍然存在的）；none=不绑 */
+function bindProvidersFor(subject, cfg) {
+  const mode = cfg.bind_mode || 'auto';
+  if (mode === 'none') return [];
+  if (mode === 'custom') {
+    const valid = new Set(loginProviderChoices(subject).map(x => x.key));
+    return (cfg.bind_providers || []).filter(k => valid.has(k));
+  }
+  const p = loginProviderFor(subject, cfg.corp_id);
+  return p ? [p] : [];
+}
+
 const ACTIVE = new Set([1, 4]);   // 1 已激活 / 4 未激活（还没加入企业微信，但在通讯录里）；2 禁用 / 5 退出企业 视为离开
 
 /**
  * 执行一次同步。helpers：{ genOrgUid(subject), isEmail, isPhone }（复用 api.js 里的实现）。
  * 返回 { total, created, linked, added, removed, skipped, errors[], bind_provider }
  */
-async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory) {
+async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory, opts = {}) {
+  const force = !!opts.force;
   const { members, deptName } = await fetcher(cfg);
-  const bindProvider = loginProviderFor(subject, cfg.corp_id);
+  const bindProviders = bindProvidersFor(subject, cfg);
+  const bindProvider = bindProviders[0] || null;   // 匹配用：先按第一个绑定凭证找人
   const uidMode = cfg.uid_mode || 'userid';
-  const out = { total: 0, created: 0, linked: 0, added: 0, removed: 0, skipped: 0, errors: [], bind_provider: bindProvider };
+  const pwHash = cfg.default_pw_hash || null;
+  const out = { total: 0, created: 0, linked: 0, added: 0, removed: 0, skipped: 0, errors: [],
+    bind_provider: bindProvider, bind_providers: bindProviders,
+    bound: 0, pw_set: 0, kept: 0, conflicts: 0, force };
   const seenUsers = new Set();
   const seenExt = new Set();
+
+  // 登录凭证绑定：同步只「补上」，被单独改过的不动（除非 force）
+  function applyBind(user, extId, p) {
+    const owner = oauth.findByProvider.get(p, extId);
+    if (owner && owner.id !== user.id) { out.conflicts++; return; }        // 这个 UserId 已绑在别人身上，从不抢
+    const cur = userOauthOf.get(user.id, p)?.open_id || null;
+    if (cur === extId) { appliedSet.run(source.id, user.id, 'bind', p, extId); return; }
+    const rec = appliedGet.get(source.id, user.id, 'bind', p);
+    const pristine = !cur && !rec;                                          // 从没绑过、同步也没给他绑过
+    if (!pristine && !force) { out.kept++; return; }                        // 解绑过 / 改绑成别的 → 尊重
+    if (cur) oauth.unbind.run(user.id, p);
+    oauth.bind.run(crypto.randomUUID(), user.id, p, extId, null);
+    appliedSet.run(source.id, user.id, 'bind', p, extId);
+    out.bound++;
+  }
+  // 默认组织密码：只给「没有组织密码」或「密码还是同步上次设的」成员设；改过 / 清过的不动（除非 force）
+  function applyPassword(user) {
+    if (!pwHash) return;
+    const mem = orgMembers.get.get(subject.id, user.id);
+    if (!mem || mem.source !== 'wecom') return;                            // 只管同步进来的成员，手动/导入的不动
+    const cur = mem.password_hash || null;
+    const rec = appliedGet.get(source.id, user.id, 'pw', '')?.value || null;
+    if (cur === pwHash) { if (rec !== pwHash) appliedSet.run(source.id, user.id, 'pw', '', pwHash); return; }
+    const untouched = (!cur && !rec) || (cur && rec && cur === rec);       // 没设过，或仍是同步上次设的（默认密码换了）
+    if (!untouched && !force) { out.kept++; return; }
+    orgMembers.setPassword.run(pwHash, subject.id, user.id);
+    appliedSet.run(source.id, user.id, 'pw', '', pwHash);
+    out.pw_set++;
+  }
 
   for (const m of members) {
     const extId = String(m.userid);
@@ -113,7 +203,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       let user = null;
       const link = linkGet.get(source.id, extId);
       if (link) user = users.findById.get(link.user_id) || null;
-      if (!user && bindProvider) user = oauth.findByProvider.get(bindProvider, extId) || null;
+      for (const p of bindProviders) { if (!user) user = oauth.findByProvider.get(p, extId) || null; }
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
       if (!user && phone && helpers.isPhone(phone)) user = users.findByPhone.get(phone) || null;
       if (user && user.is_public) { out.errors.push({ userid: extId, error: '命中公共账号，跳过' }); continue; }
@@ -128,10 +218,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
         out.linked++;
       }
       linkUpsert.run(source.id, extId, user.id, depts || null);
-      // 绑定到企业微信登录凭证：该 UserId 没被别人占用、此人也还没绑这家企业微信时才绑
-      if (bindProvider && !oauth.findByProvider.get(bindProvider, extId) && !userOauthOf.get(user.id, bindProvider)) {
-        oauth.bind.run(crypto.randomUUID(), user.id, bindProvider, extId, null);
-      }
+      for (const p of bindProviders) applyBind(user, extId, p);
       seenUsers.add(user.id);
       const existing = orgMembers.get.get(subject.id, user.id);
       if (!existing) {
@@ -143,6 +230,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       } else if (!existing.org_uid && uidMode === 'userid' && !orgMembers.orgUidTaken.get(subject.id, extId, user.id)) {
         orgMembers.setOrgUid.run(extId, subject.id, user.id);
       }
+      applyPassword(user);
     } catch (e) {
       out.errors.push({ userid: extId, error: e.message });
     }
@@ -167,4 +255,4 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
   return out;
 }
 
-module.exports = { syncWecom, fetchDirectory, loginProviderFor, apiBase };
+module.exports = { syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.36**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.37**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.36，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.37，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员、外部通讯录导入、**企业微信通讯录同步**、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -54,7 +54,7 @@ server/
 ├── passkey.js    # Passkey(WebAuthn/FIDO2)，用 @simplewebauthn/server（v3.3.8）
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
-├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId
+├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉所选部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId + 默认组织密码（v3.5.37，单独改过的不覆盖）
 ├── org-policy.js # 组织登录策略判定（IP 白名单/登录时段，v3.5.24）：三方登录与「登录到组织」两条通道共用
 ├── updater.js    # 系统版本更新（v3.5.6）：checkUpdate 查 GitHub tag + applyUpdate 自托管一键拉取（默认关）
 ├── pkpass.js     # Apple Wallet 访客码 .pkpass 生成+签名（v3.5.10，passkit-generator 懒加载，需 Apple 证书）
@@ -199,7 +199,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.36）
+## 数据库表清单（截至 v3.5.37）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
@@ -208,7 +208,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36）/`dir_source_links`（按同步源隔离的 UserId→用户映射）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -431,6 +431,22 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.37 通讯录同步：多选部门 + 同步默认凭证（登录绑定 / 组织密码）+ 单独修改不覆盖 / 强确认全部覆盖（用户反馈）
+
+三级版本。用户：「有的组织用总公司的企业微信账号，权限只有某个部门，应该可以选择部门来同步；以后接入其他有分组概念的应用也一样。同步回来可以按凭证添加默认的凭证。有人单独改了凭证不会覆盖同步，除非勾选强确认的全部同步。」问过用户：「默认凭证」= 登录凭证绑定 + 默认组织密码，两者都要。
+
+- **同步范围**：config `dept_ids`（数组，≤50）+ `dept_names`（展示用）；`deptIdsOf(cfg)` 兼容旧 `dept_id`。`fetchDirectory` 对每个部门各调一次 department/list?id 与 user/list(fetch_child)，合并后按 userid 去重；list_id 回退按所有部门子树的并集过滤。新 `fetchScopeTree(cfg)` = department/list 不带 id（只返回该 Secret 可见范围的部门）。接口 `POST /admin/orgs/:sid/dir-sources/scope-tree`（`canManageOrg` 写；`{source_id}` 时 secret 留空/打码用已存的）。命名刻意通用（scope-tree / nodes），以后飞书/钉钉的「分组」走同一个接口，各类型模块导出自己的 `fetchScopeTree`。
+- **登录绑定**：`bind_mode` auto（原行为：`loginProviderFor` 同 corp 的那个）/ custom（`bind_providers`，只收 `loginProviderChoices(subject)` 里的：本组织 wecom 凭证 + 本站默认 wecom）/ none。`bindProvidersFor(subject,cfg)`；匹配时依次按每个绑定 provider 找人。列表接口回 `bind_choices`。
+- **默认组织密码**：`default_password` → `bcrypt(12)` 存 `default_pw_hash`（**视图剥掉哈希，只回 `has_default_pw`**）；留空不改、`clear_default_password` 清除。只给 `source='wecom'` 的成员设（手动/导入的不动）。`buildDirSourceCfg`（async）包住原来的 `dirSourceCfgFromBody`，POST/PATCH 路由改 async。
+- ⚠️ **不覆盖单独修改**：新表 `dir_sync_applied(source_id,user_id,kind,key,value)`——kind=bind/key=provider/value=UserId；kind=pw/key=''/value=哈希。判定：
+  - 绑定：当前就是这个 UserId → 补记录；从没绑过且没记录 → 绑；**有记录但现在没绑（解绑了）或绑成别的（改绑了）**、或没记录但已绑别的 → 保留（`kept`）。UserId 已被别人占 → 永不抢（`conflicts`，force 也不抢）。
+  - 密码：当前 = 默认哈希 → 补记录；当前为空且无记录、或当前 = 上次记录（说明没人动过、只是默认密码换了）→ 设；其余（改过 / 清过）→ 保留。
+  - 升级前已绑的成员第一次同步会因「当前就是这个 UserId」自动补记录，不会误判。
+- **全部覆盖**：`POST /admin/dir-sources/:id/run {force:true, confirm:'全部覆盖'}`（`FORCE_CONFIRM`，口令不符 400）；`syncWecom(..., fetcher, {force})`；state/审计带 `force`、`bound/pw_set/kept/conflicts`。开放 API 与定时同步永远不 force。前端行上「全部覆盖…」按钮 → `prompt` 要求原样输入口令。
+- 删同步源 / 删组织连带清 `dir_sync_applied`。
+- 前端 `openDirSourceModal` 改 async（先拉 `bind_choices`）：部门芯片 +「加载部门」缩进树（看不到父部门的当顶层；选了该 Secret 看不到的部门标红⚠）+ 手动加 ID；「同步回来的默认凭证」区（绑定方式 + 凭证多选、默认组织密码「已设置，留空不修改」+ 清除）。新建时不预选部门（空 = 保存为 `[1]`）。行上显示部门名、🔑 默认密码、上次「保留 N」。
+- ⚠️ 测试：新 `mock-wecom3.js`（集团部门树；`salessecret` 只能看销售部 3/31，访问别的部门 60011）+ run10 共 36 项全过（部门权限、受限 Secret 同步根部门 60011、多选去重、custom 只收有效凭证、哈希不下发、默认密码可「登录到组织」、改密/清密/解绑/改绑都保留、换默认密码只跟上未动过的、force 口令校验与覆盖、force 不抢他人 UserId、手动成员不设密码、删源清记录）；run8 20 / run9 26 / 35 / 16 / 25 / 12 回归全过；playwright：加载部门树→勾选→芯片、指定凭证、默认密码、保存→同步→全部覆盖→再编辑回填，零 JS 报错。
 
 ## v3.5.36 通讯录同步改为「多同步源」+ 本站凭证改为「列表 + 子页面」（用户反馈）
 

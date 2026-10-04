@@ -4943,7 +4943,15 @@ function _dirStateText(st) {
   if (!st) return '<span style="color:var(--txd);">未同步</span>';
   const at = esc(String(st.at || '').replace('T', ' ').slice(5, 16));
   if (!st.ok) return `<span style="color:var(--err);" title="${esc(st.error || '')}">✗ ${at} 失败</span>`;
-  return `<span style="color:#1F7A3A;" title="新建 ${st.created} · 关联 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${(st.errors||[]).length ? ' · 异常 ' + st.errors.length : ''}">✓ ${at} · 在册 ${st.total}${st.removed ? ' · 移出 ' + st.removed : ''}${(st.errors||[]).length ? ' · ⚠' + st.errors.length : ''}</span>`;
+  const extra = (st.bound ? ' · 绑定 ' + st.bound : '') + (st.pw_set ? ' · 设密码 ' + st.pw_set : '') + (st.kept ? ' · 保留单独修改 ' + st.kept : '') + (st.conflicts ? ' · UserId 冲突 ' + st.conflicts : '');
+  return `<span style="color:#1F7A3A;" title="${st.force ? '【全部覆盖同步】' : ''}新建 ${st.created} · 关联 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${extra}${(st.errors||[]).length ? ' · 异常 ' + st.errors.length : ''}">✓ ${at}${st.force ? ' · 全部覆盖' : ''} · 在册 ${st.total}${st.removed ? ' · 移出 ' + st.removed : ''}${st.kept ? ' · 保留 ' + st.kept : ''}${(st.errors||[]).length ? ' · ⚠' + st.errors.length : ''}</span>`;
+}
+// 同步范围展示：部门名（没有名字就显示 ID）
+function _dirScopeText(c) {
+  const ids = c.dept_ids && c.dept_ids.length ? c.dept_ids : [c.dept_id || 1];
+  const names = c.dept_names || {};
+  const t = ids.map(id => names[id] || ('#' + id));
+  return '部门 ' + (t.length > 3 ? t.slice(0, 3).join('、') + ` 等 ${t.length} 个` : t.join('、'));
 }
 function dirSourceRowsHtml(sid, sources, indent) {
   const pad = indent ? 'padding:7px 14px 7px 30px;border-top:1px solid var(--bd);' : 'padding:7px 4px;border-bottom:1px solid var(--bd);';
@@ -4951,10 +4959,11 @@ function dirSourceRowsHtml(sid, sources, indent) {
   if (!(sources || []).length) return indent ? '' : '<div style="color:var(--txd);padding:8px 4px;font-size:12px;">还没有同步源，点「+ 添加同步源」。</div>';
   return sources.map(x => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${pad}">
     <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
-    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · 部门 ${esc(x.config.dept_id || 1)}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
+    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · 🔑 默认密码' : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
     <span style="font-size:11px;">${_dirStateText(x.state)}</span>
     ${_credBadge(x.enabled)}
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" onclick="runDirSource('${x.id}','${esc(sid)}')">立即同步</button>` : ''}
+    ${x.enabled ? `<button class="btn" style="${_rowBtn}" title="连成员被单独改过的登录绑定 / 组织密码也改回本同步源的默认值" onclick="forceRunDirSource('${x.id}','${esc(sid)}')">全部覆盖…</button>` : ''}
     <button class="btn" style="${_rowBtn}" onclick="toggleDirSource('${x.id}','${esc(sid)}',${!x.enabled})">${x.enabled ? '停用' : '启用'}</button>
     <button class="btn" style="${_rowBtn}" onclick="openDirSourceModal('${esc(sid)}','${x.id}')">编辑</button>
     <button class="btn" style="${_rowDanger}" onclick="delDirSource('${x.id}','${esc(sid)}')">删除</button>
@@ -4971,41 +4980,112 @@ async function loadDirSources() {
   const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/dir-sources');
   box.innerHTML = ok ? dirSourceRowsHtml(_orgMemSid, data.sources) : '<div style="color:var(--err);">' + esc(data.error || '加载失败') + '</div>';
 }
-function openDirSourceModal(sid, srcId) {
+async function openDirSourceModal(sid, srcId) {
   const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
-  const c = src ? src.config : { dept_id: 1, uid_mode: 'userid', interval_hours: 0, remove_missing: true };
+  const c = src ? src.config : { dept_ids: [], uid_mode: 'userid', interval_hours: 0, remove_missing: true, bind_mode: 'auto' };
+  // 可绑定的登录凭证（本组织的企业微信凭证 + 本站默认企业微信）
+  let choices = [];
+  if (_IS_DEV) choices = [{ key: 'wecom:demo', label: '企业微信 · A公司', corp_id: 'wwdemo' }, { key: 'wecom', label: '企业微信（本站默认凭证）', corp_id: 'wwhq' }];
+  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) choices = r.data.bind_choices || []; }
+  // 同步范围：已选部门（id → 名称）
+  const picked = new Map((c.dept_ids || []).map(id => [Number(id), (c.dept_names || {})[id] || '']));
+  let visibleIds = null;   // 加载部门后：这个 Secret 能看到的部门；选了看不到的会标红（同步会报无权限）
   const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
   const lab = (t) => `<label style="display:block;font-size:12px;color:var(--txd);margin:10px 0 4px;">${t}</label>`;
+  const bindMode = c.bind_mode || 'auto';
+  const bindSet = new Set(c.bind_providers || []);
   const ov = document.createElement('div'); ov.className = 'modal-mask show';
-  ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:540px;text-align:left;">
+  ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:560px;text-align:left;">
     <h3 style="margin-bottom:6px;">${src ? '编辑通讯录同步源' : '添加通讯录同步源'}</h3>
-    <div style="font-size:11px;color:var(--txd);line-height:1.7;">把外部通讯录某部门（含子部门）的成员同步成本组织成员：按 UserId → 邮箱 → 手机 匹配已有账号，匹配不到才新建；离开的人从本组织移出（只动同步进来、且已不在本组织任何同步源里的成员）。</div>
+    <div style="font-size:11px;color:var(--txd);line-height:1.7;">把外部通讯录所选部门（含子部门）的成员同步成本组织成员：按 UserId → 邮箱 → 手机 匹配已有账号，匹配不到才新建；离开的人从本组织移出（只动同步进来、且已不在本组织任何同步源里的成员）。</div>
     ${lab('类型')}<select id="dsm-type" ${src ? 'disabled' : ''} style="${inp}"><option value="wecom">企业微信</option><option disabled>飞书（即将支持）</option><option disabled>钉钉（即将支持）</option></select>
     ${lab('名称（如「A 公司企业微信」）')}<input id="dsm-label" value="${esc(src ? src.label : '')}" placeholder="企业微信" style="${inp}">
     ${lab('企业 ID（corpid）')}<input id="dsm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
     ${lab('通讯录 Secret（企业微信后台「管理工具 → 通讯录同步」，并把本服务器出口 IP 加进可信 IP）')}<input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
-    <div style="display:flex;gap:10px;">
-      <div style="flex:1;">${lab('同步部门 ID')}<input id="dsm-dept" type="number" min="1" value="${esc(c.dept_id || 1)}" style="${inp}"></div>
-      <div style="flex:1;">${lab('自动同步')}<select id="dsm-interval" style="${inp}">${[[0,'只手动'],[1,'每 1 小时'],[6,'每 6 小时'],[24,'每天']].map(([v,t]) => `<option value="${v}" ${Number(c.interval_hours||0)===v?'selected':''}>${t}</option>`).join('')}</select></div>
+
+    ${lab('同步范围（部门，可多选；用总公司账号但只开了某几个部门权限时，只勾那几个）')}
+    <div style="display:flex;gap:8px;align-items:flex-start;">
+      <div id="dsm-chips" style="flex:1;display:flex;flex-wrap:wrap;gap:6px;min-height:30px;padding:4px;border:1px solid var(--bd);border-radius:4px;"></div>
+      <button class="btn" id="dsm-load-dept" style="flex:none;font-size:12px;padding:6px 10px;">加载部门</button>
     </div>
-    ${lab('组织内 UID')}<select id="dsm-uid" style="${inp}">${[['userid','用企业微信 UserId'],['rule','按本组织 UID 规则生成'],['none','不设置']].map(([v,t]) => `<option value="${v}" ${c.uid_mode===v?'selected':''}>${t}</option>`).join('')}</select>
+    <div id="dsm-tree" style="display:none;max-height:200px;overflow:auto;border:1px solid var(--bd);border-radius:4px;margin-top:6px;padding:6px 8px;font-size:13px;"></div>
+    <div style="display:flex;gap:6px;margin-top:6px;font-size:12px;color:var(--txd);align-items:center;">或手动加部门 ID：<input id="dsm-dept-add" type="number" min="1" style="width:90px;padding:3px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><button class="btn" id="dsm-dept-addbtn" style="font-size:12px;padding:3px 10px;">添加</button></div>
+
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;">${lab('自动同步')}<select id="dsm-interval" style="${inp}">${[[0,'只手动'],[1,'每 1 小时'],[6,'每 6 小时'],[24,'每天']].map(([v,t]) => `<option value="${v}" ${Number(c.interval_hours||0)===v?'selected':''}>${t}</option>`).join('')}</select></div>
+      <div style="flex:1;">${lab('组织内 UID')}<select id="dsm-uid" style="${inp}">${[['userid','用企业微信 UserId'],['rule','按本组织 UID 规则生成'],['none','不设置']].map(([v,t]) => `<option value="${v}" ${c.uid_mode===v?'selected':''}>${t}</option>`).join('')}</select></div>
+    </div>
+
+    <div style="margin-top:14px;padding:10px 12px;background:var(--sf2);border-radius:6px;">
+      <div style="font-size:13px;font-weight:600;color:var(--txt);">同步回来的默认凭证</div>
+      <div style="font-size:11px;color:var(--txd);line-height:1.6;margin:2px 0 6px;">只给「还没有」的成员补上。成员被单独改过的（解绑 / 改绑登录凭证、改了或清了组织密码）普通同步一律不覆盖；要强制改回，用行上的「全部覆盖…」并输入确认口令。</div>
+      ${lab('登录凭证绑定（把企业微信 UserId 绑到哪个登录凭证，之后用企业微信登录进同一账号）')}
+      <select id="dsm-bindmode" style="${inp}">
+        <option value="auto" ${bindMode==='auto'?'selected':''}>自动：同一企业（corpid 相同）的企业微信登录凭证</option>
+        <option value="custom" ${bindMode==='custom'?'selected':''}>指定凭证（可多选）</option>
+        <option value="none" ${bindMode==='none'?'selected':''}>不绑定</option>
+      </select>
+      <div id="dsm-bindlist" style="display:${bindMode==='custom'?'block':'none'};margin-top:6px;">${choices.length ? choices.map(x => `<label style="display:block;font-size:13px;color:var(--tx);margin:3px 0;"><input type="checkbox" class="dsm-bindcb" value="${esc(x.key)}" ${bindSet.has(x.key)?'checked':''}> ${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.corp_id || '')}</span></label>`).join('') : '<div style="font-size:12px;color:var(--txd);">本组织还没有企业微信登录凭证（可在组织卡片「+ 添加凭证」）。</div>'}</div>
+      ${lab('默认组织密码（「登录到组织」用；只存加密哈希）')}
+      <input id="dsm-pw" type="password" autocomplete="new-password" placeholder="${c.has_default_pw ? '已设置，留空不修改' : '留空 = 不设默认组织密码'}" style="${inp}">
+      ${c.has_default_pw ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dsm-pwclear"> 清除默认组织密码（已给成员设的不受影响）</label>' : ''}
+    </div>
+
     <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
-    ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${src.bind_provider ? '🔐 已找到同一企业的企业微信登录凭证，同步的成员会绑定其 UserId，之后用企业微信登录进同一账号。' : 'ℹ️ 本系统还没配置这家企业的企业微信登录——同步照常；配好登录后再同步一次即可绑定 UserId。'}</div>
+    ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? '🔐 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : 'ℹ️ 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
       <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>` : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
       <button class="btn" id="dsm-cancel">取消</button><button class="btn primary" id="dsm-save">保存</button>
     </div>
   </div>`;
   document.body.appendChild(ov);
-  ov.querySelector('#dsm-cancel').onclick = () => ov.remove();
-  ov.querySelector('#dsm-save').onclick = async () => {
+  const $ = (q) => ov.querySelector(q);
+  const renderChips = () => {
+    $('#dsm-chips').innerHTML = [...picked].map(([id, name]) => { const bad = visibleIds && !visibleIds.has(id); return `<span ${bad ? 'title="这个 Secret 看不到该部门，同步会报无权限"' : ''} style="font-size:12px;background:var(--sf2);border:1px solid ${bad ? 'var(--err)' : 'var(--bd)'};${bad ? 'color:var(--err);' : ''}border-radius:12px;padding:2px 4px 2px 10px;">${bad ? '⚠ ' : ''}${esc(name || '部门')} <span style="color:var(--txd);">#${id}</span> <button data-id="${id}" class="dsm-chipx" style="border:none;background:none;cursor:pointer;color:var(--txd);">×</button></span>`; }).join('') || '<span style="font-size:12px;color:var(--txd);padding:3px;">未选择（将同步根部门 #1）</span>';
+    ov.querySelectorAll('.dsm-chipx').forEach(b => b.onclick = () => { picked.delete(Number(b.dataset.id)); renderChips(); syncTree(); });
+  };
+  const syncTree = () => ov.querySelectorAll('.dsm-deptcb').forEach(cb => { cb.checked = picked.has(Number(cb.value)); });
+  renderChips();
+  $('#dsm-dept-addbtn').onclick = () => { const v = parseInt($('#dsm-dept-add').value, 10); if (v > 0) { picked.set(v, picked.get(v) || ''); $('#dsm-dept-add').value = ''; renderChips(); syncTree(); } };
+  $('#dsm-load-dept').onclick = async () => {
+    const box = $('#dsm-tree'); box.style.display = 'block'; box.innerHTML = '<span style="color:var(--txd);">加载中…</span>';
+    let nodes;
+    if (_IS_DEV) nodes = [{ id: 3, name: '销售部', parent: 1 }, { id: 31, name: '华东大区', parent: 3 }, { id: 32, name: '华南大区', parent: 3 }];
+    else {
+      const { ok, data } = await api('POST', '/admin/orgs/' + sid + '/dir-sources/scope-tree', { source_id: src ? src.id : undefined, corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim() });
+      if (!ok) { box.innerHTML = '<span style="color:var(--err);">' + esc(data.error || '加载失败') + '</span>'; return; }
+      nodes = data.nodes || [];
+    }
+    if (!nodes.length) { box.innerHTML = '<span style="color:var(--txd);">这个 Secret 看不到任何部门（检查应用的通讯录可见范围）。</span>'; return; }
+    // 按父子关系缩进排出树；看不到父部门的（权限只开到子部门）当作顶层
+    const ids = new Set(nodes.map(n => n.id)), kids = {};
+    visibleIds = ids;
+    nodes.forEach(n => { const p = ids.has(n.parent) ? n.parent : 'top'; (kids[p] = kids[p] || []).push(n); });
+    const rows = []; const walk = (p, d) => (kids[p] || []).sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id).forEach(n => { rows.push([n, d]); walk(n.id, d + 1); });
+    walk('top', 0);
+    box.innerHTML = '<div style="font-size:11px;color:var(--txd);margin-bottom:4px;">勾选父部门即包含其全部子部门。</div>' + rows.map(([n, d]) => `<label style="display:block;padding:2px 0 2px ${d * 18}px;color:var(--tx);"><input type="checkbox" class="dsm-deptcb" value="${n.id}" data-name="${esc(n.name)}"> ${esc(n.name)} <span style="color:var(--txd);font-size:11px;">#${n.id}</span></label>`).join('');
+    ov.querySelectorAll('.dsm-deptcb').forEach(cb => {
+      if (picked.has(Number(cb.value)) && !picked.get(Number(cb.value))) picked.set(Number(cb.value), cb.dataset.name);
+      cb.onchange = () => { const id = Number(cb.value); if (cb.checked) picked.set(id, cb.dataset.name); else picked.delete(id); renderChips(); };
+    });
+    syncTree(); renderChips();
+  };
+  $('#dsm-bindmode').onchange = () => { $('#dsm-bindlist').style.display = $('#dsm-bindmode').value === 'custom' ? 'block' : 'none'; };
+  $('#dsm-cancel').onclick = () => ov.remove();
+  $('#dsm-save').onclick = async () => {
+    const dept_ids = [...picked.keys()];
+    const dept_names = {}; picked.forEach((n, id) => { if (n) dept_names[id] = n; });
     const body = {
-      type: ov.querySelector('#dsm-type').value, label: ov.querySelector('#dsm-label').value.trim(),
-      corp_id: ov.querySelector('#dsm-corp').value.trim(), secret: ov.querySelector('#dsm-secret').value.trim(),
-      dept_id: parseInt(ov.querySelector('#dsm-dept').value, 10) || 1, interval_hours: parseInt(ov.querySelector('#dsm-interval').value, 10) || 0,
-      uid_mode: ov.querySelector('#dsm-uid').value, remove_missing: ov.querySelector('#dsm-remove').checked, enabled: ov.querySelector('#dsm-enabled').checked,
+      type: $('#dsm-type').value, label: $('#dsm-label').value.trim(),
+      corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim(),
+      dept_ids: dept_ids.length ? dept_ids : [1], dept_names, interval_hours: parseInt($('#dsm-interval').value, 10) || 0,
+      uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, enabled: $('#dsm-enabled').checked,
+      bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
+    const pw = $('#dsm-pw').value;
+    if (pw) { if (pw.length < 6) { showToast('默认组织密码至少 6 位'); return; } body.default_password = pw; }
+    if ($('#dsm-pwclear')?.checked) body.clear_default_password = true;
     if (_IS_DEV) { ov.remove(); showToast('演示模式：已保存'); return; }
     const { ok, data } = src ? await api('PATCH', '/admin/dir-sources/' + src.id, body) : await api('POST', '/admin/orgs/' + sid + '/dir-sources', body);
     if (!ok) { showToast(data.error || '保存失败'); return; }
@@ -5017,15 +5097,24 @@ async function toggleDirSource(id, sid, enabled) {
   if (!ok) { showToast(data.error || '操作失败'); return; }
   showToast(enabled ? '已启用' : '已停用'); refreshDirSourceViews(sid);
 }
-async function runDirSource(id, sid) {
-  showToast('同步中…');
-  const { ok, data } = await api('POST', '/admin/dir-sources/' + id + '/run');
+async function runDirSource(id, sid, force) {
+  showToast(force ? '全部覆盖同步中…' : '同步中…');
+  const { ok, data } = await api('POST', '/admin/dir-sources/' + id + '/run', force ? { force: true, confirm: force } : {});
   if (!ok) { showToast(data.error || '同步失败'); refreshDirSourceViews(sid); return; }
   const st = data.state;
-  showToast(`同步完成：在册 ${st.total}，新建 ${st.created}，新加入 ${st.added}，移出 ${st.removed}`);
+  showToast(`同步完成：在册 ${st.total}，新建 ${st.created}，新加入 ${st.added}，移出 ${st.removed}` + (st.bound ? `，绑定 ${st.bound}` : '') + (st.pw_set ? `，设密码 ${st.pw_set}` : '') + (st.kept ? `，保留单独修改 ${st.kept}` : ''));
   refreshDirSourceViews(sid);
   const modal = document.getElementById('orgmem-modal');
   if (modal && modal.classList.contains('show') && _orgMemSid === sid) loadOrgMembers();
+}
+// 全部覆盖同步：强确认（原样输入口令），连被单独改过的登录绑定 / 组织密码也改回同步源默认值
+async function forceRunDirSource(id, sid) {
+  const x = (_dirSourcesBySid[sid] || []).find(s => s.id === id);
+  const phrase = '全部覆盖';
+  const v = prompt(`【全部覆盖同步】「${x ? x.label : ''}」\n\n成员被单独改过的登录凭证绑定、组织密码，都会被改回本同步源的默认值（普通同步不会动它们）。\n此操作会写入审计存证。\n\n确认请输入：${phrase}`);
+  if (v === null) return;
+  if (v.trim() !== phrase) { showToast('口令不正确，已取消'); return; }
+  runDirSource(id, sid, v.trim());
 }
 async function delDirSource(id, sid) {
   const x = (_dirSourcesBySid[sid] || []).find(s => s.id === id);

@@ -1516,27 +1516,31 @@ PUT /api/v1/watermark     scope: config:write
 
 ---
 
-### 6.18 企业微信通讯录同步（v3.5.35；v3.5.36 起一个组织可有多个同步源）
+### 6.18 企业微信通讯录同步（v3.5.35；v3.5.36 起一个组织可有多个同步源；v3.5.37 起可多选部门、默认凭证）
 
-企业微信没有标准 SCIM，本系统用它自己的通讯录 API **拉取**某个部门（含子部门）的成员，同步成某组织的成员。
+企业微信没有标准 SCIM，本系统用它自己的通讯录 API **拉取**所选部门（可多选，含子部门）的成员，同步成某组织的成员。
 一个组织可以配置**多个同步源**（如多家企业微信），每个同步源像登录凭证一样单独启停、编辑、同步；配置入口在管理端「组织管理」的组织卡片（「+ 通讯录同步」）或组织成员弹窗（系统管理员或该组织的组织管理员），需要企业微信后台「管理工具 → 通讯录同步」的 Secret，并把本服务器出口 IP 加进可信 IP。
 
 ```
 POST /api/v1/orgs/:sid/dir-sync/run      scope: org:sync    # 依次跑该组织所有启用的同步源
 ```
 
-响应：`{ success, results: [{ source_id, label, state: { at, ok, total, created, linked, added, removed, skipped, bind_provider, errors[] } } | { source_id, label, error }] }`；没有启用的同步源 400。
+响应：`{ success, results: [{ source_id, label, state: { at, ok, total, created, linked, added, removed, skipped, bind_provider, bind_providers[], bound, pw_set, kept, conflicts, force, errors[] } } | { source_id, label, error }] }`；没有启用的同步源 400。开放 API 只做普通同步，**不会**做「全部覆盖」。
 
 同步规则：
 - 匹配顺序：本组织历次同步的 UserId 映射 → 已绑定该 UserId 的企业微信登录 → 邮箱（email / biz_mail）→ 手机 → 新建账号。
-- 若本系统配置了**同一企业**的企业微信登录（环境变量默认凭证或该组织下的企业微信凭证），会把 UserId 绑定到该登录，之后用企业微信登录进入同一账号。
+- **同步范围**（v3.5.37）：`dept_ids` 可多选部门（勾父部门即含全部子部门，父子都勾也不会重复）。集团总公司的通讯录 Secret 只开了部分部门权限时，只勾那几个部门——选了看不到的部门同步会报企业微信 60011 无权限。旧配置的单个 `dept_id` 自动当作 `[dept_id]`。
+- **登录凭证绑定**（v3.5.37，`bind_mode`）：`auto`（默认，绑到同一企业的企业微信登录：该组织下 corpid 相同的凭证，否则本站默认凭证）/ `custom`（`bind_providers` 指定一个或多个本组织的企业微信登录凭证）/ `none`（不绑）。绑定后成员用企业微信登录进入同一账号；该 UserId 已绑在别人身上时永不抢占（计入 `conflicts`）。
+- **默认组织密码**（v3.5.37，`default_password`，6~64 位，只存 bcrypt 哈希、不下发；`clear_default_password:true` 清除）：给同步进来的成员（`source=wecom`）补上组织密码，用于「登录到组织」。手动加入 / 导入的成员不设。
+- **单独改过的不覆盖**：系统记住每个同步源给每个成员设过什么（`dir_sync_applied`）。成员被单独解绑 / 改绑登录凭证、改了或清了组织密码，普通同步都保留（计入 `kept`）；默认密码换了，只有「还是上次同步设的密码」的成员会跟着更新。
+- **全部覆盖同步**：`POST /api/admin/dir-sources/:id/run` 传 `{ force: true, confirm: "全部覆盖" }`（口令必须原样），把上面被单独改过的也改回同步源的默认值；写审计存证（`force: true`）。
 - 成员状态 1（已激活）/4（未激活）计入；2（禁用）/5（退出企业）视为离开。
 - 「离开」的成员从组织移出——**只动同步进来的成员**（`source=wecom`），且他已不在本组织**任何一个**同步源里；手动加入/批量导入的不动；本次一个人都没拉到时不做任何移除。
 - UserId 映射按同步源隔离：两家企业里同名的 UserId 不会被当成同一个人。
 - 组织内 UID 默认取企业微信 UserId（冲突则不设），也可改为按本组织 UID 规则生成或不设置。
 - 可设自动同步间隔（1/6/24 小时）；每次同步写审计存证 `org.dir_synced`。
 
-管理端接口（v3.5.36）：`GET/POST /api/admin/orgs/:sid/dir-sources`（列表 / 新增；`secret` 读取时打码）、`PATCH /api/admin/dir-sources/:id`（编辑，或只传 `{enabled}` 启停；打码串/留空不覆盖 secret）、`DELETE /api/admin/dir-sources/:id`（删除同步源，已同步成员保留）、`POST /api/admin/dir-sources/:id/run`（立即同步，停用的源 400，同组织并发 409）。
+管理端接口（v3.5.36）：`GET/POST /api/admin/orgs/:sid/dir-sources`（列表 / 新增；`secret` 读取时打码；列表另回 `bind_choices` 可选登录凭证、`force_confirm` 确认口令）、`POST /api/admin/orgs/:sid/dir-sources/scope-tree`（v3.5.37，`{corp_id, secret}` 或 `{source_id}` 用已存 secret → 该 Secret 能看到的部门 `nodes[{id,name,parent,order}]`）、`PATCH /api/admin/dir-sources/:id`（编辑，或只传 `{enabled}` 启停；打码串/留空不覆盖 secret）、`DELETE /api/admin/dir-sources/:id`（删除同步源，已同步成员保留）、`POST /api/admin/dir-sources/:id/run`（立即同步，停用的源 400，同组织并发 409）。
 
 本站（默认主体）三方登录凭证（v3.5.36，Lv.1）：`GET /api/admin/oauth-defaults`（按平台列出，密钥只给「是否已设置」）、`PUT /api/admin/oauth-defaults/:platform`（`{values, enabled}`；密钥留空不改，`enabled:false` 只关闭登录入口、凭证保留——记在 `OAUTH_DEFAULT_DISABLED`）、`DELETE /api/admin/oauth-defaults/:platform`（清空该平台配置）。
 
