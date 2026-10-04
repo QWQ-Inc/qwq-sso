@@ -122,6 +122,8 @@ function mergeUsers(targetId, sourceIds, { reason = '', onAppRevoked = null } = 
         run(`UPDATE users SET kyc_verified=1, kyc_name=?, kyc_id_tail=?, kyc_provider=?, kyc_verified_at=?, kyc_pseudonym=?, kyc_name_hash=? WHERE id=?`,
           s.kyc_name, s.kyc_id_tail, s.kyc_provider, s.kyc_verified_at, s.kyc_pseudonym, s.kyc_name_hash, t.id);
       }
+      // v3.5.46.1：被合并账号不再保留——剩下的历史（登录日志、积分明细、兑换券、实名记录…）全部并到保留账号，然后删掉这个账号
+      if (absorbAndDelete(s.id, t.id)) moved.deleted = (moved.deleted || 0) + 1;
     }
   })();
 
@@ -131,4 +133,41 @@ function mergeUsers(targetId, sourceIds, { reason = '', onAppRevoked = null } = 
   return { merged: sources.map(s => ({ id: s.id, uid_seq: s.uid_seq, name: s.name })), target: { id: target.id, uid_seq: target.uid_seq, name: target.name }, moved, reason };
 }
 
-module.exports = { mergeUsers, checkMerge, isShellAccount };
+// 把 sourceId 名下剩下的所有数据并到 targetId，再删掉 sourceId 这个账号行（须在事务里调用）。
+// 返回 true = 账号行已删除；false = 仍有未知外键挡着，退化成抹掉个人信息的「已合并」占位（不会再出现在列表里）。
+const NOT_MOVED = new Set(['twofa_recovery_codes', 'kyc_pending', 'account_deletions', 'dir_sync_applied',
+  'user_app_auth', 'oauth_access_tokens', 'oauth_auth_codes', 'audit_chain', 'users']);   // 这些直接删掉，不转给保留账号
+const REF_COLS = ['owner_user_id', 'created_by', 'granted_by', 'requested_by', 'approved_by', 'issued_by', 'escort_user_id', 'done_by'];
+function absorbAndDelete(sourceId, targetId) {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(r => r.name);
+  for (const t of tables) {
+    if (t === 'users' || t === 'audit_chain') continue;
+    const cols = db.prepare(`PRAGMA table_info("${t}")`).all().map(c => c.name);
+    for (const c of ['user_id', 'owner_id']) {
+      if (!cols.includes(c)) continue;
+      if (!NOT_MOVED.has(t)) db.prepare(`UPDATE OR IGNORE "${t}" SET "${c}"=? WHERE "${c}"=?`).run(targetId, sourceId);
+      db.prepare(`DELETE FROM "${t}" WHERE "${c}"=?`).run(sourceId);   // 撞了唯一约束没搬走的（保留账号已有同样一条）直接删
+    }
+    for (const c of REF_COLS) if (cols.includes(c)) db.prepare(`UPDATE "${t}" SET "${c}"=? WHERE "${c}"=?`).run(targetId, sourceId);
+  }
+  db.prepare('UPDATE users SET merged_into=? WHERE merged_into=?').run(targetId, sourceId);
+  try { db.prepare('DELETE FROM users WHERE id=?').run(sourceId); return true; }
+  catch (_) {
+    db.prepare(`UPDATE users SET name='已合并账号', uid_code=NULL, password_hash=NULL, twofa_secret=NULL, twofa_enabled=0, kyc_verified=0,
+      kyc_name=NULL, kyc_id_tail=NULL, kyc_pseudonym=NULL, kyc_name_hash=NULL, deletion_state='purged' WHERE id=?`).run(sourceId);
+    return false;
+  }
+}
+
+// 升级前已经合并过的账号（还留着「已合并」的那些）：启动时一次性并掉。保留账号已不存在的不动，交给注销清理流程。
+function absorbLegacyMerged() {
+  const rows = db.prepare(`SELECT s.id, s.merged_into FROM users s JOIN users t ON t.id=s.merged_into
+    WHERE s.merged_into IS NOT NULL AND COALESCE(s.deletion_state,'')<>'purged'`).all();
+  let n = 0;
+  for (const r of rows) {
+    try { db.transaction(() => { if (absorbAndDelete(r.id, r.merged_into)) n++; })(); } catch (e) { console.warn('[合并账号清理]', r.id, e.message); }
+  }
+  return n;
+}
+
+module.exports = { mergeUsers, checkMerge, isShellAccount, absorbLegacyMerged };

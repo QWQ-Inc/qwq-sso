@@ -160,8 +160,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 .bar-label{font-size:9px;color:var(--txd);}
 
 /* User detail panel */
-.detail-grid{display:grid;grid-template-columns:200px 1fr;gap:0;border:1px solid var(--bd);border-radius:3px;overflow:hidden;}
-.detail-list{border-right:1px solid var(--bd);overflow-y:auto;max-height:420px;}
+.detail-grid{display:grid;grid-template-columns:200px 1fr;gap:0;border:1px solid var(--bd);border-radius:3px;align-items:start;}
+.detail-list{border-right:1px solid var(--bd);overflow-y:auto;position:sticky;top:0;max-height:calc(100vh - 170px);min-height:240px;}
+.detail-list-count{position:sticky;top:0;z-index:1;padding:6px 14px;font-size:11px;color:var(--txd);background:var(--sf2);border-bottom:1px solid var(--bd);}
 .detail-list-item{padding:10px 14px;border-bottom:1px solid var(--bd);cursor:pointer;transition:background .15s;}
 .detail-list-item:hover{background:var(--sf4);}
 .detail-list-item.active{background:var(--sf2);}
@@ -4620,7 +4621,7 @@ async function loadAdmUsers(q) {
     document.getElementById('user-detail-panel').innerHTML = '';
     return;
   }
-  list.innerHTML = data.users.map((u,i) => `
+  list.innerHTML = `<div class="detail-list-count">共 ${data.users.length} 人${q ? '（搜索结果）' : ''}</div>` + data.users.map((u,i) => `
     <div class="detail-list-item ${i===0?'active':''}" onclick="selectUserById(this,'${u.id}')">
       <div class="din">${esc(u.name||u.email||'—')}${u.group?`<span style="font-size:10px;font-weight:500;color:${u.group.color};margin-left:6px;">●${esc(u.group.name)}</span>`:''}</div>
       <div class="did">${uidOf(u)} · ${u.deletion_state==='deleted'?'<span style="color:var(--err);">已删除</span>':u.merged_into?'已合并':u.deletion_state==='pending'?'<span style="color:var(--warn);">注销中</span>':u.status==='active'?'正常':'已停用'}${(u.tags&&u.tags.length)?' · '+u.tags.map(t=>`<span style="color:${t.color};">${esc(t.name)}</span>`).join(' '):''}</div>
@@ -4921,7 +4922,7 @@ async function loadKycSiblings() {
   if (!ok || !data.accounts.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<div style="margin-top:12px;padding:10px;border:1px solid var(--bd);border-radius:6px;">
     <div style="font-weight:600;color:var(--txt);margin-bottom:4px;">同一实名下还有 ${data.accounts.length} 个账号${data.max ? `（同一实名最多 ${data.max} 个）` : ''}</div>
-    <div style="font-size:11px;color:var(--txd);margin-bottom:6px;">实名一致即视为同一人。合并后它们的登录方式、组织、积分等转到当前账号，那些账号停用。</div>
+    <div style="font-size:11px;color:var(--txd);margin-bottom:6px;">实名一致即视为同一人。合并后它们的登录方式、组织、积分和历史记录转到当前账号，那些账号会被删除。</div>
     ${data.accounts.map(a => `<label style="display:flex;gap:6px;align-items:center;padding:3px 0;font-size:12px;color:var(--txt);"><input type="checkbox" class="kyc-sib" value="${esc(a.id)}" ${a.role === 'admin' ? 'disabled title="管理员账号不能被合并"' : ''}>
       ${esc(a.name || '—')} <span style="color:var(--txd);">${esc(a.uid)} · ${esc(a.email || a.phone || '')} · ${esc(String(fmtTime(a.created_at)).slice(0, 10))} 注册${a.role === 'admin' ? ' · 管理员' : ''}</span></label>`).join('')}
     <button class="btn" style="font-size:12px;margin-top:6px;" onclick="mergeKycSiblings()">合并到当前账号…</button></div>`;
@@ -7693,7 +7694,7 @@ function openOrgMerge() {
     ${list.map(m => `<label style="display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;">
       <input type="radio" name="orgmerge-target" value="${esc(m.user_id)}" ${m.user_id === def.user_id ? 'checked' : ''}>
       <span>${esc(m.name || '—')} <span style="color:var(--txd);">${esc(_orgMemUid(m))}</span>${m.org_uid ? ' · 组织内 UID ' + esc(m.org_uid) : ''}${(m.ext_ids || []).length ? ' · ' + m.ext_ids.map(x => esc(x.id)).join('、') : ''}</span></label>`).join('')}
-    <div style="font-size:11px;color:var(--txd);margin:6px 0;line-height:1.6;">合并后：其余账号的登录绑定（如企业微信）、通讯录同步关联、组织成员关系、积分等都转到保留账号；用其中任何一个企业微信账号登录都会进入保留账号，之后同步也不会再分开建号。其余账号会被停用（标记为「已合并」），对第三方应用的授权作废。<b>此操作不能撤销。</b></div>
+    <div style="font-size:11px;color:var(--txd);margin:6px 0;line-height:1.6;">合并后：其余账号的登录绑定（如企业微信）、通讯录同步关联、组织成员关系、积分等都转到保留账号；用其中任何一个企业微信账号登录都会进入保留账号，之后同步也不会再分开建号。其余账号会被删除（它们的登录记录、积分明细等历史一并转到保留账号），对第三方应用的授权作废。<b>此操作不能撤销。</b></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;">
       <button class="btn" style="font-size:12px;" onclick="document.getElementById('orgmem-merge').style.display='none'">取消</button>
       <button class="btn primary" style="font-size:12px;" onclick="doOrgMerge()">确认合并</button>

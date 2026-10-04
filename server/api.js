@@ -2809,6 +2809,8 @@ router.get('/admin/users', requireAdmin(3), (req, res) => {
   } else {
     rows = users.findAll.all();
   }
+  // 已合并 / 已彻底清除的占位行不出现在列表里
+  rows = rows.filter(u => !u.merged_into && u.deletion_state !== 'purged');
   res.json({ success: true, users: rows.map(u => {
     const s = safeUser(u);
     s.group = u.group_id ? groups.get.get(u.group_id) : null;
@@ -3039,6 +3041,8 @@ lifecycle.init({
 });
 setInterval(() => { try { lifecycle.tick(); } catch (e) { console.warn('[账号注销定时任务]', e.message); } }, 3600e3).unref();
 setTimeout(() => { try { lifecycle.tick(); } catch (_) {} }, 5000).unref();
+// v3.5.46.1：升级前合并留下的「已合并」账号，启动时并掉（历史记录转给保留账号后删除）
+setTimeout(() => { try { const n = userMerge.absorbLegacyMerged(); if (n) console.log(`[合并账号清理] 已并掉 ${n} 个旧的已合并账号`); } catch (e) { console.warn('[合并账号清理]', e.message); } }, 3000).unref();
 
 const uidShow = u => u.uid_code || '#' + String(u.uid_seq).padStart(5, '0');
 function deletionView(r) {

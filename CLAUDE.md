@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.46**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.46.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -435,6 +435,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.46.1 合并后不再保留原账号 + 用户列表显示不全（用户反馈）
+
+四级补丁。用户：「某主账号被合并后，原账号仍然被保留，这是不正确的」「账号详情左边选择人员的区域没有显示全」。
+- 🐛 `user-merge.js` 新 `absorbAndDelete(sourceId, targetId)`（在合并事务里、原有定向搬迁之后调用）：遍历 sqlite_master 所有表，`user_id`/`owner_id` 列 `UPDATE OR IGNORE` 转给保留账号、撞唯一约束剩下的删掉；`NOT_MOVED`（2FA 恢复码、kyc_pending、account_deletions、dir_sync_applied、应用授权/令牌/授权码）只删不转——**2FA 恢复码绝不转**（否则能绕过保留账号的两步验证）；`owner_user_id/created_by/granted_by/requested_by/approved_by/issued_by/escort_user_id/done_by` 改指向保留账号；`users.merged_into` 指向它的改指向保留账号；最后 `DELETE FROM users`。万一还有外键挡住就退化成抹掉个人信息的占位（`deletion_state='purged'`）。`mergeUsers` 返回 `moved.deleted`。
+- 升级前的「已合并」行：`absorbLegacyMerged()` 启动 3 秒后跑一次（保留账号还在的才处理）。`GET /admin/users` 过滤掉 `merged_into` 非空与 `purged` 的行。前端合并面板 / 实名合并文案改成「会被删除，历史转到保留账号」。
+- 🐛 列表：`.detail-list` 原来 `max-height:420px` 且 `.detail-grid` 有 `overflow:hidden`（会让 sticky 失效）。改为 grid `align-items:start`、去掉 overflow hidden，列表 `position:sticky;top:0;max-height:calc(100vh - 170px)`，顶部加 `.detail-list-count`「共 N 人」。
+- ⚠️ 测试：run16 改为验证账号已删除 + 被合并账号的积分明细也转过来 + 不出现在列表（22 项）；run20 12 项；旧「已合并」行启动清理（登录日志、三方绑定转到保留账号、行删除）；playwright 93 人列表：页面滚动后列表钉在顶部（48→778px）、最后一人可见。
 
 ## v3.5.46 数据备份（本地目录 / Cloudflare R2，可多个同时开启）（用户反馈）
 
