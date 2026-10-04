@@ -6,18 +6,18 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.45**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.46**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.45，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.46，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
-- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接预检 + 审批）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、域名验证文件（根目录验证文件，到期自动删除）。
+- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接预检 + 审批）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
 - **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码（含主屏幕快捷操作）、商城、备忘录、应用中心（图标/文件夹/组织切换/管理工具磁贴：门禁·设备·用户·身份核验）、账号设定等；GitHub Actions 云编译）。
 
@@ -55,6 +55,7 @@ server/
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
 ├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉所选部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId + 默认组织密码（v3.5.37，单独改过的不覆盖）
+├── backup.js     # 数据备份（v3.5.46）：snapshot/encrypt/decrypt/sigv4/writeTo/list/read，本地 + R2；也是解密命令行
 ├── account-lifecycle.js # 账号注销 / 删除（v3.5.44）：request/setChecklist/approve/cancel/reject/restore/purge/tick，交接预检 preflight
 ├── user-merge.js # 同一人多个账号合并（v3.5.41）：mergeUsers/checkMerge/isShellAccount，组织成员合并 + 自助绑定时并入空壳账号
 ├── org-policy.js # 组织登录策略判定（IP 白名单/登录时段，v3.5.24）：三方登录与「登录到组织」两条通道共用
@@ -201,7 +202,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.44）
+## 数据库表清单（截至 v3.5.46）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）、`deletion_state`/`deleted_at`/`purge_at`（注销删除，v3.5.44）
@@ -216,7 +217,7 @@ KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id
 
 门禁 / 设备（v3.5.0+）：`access_doors`（+code_mode/sub_ttl/escort_required/blackout，v3.5.29）、`access_rules`（deny 优先 + valid_from/to/weekdays/time）、`access_logs`、`access_qr_used`、`access_cards`（v3.5.2）、`access_faces`（v3.5.3）、`visitor_passes`（v3.5.4，+escort_user_id/blackout）、`access_escort_pending`（陪同待带入，v3.5.29）、`federation_peers`（v3.5.5）、`fed_oidc_codes`/`fed_oidc_tokens`、`fed_apps`（v3.5.7）、`devices`（设备管理，v3.5.21）
 
-内容 / 其他：`memos`/`memo_attachments`（备忘录）、`twofa_recovery_codes`（2FA 恢复码）、`announcements`/`announcement_reads`（公告）、`site_documents`（登录协议）、`site_verify_files`（域名验证文件，v3.5.40）、`webauthn_credentials`（Passkey）、`provider_stats`（服务商调用统计）、`api_call_logs`（入站/出站调用日志）
+内容 / 其他：`memos`/`memo_attachments`（备忘录）、`twofa_recovery_codes`（2FA 恢复码）、`announcements`/`announcement_reads`（公告）、`site_documents`（登录协议）、`site_verify_files`（域名验证文件，v3.5.40）、`backup_targets`（备份目标，v3.5.46）、`webauthn_credentials`（Passkey）、`provider_stats`（服务商调用统计）、`api_call_logs`（入站/出站调用日志）
 
 OIDC 相关（v3.3.0 新增）：`oauth_auth_codes`（授权码，10 分钟单次使用）、`oauth_access_tokens`（访问令牌，只存 sha256）、`user_app_auth.scope`（用户对该应用实际授权了哪些 scope）
 
@@ -434,6 +435,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.46 数据备份（本地目录 / Cloudflare R2，可多个同时开启）（用户反馈）
+
+三级版本。用户：「做一个数据备份功能，支持服务器本地储存和 r2 存储桶，同样允许添加多个，允许同时开启。」
+- 新 `server/backup.js`：`snapshot(db, dataDir)` = better-sqlite3 在线 `db.backup()` 到临时文件 → gzip（临时文件 finally 删）；`encrypt/decrypt`：`'QWQBK1' + salt16 + iv12 + tag16 + AES-256-GCM`，key = scrypt(口令, salt)；`sigv4()` 自写 S3 SigV4（**已对上 AWS 官方 GET Object / List / PUT 三组测试向量**，不引 SDK）；R2 用 path-style `https://<账户ID>.r2.cloudflarestorage.com/<bucket>/<key>`、region `auto`，`r2List` 解析 ListObjectsV2 XML（分页）；本地 `localDir`（空 = `<DB 目录>/backups`，相对路径相对 DB 目录）。文件名 `qwq-sso-YYYYMMDD-HHMMSS.db.gz[.enc]`（`FILE_RE`，下载也只认这个格式 = 防路径穿越）。`writeTo` 写完按 `keep` 删最旧的。也是命令行：`node server/backup.js decrypt in out 口令`。
+- 表 `backup_targets(id,type local|r2,label,config JSON,enabled,interval_hours 0=只手动,keep 0=不清理,state,last_run_at)`；`db.js` 现在导出 `DB_FILE`/`DATA_DIR`。
+- 接口（全部 `requireAdmin(1)`）：`GET/POST /admin/backups`、`PATCH/DELETE /admin/backups/:id`（删目标不删已有文件）、`POST /admin/backups/run {target_id?}`（不带 = 所有启用目标；**一份快照写给本次所有目标**；进程内锁，并发 409）、`GET /admin/backups/:id/files`、`GET /admin/backups/:id/files/:name`（下载，本地读 / R2 GET）。配置校验：R2 桶名 / 账户 ID 32 位或自定义 endpoint（须 https，localhost 例外给测试用）/ AK SK；`secret_access_key` 与口令视图打码，打码串 / 留空不改，`clear_passphrase` 取消加密，口令 ≥ 8 位。定时 `runDueBackups` 每 10 分钟：`last_run_at <= now - interval_hours`。审计 `backup.run/target_added/target_removed/downloaded`。
+- 前端：管理端「数据备份」页（`adm-backups`，SUPERADMIN_ONLY）：目标卡（类型 / 位置 / 频率 / 保留 / 加密 / 最近结果）+ 立即备份 / 查看文件（下载走 fetch + Bearer → blob）/ 编辑 / 启停 / 删除；添加 / 编辑弹窗按类型切换字段。AUDIT 标签补本批（备份、注销删除各事件、kyc.account_limit）。
+- ⚠️ 备份包含 env_config 里的全部密钥；容器本地盘重部署即清空（页面有提示）。**恢复没有做成网页按钮**（替换正在运行的库风险大）：停服务 → 解密 / 解压 → 替换 `DB_PATH` 指向的文件 → 启动。
+- ⚠️ 测试：run21 19 项（Lv.2 403、本地 / R2 校验、加密口令长度、两个目标一次快照都成功、本地备份解压成完整库、R2 收到 .enc 且签名全部通过、列表、下载 → 解密 → 解压是 SQLite、路径穿越拒绝、保留 2 份两边都清、编辑打码不覆盖、停用不参与、错密钥记失败原因、列表最近结果、删目标不删文件、审计）；mock-r2.js 用同一套 SigV4 复算校验（另有官方向量单测）；到期 SQL 单测；playwright：添加 R2 目标 → 立即备份 → 查看文件，零 JS 报错。真实 R2 未联调。
 
 ## v3.5.45 同一实名多账号：数量上限 + 按实名合并（用户反馈）
 

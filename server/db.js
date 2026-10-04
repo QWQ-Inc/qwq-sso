@@ -452,6 +452,19 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS admin_grants (
   granted_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.46：数据备份目标（本地目录 / Cloudflare R2，可多个、同时开启）
+try { db.exec(`CREATE TABLE IF NOT EXISTS backup_targets (
+  id             TEXT PRIMARY KEY,
+  type           TEXT NOT NULL,                 -- local | r2
+  label          TEXT NOT NULL,
+  config         TEXT NOT NULL DEFAULT '{}',    -- local: {dir}；r2: {account_id,bucket,access_key_id,secret_access_key,prefix,endpoint}；共有 {passphrase}
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  interval_hours INTEGER NOT NULL DEFAULT 24,   -- 0 = 只手动
+  keep           INTEGER NOT NULL DEFAULT 7,    -- 保留最近几份（0 = 不自动清理）
+  state          TEXT,                          -- 最近一次结果 JSON
+  last_run_at    TEXT,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // v3.5.44：账号注销 / 删除生命周期
 //   users.deletion_state：NULL | pending（申请中：冷静期 / 等交接 / 等审批，账号照常可用）| deleted（已删除：停用，保留期内可恢复）
 //   保留期满（purge_at）后彻底清除，账号行与个人数据一并删除。
@@ -1465,6 +1478,7 @@ const dirSourceStmts = {
 };
 
 module.exports = {
+  DB_FILE, DATA_DIR,
   db,
   nextUidSeq,
   isSetupDone,

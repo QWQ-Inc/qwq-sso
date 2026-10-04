@@ -2896,6 +2896,139 @@ router.post('/admin/users/:id/enable', requireAdmin(2), (req, res) => {
   res.json({ success: true });
 });
 // ══════════════════════════════════════════
+// 数据备份（v3.5.46）—— 快照 / 加密 / 本地与 R2 见 backup.js。仅超级管理员（备份里有全部数据和密钥）
+// ══════════════════════════════════════════
+const backup = require('./backup');
+const { DATA_DIR } = require('./db');
+const MASK = '••••••••';
+function backupView(t) {
+  let cfg = {}; let state = null;
+  try { cfg = JSON.parse(t.config || '{}'); } catch (_) {}
+  try { state = t.state ? JSON.parse(t.state) : null; } catch (_) {}
+  const view = { ...cfg };
+  if (view.secret_access_key) view.secret_access_key = MASK;
+  view.has_passphrase = !!cfg.passphrase; delete view.passphrase;
+  return { id: t.id, type: t.type, label: t.label, enabled: !!t.enabled, interval_hours: t.interval_hours, keep: t.keep,
+    config: view, state, last_run_at: t.last_run_at, created_at: t.created_at,
+    location: t.type === 'local' ? backup.localDir(cfg, DATA_DIR) : `r2://${cfg.bucket || ''}/${String(cfg.prefix || '').replace(/^\/+|\/+$/g, '')}` };
+}
+function backupCfgFromBody(type, b, old = {}) {
+  const cfg = { ...old };
+  if (type === 'local') {
+    cfg.dir = String(b.dir ?? old.dir ?? '').trim().slice(0, 300);
+  } else if (type === 'r2') {
+    for (const k of ['account_id', 'bucket', 'access_key_id', 'prefix', 'endpoint']) if (b[k] !== undefined) cfg[k] = String(b[k] || '').trim().slice(0, 300);
+    const sk = String(b.secret_access_key || '').trim();
+    if (sk && sk !== MASK) cfg.secret_access_key = sk;
+    if (!cfg.bucket || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(cfg.bucket)) return { error: '请填写正确的存储桶名称（小写字母、数字、连字符）' };
+    if (!cfg.endpoint && !/^[a-f0-9]{32}$/i.test(cfg.account_id || '')) return { error: '请填写 Cloudflare 账户 ID（32 位），或自定义 Endpoint' };
+    if (cfg.endpoint && !/^https:\/\//i.test(cfg.endpoint) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cfg.endpoint)) return { error: 'Endpoint 必须是 https:// 地址' };
+    if (!cfg.access_key_id || !cfg.secret_access_key) return { error: '请填写 R2 访问密钥 ID 与机密访问密钥' };
+  } else return { error: '备份目标类型只能是 local / r2' };
+  const pp = String(b.passphrase || '');
+  if (b.clear_passphrase) delete cfg.passphrase;
+  else if (pp && pp !== MASK) { if (pp.length < 8) return { error: '加密口令至少 8 位' }; cfg.passphrase = pp; }
+  return { cfg };
+}
+const clampInt = (v, d, min, max) => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : d; };
+router.get('/admin/backups', requireAdmin(1), (req, res) => {
+  res.json({ success: true, data_dir: DATA_DIR, targets: db.prepare('SELECT * FROM backup_targets ORDER BY created_at').all().map(backupView) });
+});
+router.post('/admin/backups', requireAdmin(1), (req, res) => {
+  const b = req.body || {};
+  const type = String(b.type || '');
+  const label = String(b.label || '').trim().slice(0, 40) || (type === 'r2' ? 'R2 存储桶' : '本地目录');
+  const r = backupCfgFromBody(type, b.config || {});
+  if (r.error) return res.status(400).json({ error: r.error });
+  const id = uuidv4();
+  db.prepare('INSERT INTO backup_targets (id,type,label,config,enabled,interval_hours,keep) VALUES (?,?,?,?,?,?,?)')
+    .run(id, type, label, JSON.stringify(r.cfg), b.enabled === false ? 0 : 1, clampInt(b.interval_hours, 24, 0, 720), clampInt(b.keep, 7, 0, 365));
+  audit('backup.target_added', { subject: id, actor: actorOf(req), detail: { type, label } });
+  res.json({ success: true, target: backupView(db.prepare('SELECT * FROM backup_targets WHERE id=?').get(id)) });
+});
+router.patch('/admin/backups/:id', requireAdmin(1), (req, res) => {
+  const t = db.prepare('SELECT * FROM backup_targets WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: '备份目标不存在' });
+  const b = req.body || {};
+  let cfgJson = t.config;
+  if (b.config) {
+    let old = {}; try { old = JSON.parse(t.config || '{}'); } catch (_) {}
+    const r = backupCfgFromBody(t.type, b.config, old);
+    if (r.error) return res.status(400).json({ error: r.error });
+    cfgJson = JSON.stringify(r.cfg);
+  }
+  db.prepare('UPDATE backup_targets SET label=?, config=?, enabled=?, interval_hours=?, keep=? WHERE id=?').run(
+    b.label !== undefined ? (String(b.label).trim().slice(0, 40) || t.label) : t.label, cfgJson,
+    b.enabled !== undefined ? (b.enabled ? 1 : 0) : t.enabled,
+    b.interval_hours !== undefined ? clampInt(b.interval_hours, t.interval_hours, 0, 720) : t.interval_hours,
+    b.keep !== undefined ? clampInt(b.keep, t.keep, 0, 365) : t.keep, t.id);
+  res.json({ success: true, target: backupView(db.prepare('SELECT * FROM backup_targets WHERE id=?').get(t.id)) });
+});
+router.delete('/admin/backups/:id', requireAdmin(1), (req, res) => {
+  const t = db.prepare('SELECT * FROM backup_targets WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: '备份目标不存在' });
+  db.prepare('DELETE FROM backup_targets WHERE id=?').run(t.id);
+  audit('backup.target_removed', { subject: t.id, actor: actorOf(req), detail: { type: t.type, label: t.label } });
+  res.json({ success: true });
+});
+// 跑一次备份：一份快照写到所有给定目标；同一时间只跑一个
+let backupRunning = false;
+async function runBackups(targets, actor) {
+  if (backupRunning) { const e = new Error('已有备份在进行中，请稍后'); e.status = 409; throw e; }
+  backupRunning = true;
+  const results = [];
+  try {
+    const gz = await backup.snapshot(db, DATA_DIR);
+    const name = `qwq-sso-${backup.stamp()}.db.gz`;
+    for (const t of targets) {
+      let cfg = {}; try { cfg = JSON.parse(t.config || '{}'); } catch (_) {}
+      let st;
+      try { st = { ok: true, ...(await backup.writeTo(t, cfg, gz, DATA_DIR, name)) }; }
+      catch (e) { st = { ok: false, error: e.message }; }
+      st.at = new Date().toISOString();
+      db.prepare("UPDATE backup_targets SET state=?, last_run_at=datetime('now') WHERE id=?").run(JSON.stringify(st), t.id);
+      results.push({ id: t.id, label: t.label, ...st });
+    }
+  } finally { backupRunning = false; }
+  audit('backup.run', { subject: 'backup', actor, detail: { raw_size: null, results: results.map(r => ({ label: r.label, ok: r.ok, file: r.file || null, error: r.error || null })) } });
+  return results;
+}
+router.post('/admin/backups/run', requireAdmin(1), async (req, res) => {
+  const id = req.body?.target_id;
+  const targets = id ? db.prepare('SELECT * FROM backup_targets WHERE id=?').all(id) : db.prepare('SELECT * FROM backup_targets WHERE enabled=1').all();
+  if (!targets.length) return res.status(400).json({ error: id ? '备份目标不存在' : '没有启用的备份目标' });
+  try { res.json({ success: true, results: await runBackups(targets, actorOf(req)) }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+router.get('/admin/backups/:id/files', requireAdmin(1), async (req, res) => {
+  const t = db.prepare('SELECT * FROM backup_targets WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: '备份目标不存在' });
+  let cfg = {}; try { cfg = JSON.parse(t.config || '{}'); } catch (_) {}
+  try { res.json({ success: true, files: await backup.list(t, cfg, DATA_DIR) }); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+router.get('/admin/backups/:id/files/:name', requireAdmin(1), async (req, res) => {
+  const t = db.prepare('SELECT * FROM backup_targets WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: '备份目标不存在' });
+  let cfg = {}; try { cfg = JSON.parse(t.config || '{}'); } catch (_) {}
+  try {
+    const buf = await backup.read(t, cfg, DATA_DIR, req.params.name);
+    audit('backup.downloaded', { subject: t.id, actor: actorOf(req), detail: { file: req.params.name } });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${req.params.name}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(buf);
+  } catch (e) { res.status(/文件名/.test(e.message) ? 400 : 404).json({ error: e.message }); }
+});
+// 定时：每 10 分钟看哪些目标到点了（interval_hours>0），一份快照发给本次到期的全部目标
+async function runDueBackups() {
+  const due = db.prepare(`SELECT * FROM backup_targets WHERE enabled=1 AND interval_hours>0
+    AND (last_run_at IS NULL OR last_run_at <= datetime('now', '-' || interval_hours || ' hours'))`).all();
+  if (due.length) { try { await runBackups(due, 'system'); } catch (e) { console.warn('[定时备份]', e.message); } }
+}
+setInterval(runDueBackups, 10 * 60 * 1000).unref();
+
+// ══════════════════════════════════════════
 // 账号注销 / 删除（v3.5.44）—— 流程与状态见 account-lifecycle.js
 // ══════════════════════════════════════════
 const lifecycle = require('./account-lifecycle');

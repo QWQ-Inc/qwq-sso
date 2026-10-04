@@ -1167,6 +1167,10 @@ async function loadMe() {
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M6 7l3 3-3 3M11 13h3"/></svg>
         环境变量
       </button>
+      <button class="nav-item" onclick="goto('adm-backups')" id="ni-adm-backups">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="10" cy="5" rx="6" ry="2.5"/><path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5"/></svg>
+        数据备份
+      </button>
       <button class="nav-item" onclick="goto('adm-grants')" id="ni-adm-grants">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l6 3v5c0 4-3 6.5-6 8-3-1.5-6-4-6-8V5z"/><path d="M7.5 10l2 2 3-3.5"/></svg>
         权限授权
@@ -2528,6 +2532,23 @@ async function loadMe() {
       </div>
 
       <!-- ▸ 管理端：域名验证文件（v3.5.40） -->
+      <div class="page" id="page-adm-backups">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>数据备份</h3>
+            <div style="display:flex;gap:8px;">
+              <button class="btn" style="font-size:11px;" onclick="runBackupNow()">全部立即备份</button>
+              <button class="btn primary" style="font-size:11px;" onclick="openBackupModal()">+ 添加备份目标</button>
+            </div>
+          </div>
+          <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
+            把整个数据库做成快照（gzip 压缩），存到服务器本地目录或 Cloudflare R2 存储桶。可以添加多个目标、同时开启，每个目标单独设置备份频率和保留份数。
+            <b>备份里包含全部数据和系统配置里的密钥</b>，存到外部存储桶建议设置加密口令（AES-256-GCM）；解密：<code>node server/backup.js decrypt 备份文件 输出.db.gz 口令</code>，再 gunzip 得到数据库文件。
+            ⚠️ Zeabur 等容器的本地磁盘重新部署会清空，本地目录请挂载持久卷，或者同时开 R2。
+          </div>
+          <div class="card-body"><div id="backup-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+      </div>
       <div class="page" id="page-adm-deletions">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -3104,7 +3125,7 @@ let checkedIn = false;
 let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
-const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants'];
+const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-backups'];
 
 function setMode(mode, targetPage) {
   // 普通用户不允许进管理端
@@ -3241,7 +3262,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-backups':'数据备份','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3255,6 +3276,7 @@ function goto(page) {
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
   if(page === 'adm-deletions') loadDeletions();
+  if(page === 'adm-backups') loadBackups();
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
   if(page === 'adm-env')   { renderEnvPage(); loadEnvPollStrategy(); loadFooterItems(); }
@@ -3292,7 +3314,7 @@ function showLockedPage(page) {
   const ni = document.getElementById('ni-' + page);
   if (ni) ni.classList.add('active');
 
-  const titles = { 'adm-levels':'等级管理', 'adm-env':'环境变量', 'adm-memo':'备忘录管理', 'adm-verify-files':'域名验证文件', 'adm-grants':'权限授权' };
+  const titles = { 'adm-levels':'等级管理', 'adm-env':'环境变量', 'adm-memo':'备忘录管理', 'adm-verify-files':'域名验证文件', 'adm-grants':'权限授权', 'adm-backups':'数据备份' };
   document.getElementById('page-title').textContent = titles[page] || page;
   document.getElementById('locked-feature-name').textContent = titles[page] || page;
 }
@@ -4774,6 +4796,123 @@ async function admDeleteKyc(uid) {
   else showToast('清除失败：' + (data?.error || '未知错误'));
 }
 
+// ── 数据备份（v3.5.46）──
+let _backups = [];
+const _fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
+async function loadBackups() {
+  const box = document.getElementById('backup-list');
+  const { ok, data } = await api('GET', '/admin/backups');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  _backups = data.targets || [];
+  box.innerHTML = _backups.length ? _backups.map(t => {
+    const st = t.state;
+    const last = st ? (st.ok ? `<span style="color:#1a7f37;">✓ ${esc(fmtTime(st.at))} 备份成功 · ${esc(st.file || '')} · ${_fmtSize(st.size || 0)}${st.removed ? ` · 清理旧备份 ${st.removed} 份` : ''}</span>`
+      : `<span style="color:var(--err);">✗ ${esc(fmtTime(st.at))} 失败：${esc(st.error || '')}</span>`) : '<span>还没有备份过</span>';
+    return `<div style="border:1px solid var(--bd);border-radius:6px;padding:10px 12px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span style="color:var(--txt);font-weight:600;">${t.type === 'r2' ? '☁️' : '💾'} ${esc(t.label)} <span style="color:var(--txd);font-weight:400;font-size:11px;">${t.type === 'r2' ? 'Cloudflare R2' : '本地目录'} · <code>${esc(t.location)}</code></span></span>
+        <span class="badge ${t.enabled ? 'ok' : 'grey'}">${t.enabled ? '启用' : '停用'}</span>
+      </div>
+      <div style="margin-top:4px;line-height:1.8;">${t.interval_hours ? `每 ${t.interval_hours} 小时自动备份` : '只手动备份'} · 保留最近 ${t.keep || '全部'}${t.keep ? ' 份' : ''} · ${t.config.has_passphrase ? '🔒 加密' : '未加密'}<br>${last}</div>
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+        <button class="btn primary" style="font-size:11px;" onclick="runBackupNow('${t.id}')">立即备份</button>
+        <button class="btn" style="font-size:11px;" onclick="showBackupFiles('${t.id}')">查看备份文件</button>
+        <button class="btn" style="font-size:11px;" onclick="openBackupModal('${t.id}')">编辑</button>
+        <button class="btn" style="font-size:11px;" onclick="toggleBackup('${t.id}', ${!t.enabled})">${t.enabled ? '停用' : '启用'}</button>
+        <button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="delBackup('${t.id}')">删除</button>
+      </div>
+      <div id="bk-files-${t.id}"></div></div>`;
+  }).join('') : '<div style="padding:8px 0;">还没有备份目标，点右上角「+ 添加备份目标」。</div>';
+}
+async function runBackupNow(id) {
+  showToast('正在备份…');
+  const { ok, data } = await api('POST', '/admin/backups/run', id ? { target_id: id } : {});
+  if (ok) { const bad = data.results.filter(r => !r.ok); showToast(bad.length ? `${bad.length} 个目标失败：${bad[0].error}` : `已备份到 ${data.results.length} 个目标`); }
+  else showToast('备份失败：' + (data?.error || '未知错误'));
+  loadBackups();
+}
+async function showBackupFiles(id) {
+  const box = document.getElementById('bk-files-' + id);
+  if (box.innerHTML) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div style="margin-top:6px;">加载中…</div>';
+  const { ok, data } = await api('GET', `/admin/backups/${id}/files`);
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);margin-top:6px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  box.innerHTML = data.files.length ? '<div style="margin-top:8px;">' + _udTable(['文件', '大小', '时间', ''], data.files.map(f => [
+    `<code style="font-size:11px;">${esc(f.name)}</code>`, _fmtSize(f.size), esc(fmtTime(f.modified)),
+    `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='downloadBackup(${JSON.stringify(id)}, ${JSON.stringify(f.name)})'>下载</button>`])) + '</div>'
+    : '<div style="margin-top:6px;">还没有备份文件。</div>';
+}
+async function downloadBackup(id, name) {
+  const r = await fetch(`/api/admin/backups/${id}/files/${encodeURIComponent(name)}`, { headers: { Authorization: 'Bearer ' + getToken() } });
+  if (!r.ok) { showToast('下载失败：' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+async function toggleBackup(id, enabled) {
+  const { ok, data } = await api('PATCH', '/admin/backups/' + id, { enabled });
+  if (ok) loadBackups(); else showToast('操作失败：' + (data?.error || '未知错误'));
+}
+async function delBackup(id) {
+  if (!confirm('删除这个备份目标？已经存好的备份文件不会被删除。')) return;
+  const { ok, data } = await api('DELETE', '/admin/backups/' + id);
+  if (ok) loadBackups(); else showToast('删除失败：' + (data?.error || '未知错误'));
+}
+function openBackupModal(id) {
+  const t = id ? _backups.find(x => x.id === id) : null;
+  const c = t ? t.config : {};
+  const type = t ? t.type : 'local';
+  document.getElementById('backup-modal')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-mask show'; m.id = 'backup-modal';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:13px;';
+  const row = (label, html, hint) => `<div style="margin-top:10px;"><div style="font-size:12px;color:var(--txm);margin-bottom:4px;">${label}</div>${html}${hint ? `<div style="font-size:11px;color:var(--txd);margin-top:3px;">${hint}</div>` : ''}</div>`;
+  m.innerHTML = `<div class="modal" style="min-width:460px;text-align:left;">
+    <h3 style="margin-bottom:6px;">${t ? '编辑备份目标' : '添加备份目标'}</h3>
+    ${row('类型', `<select id="bk-type" style="${inp}" ${t ? 'disabled' : ''} onchange="_bkTypeChanged()"><option value="local" ${type === 'local' ? 'selected' : ''}>服务器本地目录</option><option value="r2" ${type === 'r2' ? 'selected' : ''}>Cloudflare R2 存储桶</option></select>`)}
+    ${row('名称', `<input id="bk-label" value="${esc(t ? t.label : '')}" placeholder="${type === 'r2' ? 'R2 存储桶' : '本地目录'}" style="${inp}">`)}
+    <div id="bk-local" style="display:${type === 'local' ? '' : 'none'};">
+      ${row('目录', `<input id="bk-dir" value="${esc(c.dir || '')}" placeholder="留空 = 数据库所在目录下的 backups/" style="${inp}">`, '可填绝对路径；相对路径相对于数据库所在目录。容器部署请挂载持久卷。')}
+    </div>
+    <div id="bk-r2" style="display:${type === 'r2' ? '' : 'none'};">
+      ${row('Cloudflare 账户 ID', `<input id="bk-account" value="${esc(c.account_id || '')}" placeholder="32 位，Cloudflare 控制台 R2 页面右侧" style="${inp}">`)}
+      ${row('存储桶名称', `<input id="bk-bucket" value="${esc(c.bucket || '')}" style="${inp}">`)}
+      ${row('访问密钥 ID（Access Key ID）', `<input id="bk-ak" value="${esc(c.access_key_id || '')}" style="${inp}">`, 'R2 → 管理 R2 API 令牌 → 创建令牌（权限：对象读和写，限定这个存储桶）')}
+      ${row('机密访问密钥（Secret Access Key）', `<input id="bk-sk" type="password" value="${esc(c.secret_access_key || '')}" placeholder="${t ? '已配置，留空不修改' : ''}" style="${inp}">`)}
+      ${row('目录前缀（可选）', `<input id="bk-prefix" value="${esc(c.prefix || '')}" placeholder="如 qwq-sso" style="${inp}">`)}
+      ${row('自定义 Endpoint（可选）', `<input id="bk-endpoint" value="${esc(c.endpoint || '')}" placeholder="留空 = https://<账户ID>.r2.cloudflarestorage.com；欧盟辖区等可在这里填" style="${inp}">`)}
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;">${row('自动备份频率', `<select id="bk-interval" style="${inp}">${[[0, '只手动'], [1, '每小时'], [6, '每 6 小时'], [12, '每 12 小时'], [24, '每天'], [72, '每 3 天'], [168, '每周']].map(([v, l]) => `<option value="${v}" ${(t ? t.interval_hours : 24) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
+      <div style="flex:1;">${row('保留最近几份', `<input id="bk-keep" type="number" min="0" max="365" value="${t ? t.keep : 7}" style="${inp}">`, '0 = 不自动清理')}</div>
+    </div>
+    ${row('加密口令（可选）', `<input id="bk-pass" type="password" placeholder="${c.has_passphrase ? '已设置，留空不修改' : '至少 8 位；不填则不加密'}" style="${inp}">${c.has_passphrase ? '<label style="font-size:12px;display:block;margin-top:4px;"><input type="checkbox" id="bk-pass-clear"> 取消加密</label>' : ''}`, '⚠️ 口令只存在本系统里，忘了就解不开备份；请另外妥善保存。')}
+    <label style="display:block;margin-top:10px;font-size:13px;"><input type="checkbox" id="bk-enabled" ${!t || t.enabled ? 'checked' : ''}> 启用</label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="btn" onclick="document.getElementById('backup-modal').remove()">取消</button>
+      <button class="btn primary" onclick='saveBackup(${JSON.stringify(id || null)})'>保存</button>
+    </div></div>`;
+  document.body.appendChild(m);
+}
+function _bkTypeChanged() {
+  const v = document.getElementById('bk-type').value;
+  document.getElementById('bk-local').style.display = v === 'local' ? '' : 'none';
+  document.getElementById('bk-r2').style.display = v === 'r2' ? '' : 'none';
+}
+async function saveBackup(id) {
+  const $ = s => document.getElementById(s);
+  const type = $('bk-type').value;
+  const config = type === 'local' ? { dir: $('bk-dir').value.trim() }
+    : { account_id: $('bk-account').value.trim(), bucket: $('bk-bucket').value.trim(), access_key_id: $('bk-ak').value.trim(),
+        secret_access_key: $('bk-sk').value.trim(), prefix: $('bk-prefix').value.trim(), endpoint: $('bk-endpoint').value.trim() };
+  config.passphrase = $('bk-pass').value;
+  if ($('bk-pass-clear')?.checked) config.clear_passphrase = true;
+  const body = { type, label: $('bk-label').value.trim(), config, enabled: $('bk-enabled').checked,
+    interval_hours: parseInt($('bk-interval').value, 10), keep: parseInt($('bk-keep').value, 10) || 0 };
+  const { ok, data } = await api(id ? 'PATCH' : 'POST', '/admin/backups' + (id ? '/' + id : ''), body);
+  if (ok) { showToast('已保存'); $('backup-modal').remove(); loadBackups(); } else showToast('保存失败：' + (data?.error || '未知错误'));
+}
+
 // ── 同一实名的其他账号（v3.5.45）──
 async function loadKycSiblings() {
   const box = document.getElementById('kyc-siblings');
@@ -5829,6 +5968,9 @@ async function openSubjectApps(sid, name) {
 // 审计存证链（防篡改）
 // ══════════════════════════════════════════
 const AUDIT_EVENT_LABEL = {
+  'backup.run':'数据备份', 'backup.target_added':'添加备份目标', 'backup.target_removed':'删除备份目标', 'backup.downloaded':'下载备份',
+  'account.deletion_requested':'申请注销 / 删除账号', 'account.deletion_approved':'批准删除账号', 'account.deletion_cancelled':'撤回注销 / 删除', 'account.deletion_rejected':'驳回删除账号',
+  'account.deleted':'账号已删除', 'account.restored':'恢复账号', 'account.purged':'彻底清除账号', 'account.external_suspended':'同步禁用企业微信成员', 'account.external_resumed':'同步启用企业微信成员', 'kyc.account_limit':'同一实名账号数超限',
   'admin.grant_added':'授予管理权限', 'admin.grant_removed':'撤销管理权限', 'user.merged':'合并账号',
   'site.verify_file_added':'添加域名验证文件', 'site.verify_file_replaced':'替换域名验证文件', 'site.verify_file_extended':'域名验证文件延期', 'site.verify_file_removed':'删除域名验证文件',
   'kyc.verified':'实名认证通过', 'kyc.reverified':'二次实名通过', 'kyc.session_started':'发起实名会话',
