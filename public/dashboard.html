@@ -1786,6 +1786,18 @@ async function loadMe() {
               <button class="btn primary" style="font-size:11px;padding:5px 12px;" onclick="openNewUserModal()">+ 新建用户</button>
             </div>
           </div>
+          <div id="user-bulk" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--bd);background:var(--sf2);font-size:12px;">
+            <span>已选 <b id="user-bulk-n">0</b> 人</span>
+            <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulkClear()">清除选择</button>
+            <span style="flex:1;"></span>
+            <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('enable')">启用</button>
+            <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('group')">设分组…</button>
+            <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('tags_add')">加标签…</button>
+            <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('tags_remove')">去标签…</button>
+            <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('points')">调整积分…</button>
+            <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--warn);" onclick="userBulk('disable')">停用…</button>
+            <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--err);" onclick="userBulk('delete')">删除…</button>
+          </div>
           <div class="card-body" style="padding:0">
             <div class="detail-grid">
               <div class="detail-list" id="adm-user-list">
@@ -4752,12 +4764,90 @@ async function loadAdmUsers(q) {
     document.getElementById('user-detail-panel').innerHTML = '';
     return;
   }
-  list.innerHTML = `<div class="detail-list-count">共 ${data.users.length} 人${q ? '（搜索结果）' : ''}</div>` + data.users.map((u,i) => `
-    <div class="detail-list-item ${i===0?'active':''}" onclick="selectUserById(this,'${u.id}')">
-      <div class="din">${esc(u.name||u.email||'—')}${u.group?`<span style="font-size:10px;font-weight:500;color:${u.group.color};margin-left:6px;">●${esc(u.group.name)}</span>`:''}</div>
-      <div class="did">${uidOf(u)} · ${u.deletion_state==='deleted'?'<span style="color:var(--err);">已删除</span>':u.merged_into?'已合并':u.deletion_state==='pending'?'<span style="color:var(--warn);">注销中</span>':u.status==='active'?'正常':'已停用'}${(u.tags&&u.tags.length)?' · '+u.tags.map(t=>`<span style="color:${t.color};">${esc(t.name)}</span>`).join(' '):''}</div>
+  _admUserRows = data.users;
+  data.users.forEach(u => { if (_uSel.has(u.id)) _uSel.set(u.id, u); });
+  list.innerHTML = `<div class="detail-list-count" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="user-sel-all" title="全选当前列表" onclick="userSelAll(this.checked)" style="cursor:pointer;"> 共 ${data.users.length} 人${q ? '（搜索结果）' : ''}</div>` + data.users.map((u,i) => `
+    <div class="detail-list-item ${i===0?'active':''}" onclick="selectUserById(this,'${u.id}')" style="display:flex;gap:8px;align-items:flex-start;">
+      ${u.is_public ? '<span style="width:13px;"></span>' : `<input type="checkbox" class="user-sel" data-id="${u.id}" ${_uSel.has(u.id) ? 'checked' : ''} onclick="event.stopPropagation();userSelToggle('${u.id}',this.checked)" style="margin-top:3px;cursor:pointer;">`}
+      <div style="min-width:0;flex:1;"><div class="din">${esc(u.name||u.email||'—')}${u.group?`<span style="font-size:10px;font-weight:500;color:${u.group.color};margin-left:6px;">●${esc(u.group.name)}</span>`:''}</div>
+      <div class="did">${uidOf(u)} · ${u.deletion_state==='deleted'?'<span style="color:var(--err);">已删除</span>':u.merged_into?'已合并':u.deletion_state==='pending'?'<span style="color:var(--warn);">注销中</span>':u.status==='active'?'正常':'已停用'}${(u.tags&&u.tags.length)?' · '+u.tags.map(t=>`<span style="color:${t.color};">${esc(t.name)}</span>`).join(' '):''}</div></div>
     </div>`).join('');
+  _userBulkSync();
   if (data.users.length) loadAdmUserDetail(data.users[0].id);
+}
+
+// ── 批量操作（v3.5.55）：勾选跨搜索保留；危险操作（停用 / 删除 / 积分）要输入「<动作> N 个账号」 ──
+let _admUserRows = [];
+const _uSel = new Map();   // id → 用户（名称 / UID 用于确认名单）
+function userSelToggle(id, on) {
+  const u = _admUserRows.find(x => x.id === id);
+  if (on) _uSel.set(id, u || { id }); else _uSel.delete(id);
+  _userBulkSync();
+}
+function userSelAll(on) {
+  _admUserRows.filter(u => !u.is_public).forEach(u => { if (on) _uSel.set(u.id, u); else _uSel.delete(u.id); });
+  document.querySelectorAll('#adm-user-list .user-sel').forEach(c => { c.checked = on; });
+  _userBulkSync();
+}
+function userBulkClear() { _uSel.clear(); document.querySelectorAll('#adm-user-list .user-sel').forEach(c => { c.checked = false; }); _userBulkSync(); }
+function _userBulkSync() {
+  const bar = document.getElementById('user-bulk'); if (!bar) return;
+  bar.style.display = _uSel.size ? 'flex' : 'none';
+  document.getElementById('user-bulk-n').textContent = _uSel.size;
+  const all = document.getElementById('user-sel-all');
+  if (all) { const rows = _admUserRows.filter(u => !u.is_public); all.checked = rows.length > 0 && rows.every(u => _uSel.has(u.id)); }
+}
+const _USER_BULK = {
+  enable: { label: '启用' }, disable: { label: '停用', verb: '停用', tip: '停用后这些账号立即不能登录，已签发的登录态和应用令牌一并作废' },
+  delete: { label: '删除', verb: '删除', tip: '按账号删除规则处理：你有权直接删的会立即删除（保留期内可恢复），其余进入审批 / 等待期' },
+  group: { label: '设分组' }, tags_add: { label: '加标签' }, tags_remove: { label: '去标签' }, points: { label: '调整积分', verb: '调整积分' },
+};
+async function userBulk(act) {
+  const c = _USER_BULK[act], sel = [..._uSel.values()];
+  if (!sel.length) { showToast('请先勾选用户'); return; }
+  const body = { action: act, ids: sel.map(u => u.id) };
+  let what = '';
+  if (act === 'group' || act === 'tags_add' || act === 'tags_remove') {
+    const isG = act === 'group';
+    const { ok, data } = await api('GET', isG ? '/admin/groups' : '/admin/tags');
+    const items = (ok && (isG ? data.groups : data.tags)) || [];
+    if (!items.length && !isG) { await uiAlert('还没有标签，先到「分组标签」里建'); return; }
+    const ov = await _pickOverlay(c.label + `（${sel.length} 人）`, isG
+      ? `<label style="display:block;padding:3px 0;"><input type="radio" name="ub-g" value="" checked> 移出分组（不属于任何分组）</label>` + items.map(g => `<label style="display:block;padding:3px 0;"><input type="radio" name="ub-g" value="${esc(g.id)}"> <span style="color:${esc(g.color || '')};">●</span> ${esc(g.name)}</label>`).join('')
+      : items.map(t => `<label style="display:inline-block;padding:3px 10px 3px 0;"><input type="checkbox" value="${esc(t.id)}"> <span style="color:${esc(t.color || '')};">${esc(t.name)}</span></label>`).join(''), '下一步');
+    if (!ov) return;
+    if (isG) { const v = ov.querySelector('input[name=ub-g]:checked').value; body.group_id = v || null; what = v ? '分组「' + (items.find(g => g.id === v)?.name || '') + '」' : '移出分组'; }
+    else { body.tag_ids = [...ov.querySelectorAll('input:checked')].map(i => i.value); what = body.tag_ids.map(id => items.find(t => t.id === id)?.name).join('、'); }
+    ov.remove();
+    if (!isG && !body.tag_ids.length) { showToast('没有选择标签'); return; }
+  }
+  if (act === 'points') {
+    const v = await uiPrompt(`给 ${sel.length} 个账号每人调整多少积分？（正数增加，负数扣减）`, '', { title: '批量调整积分' });
+    if (v == null) return;
+    body.delta = parseInt(v, 10);
+    if (!body.delta) { showToast('请输入非 0 的整数'); return; }
+    const r = await uiPrompt('变动说明（选填，会写进积分日志）', '', { title: '批量调整积分' });
+    if (r == null) return;
+    body.reason = r.trim();
+    what = (body.delta > 0 ? '+' : '') + body.delta + ' 积分';
+  }
+  const names = sel.slice(0, 15).map(u => '· ' + (u.name || u.email || u.id) + ' ' + (u.uid_seq ? uidOf(u) : '')).join('\n') + (sel.length > 15 ? `\n…等 ${sel.length} 个` : '');
+  if (!await uiConfirm(`对下面 ${sel.length} 个账号执行「${c.label}${what ? '：' + what : ''}」？${c.tip ? '\n' + c.tip + '。' : ''}\n\n${names}`, { title: '批量' + c.label, danger: !!c.verb })) return;
+  if (c.verb) {
+    const phrase = `${c.verb} ${sel.length} 个账号`;
+    const v = await uiPrompt(`这是危险操作。请原样输入「${phrase}」确认`, '', { title: '再次确认' });
+    if (v == null) return;
+    if (v.trim() !== phrase) { showToast('确认内容不正确，已取消'); return; }
+    body.confirm = phrase;
+  }
+  const { ok, data } = await api('POST', '/admin/users/bulk', body);
+  if (!ok) { showToast('操作失败：' + (data?.error || '未知错误')); return; }
+  const fails = (data.results || []).filter(x => !x.ok);
+  const pending = act === 'delete' ? (data.results || []).filter(x => x.ok && x.needs_approval).length : 0;
+  showToast(`已${c.label} ${data.done} 个` + (data.skipped ? `，${data.skipped} 个无需变更` : '') + (pending ? `（其中 ${pending} 个等待审批）` : '') + (fails.length ? `，${fails.length} 个失败` : ''));
+  if (fails.length) await uiAlert('以下没有成功：\n' + fails.map(x => `· ${x.name || x.id} ${x.uid || ''}：${x.error}`).join('\n'), { title: '部分失败' });
+  fails.length ? (() => { _uSel.clear(); fails.forEach(x => _uSel.set(x.id, sel.find(u => u.id === x.id) || { id: x.id })); })() : _uSel.clear();
+  loadAdmUsers(document.getElementById('adm-user-search')?.value.trim() || '');
 }
 
 let _searchTimer;

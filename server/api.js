@@ -3675,6 +3675,84 @@ router.post('/admin/users/:id/delete', requireAuth, (req, res) => {
     res.json({ success: true, deletion: deletionView(r), state: users.findById.get(u.id).deletion_state });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
+// ── 用户管理：批量操作（v3.5.55）──
+// 逐条套用单个操作的同一套校验（停用不能停自己 / 同级或更高管理员；删除走 deleteMode；积分不能扣成负数），
+// 一条失败不影响其他条，返回逐条结果。危险操作（停用 / 删除 / 积分）要原样输入「<动作> N 个账号」确认。
+const BULK_DANGER = { disable: '停用', delete: '删除', points: '调整积分' };
+router.post('/admin/users/bulk', requireAuth, (req, res) => {
+  const b = req.body || {};
+  const action = String(b.action || '');
+  if (!['disable', 'enable', 'delete', 'group', 'tags_add', 'tags_remove', 'points'].includes(action)) return res.status(400).json({ error: '不支持的操作' });
+  if (action !== 'delete' && !isSysAdmin(req, 2)) return res.status(403).json({ error: '需要 Lv.2 及以上管理员' });
+  const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(String))];
+  if (!ids.length) return res.status(400).json({ error: '请先勾选用户' });
+  if (ids.length > 200) return res.status(400).json({ error: '一次最多 200 个账号' });
+  if (BULK_DANGER[action]) {
+    const want = `${BULK_DANGER[action]} ${ids.length} 个账号`;
+    if (String(b.confirm || '').trim() !== want) return res.status(400).json({ error: `请原样输入「${want}」确认`, confirm_text: want });
+  }
+  // 参数预检（整批共用）
+  let gid = null, tagIds = [], delta = 0;
+  if (action === 'group') { gid = b.group_id || null; if (gid && !groups.get.get(gid)) return res.status(400).json({ error: '分组不存在' }); }
+  if (action === 'tags_add' || action === 'tags_remove') {
+    tagIds = (Array.isArray(b.tag_ids) ? b.tag_ids : []).filter(t => tags.get.get(t));
+    if (!tagIds.length) return res.status(400).json({ error: '请选择标签' });
+  }
+  if (action === 'points') { delta = parseInt(b.delta, 10); if (!delta) return res.status(400).json({ error: '积分变动量不能为 0' }); }
+  const operator = users.findById.get(req.user.uid);
+  const results = [];
+  for (const id of ids) {
+    const u = users.findById.get(id);
+    const row = { id, name: u ? (u.name || u.email || '') : '', uid: u ? uidShow(u) : '' };
+    try {
+      if (!u) throw Object.assign(new Error('用户不存在'), { status: 404 });
+      if (u.is_public) throw new Error('公共账号请在分组里管理');
+      if (action === 'disable') {
+        if (u.id === req.user.uid) throw new Error('不能停用自己的账号');
+        if (u.role === 'admin' && operator.role === 'admin' && (u.admin_level || 99) <= (operator.admin_level || 99)) throw new Error(`不能停用同级或更高级别的管理员（Lv.${u.admin_level}）`);
+        if (u.status === 'disabled') { row.skipped = '已是停用状态'; }
+        else {
+          db.prepare("UPDATE users SET status='disabled',updated_at=datetime('now') WHERE id=?").run(u.id);
+          onAccountSuspended(u, 'user.disabled');
+          audit('user.disabled', { subject: String(u.uid_seq), actor: actorOf(req), detail: { bulk: true } });
+        }
+      } else if (action === 'enable') {
+        if (u.deletion_state === 'deleted') throw new Error('已删除，请用「恢复账号」');
+        if (u.merged_into) throw new Error('已合并到别的账号');
+        if (u.status === 'active') { row.skipped = '已是正常状态'; }
+        else {
+          db.prepare("UPDATE users SET status='active',updated_at=datetime('now') WHERE id=?").run(u.id);
+          onAccountResumed(u);
+          audit('user.enabled', { subject: String(u.uid_seq), actor: actorOf(req), detail: { bulk: true } });
+        }
+      } else if (action === 'delete') {
+        const mode = deleteMode(req, u);
+        if (mode.error) throw new Error(mode.error);
+        const r = lifecycle.request(u, { kind: 'admin', by: req.user.uid, reason: b.reason, needsApproval: !mode.direct, immediate: mode.direct });
+        row.state = users.findById.get(u.id).deletion_state;
+        row.needs_approval = !mode.direct; row.deletion_id = r.id;
+      } else if (action === 'group') {
+        groups.setUser.run(gid, u.id);
+      } else if (action === 'tags_add') {
+        const have = new Set(tags.ofUser.all(u.id).map(t => t.id));
+        tagIds.forEach(t => { if (!have.has(t)) tags.addToUser.run(u.id, t); });
+      } else if (action === 'tags_remove') {
+        tagIds.forEach(t => db.prepare('DELETE FROM user_tag_map WHERE user_id=? AND tag_id=?').run(u.id, t));
+      } else if (action === 'points') {
+        if ((u.points || 0) + delta < 0) throw new Error(`扣除后积分将为负数（当前 ${u.points || 0}）`);
+        users.addPoints.run(delta, u.id);
+        points.insert.run(uuidv4(), u.id, delta, b.reason || (delta > 0 ? '管理员批量增加积分' : '管理员批量扣减积分'));
+        audit('points.adjusted', { subject: String(u.uid_seq), actor: actorOf(req), detail: { delta, balance_after: (u.points || 0) + delta, bulk: true } });
+      }
+      row.ok = true;
+    } catch (e) { row.ok = false; row.error = e.message; }
+    results.push(row);
+  }
+  const done = results.filter(r => r.ok && !r.skipped).length;
+  audit('user.bulk_action', { actor: actorOf(req), detail: { action, total: ids.length, done, failed: results.filter(r => !r.ok).length,
+    ...(action === 'group' ? { group_id: gid } : {}), ...(tagIds.length ? { tag_ids: tagIds } : {}), ...(delta ? { delta } : {}) } });
+  res.json({ success: true, action, done, skipped: results.filter(r => r.skipped).length, failed: results.filter(r => !r.ok).length, results });
+});
 router.get('/admin/deletions', requireAuth, (req, res) => {
   if (!isSysAdmin(req, 3) && !db.prepare("SELECT 1 FROM admin_grants WHERE user_id=? AND perm='user.delete'").get(req.user.uid)) return res.status(403).json({ error: '无权查看' });
   const status = ['pending', 'done', 'cancelled', 'rejected', 'restored'].includes(req.query.status) ? req.query.status : null;
