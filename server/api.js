@@ -3710,6 +3710,98 @@ router.post('/admin/deletions/leftovers/action', requireAuth, async (req, res) =
   res.json({ success: true, done: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, results });
 });
 
+// ── 异常账号（v3.5.58）：账号在、却没有任何能登录的方式 ──
+//   unbound  通讯录同步进来了（有映射），但没有登录绑定，也没有密码 / 邮箱 / 手机 / Passkey
+//   no_login 在组织里，但没有任何登录方式（也没有组织密码），通讯录映射也没了
+//   orphan   不在任何组织、没有映射、没有任何登录方式——多半是组织 / 同步源被删后留下的
+// 管理员 / 公共账号 / 注销中 / 已删除 / 已合并的不算。
+function anomalyAccounts() {
+  const rows = db.prepare(`SELECT u.* FROM users u WHERE u.is_public=0 AND COALESCE(u.role,'user')<>'admin' AND u.merged_into IS NULL AND u.deletion_state IS NULL
+    AND COALESCE(u.password_hash,'')='' AND COALESCE(u.email,'')='' AND COALESCE(u.phone,'')=''
+    AND NOT EXISTS (SELECT 1 FROM user_oauth o WHERE o.user_id=u.id)
+    AND NOT EXISTS (SELECT 1 FROM webauthn_credentials w WHERE w.user_id=u.id)
+    ORDER BY u.uid_seq`).all();
+  const out = [];
+  for (const u of rows) {
+    const orgs = db.prepare('SELECT s.name, m.password_hash FROM org_members m JOIN oauth_subjects s ON s.id=m.subject_id WHERE m.user_id=?').all(u.id);
+    if (orgs.some(o => o.password_hash)) continue;   // 有组织密码：能「登录到组织」
+    const links = db.prepare(`SELECT l.source_id, l.ext_id, l.ext_name, d.label, d.type FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id WHERE l.user_id=?`).all(u.id)
+      .map(l => {
+        const src = dirSources.get.get(l.source_id), cfg = src ? dirsyncWecom.effectiveCfg(src) : {};
+        let bind = null;
+        if (l.type === 'wecom' && cfg.corp_id) {
+          for (const p of dirsyncWecom.corpScope(cfg.corp_id).providers) {
+            const taken = db.prepare('SELECT user_id FROM user_oauth WHERE provider=? AND open_id=? COLLATE NOCASE').get(p, l.ext_id);
+            if (!taken) { bind = p; break; }
+          }
+        }
+        return { source_id: l.source_id, source_label: l.label || '企业微信', ext_id: l.ext_id, ext_name: l.ext_name || null, can_write: !!cfg.write_secret, bind_provider: bind };
+      });
+    const kind = links.length ? 'unbound' : orgs.length ? 'no_login' : 'orphan';
+    out.push({ id: u.id, name: u.name, uid: uidShow(u), status: u.status, created_at: u.created_at, kind, orgs: orgs.map(o => o.name), links,
+      can_bind: links.some(l => l.bind_provider) });
+  }
+  return out;
+}
+router.get('/admin/anomalies', requireAuth, (req, res) => {
+  if (!isSysAdmin(req, 3) && !db.prepare("SELECT 1 FROM admin_grants WHERE user_id=? AND perm='user.delete'").get(req.user.uid)) return res.status(403).json({ error: '无权查看' });
+  res.json({ success: true, items: anomalyAccounts() });
+});
+router.post('/admin/anomalies/action', requireAuth, async (req, res) => {
+  const b = req.body || {}, action = String(b.action || '');
+  if (!['bind', 'delete'].includes(action)) return res.status(400).json({ error: '不支持的操作' });
+  if (action === 'bind' && !isSysAdmin(req, 2)) return res.status(403).json({ error: '需要 Lv.2 及以上管理员' });
+  const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(String))].slice(0, 200);
+  if (!ids.length) return res.status(400).json({ error: '请先勾选' });
+  const wecom = ['remove', 'disable', 'keep'].includes(b.wecom) ? b.wecom : 'keep';
+  if (action === 'delete') {
+    const phrase = `删除 ${ids.length} 个异常账号`;
+    if (String(b.confirm || '').trim() !== phrase) return res.status(400).json({ error: `请原样输入「${phrase}」确认`, confirm_text: phrase });
+  }
+  const byId = new Map(anomalyAccounts().map(a => [a.id, a]));   // 每次都重新判定：不再是异常账号的不动
+  const results = [];
+  for (const id of ids) {
+    const a = byId.get(id), row = { id, name: a ? a.name : '', uid: a ? a.uid : '' };
+    try {
+      if (!a) throw new Error('已不是异常账号（可能已绑定 / 已删除）');
+      if (action === 'bind') {
+        const l = a.links.find(x => x.bind_provider);
+        if (!l) throw new Error('这家企业没有可用的企业微信登录凭证，或这个 UserId 已绑在别的账号上');
+        oauth.bind.run(uuidv4(), a.id, l.bind_provider, l.ext_id, null);
+        audit('user.anomaly_bound', { subject: String(users.findById.get(a.id).uid_seq), actor: actorOf(req), detail: { provider: l.bind_provider, ext_id: l.ext_id } });
+        row.bound = l.bind_provider;
+      } else {
+        const u = users.findById.get(a.id);
+        const mode = deleteMode(req, u);
+        if (mode.error) throw new Error(mode.error);
+        // 先在企业微信里处理（失败就不删本系统账号，避免又留下残留）
+        const ext = [];
+        for (const l of a.links) {
+          if (wecom === 'keep') { ext.push({ l, v: { status: 'kept', via: 'admin' } }); continue; }
+          const src = dirSources.get.get(l.source_id); const cfg = dirsyncWecom.effectiveCfg(src);
+          try {
+            if (wecom === 'disable') await dirsyncWecom.setMemberEnabled(cfg, l.ext_id, false);
+            else await dirsyncWecom.deleteMember(cfg, l.ext_id);
+          } catch (e) { if (!(wecom === 'remove' && e.errcode === 60111)) throw new Error(`企业微信${wecom === 'disable' ? '禁用' : '删除'} ${l.ext_id} 失败：${e.message}${cfg.write_secret ? '' : '（同步源没填「通讯录同步 Secret（管理用）」）'}`); }
+          audit(wecom === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(u.uid_seq), actor: actorOf(req), detail: { source: l.source_id, ext_id: l.ext_id, anomaly: true } });
+          ext.push({ l, v: { status: wecom === 'disable' ? 'disabled' : 'gone', via: 'api' } });
+        }
+        const r = lifecycle.request(u, { kind: 'admin', by: req.user.uid, reason: b.reason || '异常账号处理', needsApproval: !mode.direct, immediate: mode.direct });
+        for (const { l, v } of ext) {
+          const it = r.checklist.find(i => i.check === 'ext' && i.ext_id === l.ext_id);
+          if (it && !it.done) { try { lifecycle.setVerification(r.id, it.key, v); } catch (_) {} }
+        }
+        row.state = users.findById.get(u.id).deletion_state;
+        row.needs_approval = !mode.direct;
+      }
+      row.ok = true;
+    } catch (e) { row.ok = false; row.error = e.message; }
+    results.push(row);
+  }
+  audit('user.anomaly_action', { actor: actorOf(req), detail: { action, wecom: action === 'delete' ? wecom : undefined, total: ids.length, done: results.filter(r => r.ok).length } });
+  res.json({ success: true, done: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, results });
+});
+
 // 管理端：删除预检（交接清单 + 会直接执行还是要审批）
 router.get('/admin/users/:id/deletion', requireAuth, (req, res) => {
   const u = users.findById.get(req.params.id);

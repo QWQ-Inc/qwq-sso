@@ -74,7 +74,7 @@ const reqStmts = {
   get:       db.prepare('SELECT * FROM account_deletions WHERE id=?'),
 };
 // 清单项是否完成：能核验的按数据库实际情况算，存的勾选只对 app 项有效
-const DONE_WITH = { gone: '企业微信里已没有该成员', disabled: '企业微信里已禁用', quit: '企业微信里已退出企业' };
+const DONE_WITH = { gone: '企业微信里已没有该成员', disabled: '企业微信里已禁用', quit: '企业微信里已退出企业', kept: '管理员确认只删本系统账号，企业微信成员保留' };
 function itemCheck(i) {
   if (!i.check) {   // v3.5.48 之前生成的清单项：从 key 推回去
     const [k] = String(i.key).split(':');

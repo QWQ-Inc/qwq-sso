@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.57**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.58**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.57，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.58，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -436,6 +436,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.58 异常账号处理页（用户反馈）
+
+三级版本。用户：「有的用户能从企业微信拉回来数据，却绑定不进来。这种就是异常账号，能走通讯录同步删号就删（管理员二次确认的情况下，有个异常账号处理的 page）。」截图里的账号：无登录方式、不属于任何组织——同步进来的账号在组织 / 同步源被删后（删组织连带清成员与映射、账号保留）就会变成这样。
+- `api.js` `anomalyAccounts()`：非公共、非管理员、未合并、`deletion_state IS NULL`，且无密码 / 邮箱 / 手机 / `user_oauth` / `webauthn_credentials`，有组织密码的排除（能登录到组织）。`kind`：有 `dir_source_links` → `unbound`；在组织 → `no_login`；都没有 → `orphan`。每条映射算 `bind_provider`（`corpScope(corp).providers` 里该 UserId 还没被占用的）。
+- `GET /admin/anomalies`（Lv.3 或 user.delete 授权）；`POST /admin/anomalies/action`：`bind`（Lv.2，`oauth.bind` 到 bind_provider，审计 `user.anomaly_bound`）/ `delete`（确认语「删除 N 个异常账号」，`wecom: remove|disable|keep`；每条重新判定仍是异常账号；`deleteMode` 权限；先调企业微信（`deleteMember` 60111 视为已删），失败则不删本系统账号；再 `lifecycle.request`，把 ext 交接项 `setVerification` 成 gone / disabled / `kept`（`DONE_WITH.kept` 新增）→ 立即执行或进入审批）。汇总审计 `user.anomaly_action`。
+- 前端：管理端菜单「异常账号」（`adm-anomalies`，在「注销与删除」下面）：按类分组、勾选、`补绑企业微信登录（N）`、`删除…`（`_pickOverlay` 选企业微信处理方式，默认一并删除 → `uiConfirm` 名单 → `uiPrompt` 确认语）、「详情」跳用户管理。
+- ⚠️ 测试：run33 13 项（三类识别、排除有组织密码 / 已绑定 / 有邮箱、可补绑、补绑成功与无凭证失败、补绑后消失、确认语、一并删除 + 孤立直接删 + 已绑拒绝、企业微信里已不存在、禁用收到 enable 0、保留则列在残留且在职、企业微信失败不删账号并提示管理用 Secret、普通用户 403、审计）；回归 run 35 / run19 35 / run24 27 / run30 17 / run32 15；playwright ui34 8 项（分类、补绑、删除默认一并删除 + 两步确认、列表清空、菜单，零 JS 报错、无原生弹窗）。
 
 ## v3.5.57 删除账号时企业微信登录账号也要核验 + 企业微信残留成员清理 + 人员列表高度（用户反馈）
 

@@ -1203,6 +1203,10 @@ async function loadMe() {
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11"/></svg>
         注销与删除
       </button>
+      <button class="nav-item" onclick="goto('adm-anomalies')" id="ni-adm-anomalies">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3l8 14H2L10 3z"/><path d="M10 8v4M10 14.5v.5"/></svg>
+        异常账号
+      </button>
       <button class="nav-item" onclick="goto('adm-audit')" id="ni-adm-audit">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h8l2 3v13H4V5z"/><path d="M7 9h6M7 12h6M7 15h4"/></svg>
         审计存证
@@ -2614,6 +2618,17 @@ async function loadMe() {
           <div class="card-body"><div id="backup-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
         </div>
       </div>
+      <div class="page" id="page-adm-anomalies">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>异常账号</h3>
+            <button class="btn" style="font-size:11px;padding:4px 10px;" onclick="loadAnomalies()">刷新</button>
+          </div>
+          <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">账号存在，但没有任何能登录的方式（没有三方登录绑定、密码、邮箱、手机、Passkey，也没有组织密码）。多半是通讯录同步进来后没绑上企业微信登录，或者组织 / 同步源被删掉后留下的。能补绑的可以直接补绑；要删的勾选后删除——删除走「注销与删除」的规则（保留期内可恢复），企业微信里对应的成员可以一并删除 / 禁用，或保留。</div>
+          <div id="an-bulk" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;padding:0 20px 8px;font-size:12px;"></div>
+          <div class="card-body"><div id="an-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+      </div>
       <div class="page" id="page-adm-deletions">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -3342,7 +3357,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-backups':'数据备份','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3356,6 +3371,7 @@ function goto(page) {
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
   if(page === 'adm-deletions') { loadDeletions(); loadMerges(); }
+  if(page === 'adm-anomalies') loadAnomalies();
   if(page === 'adm-backups') loadBackups();
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
@@ -5317,6 +5333,77 @@ async function admPurgeUser(uid) {
   if (ok) { showToast('已彻底清除'); loadAdmUsers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
 }
 // 管理端：「注销与删除」页
+// ── 异常账号（v3.5.58）──
+let _anItems = [];
+const AN_KIND = { unbound: ['同步进来但没绑上登录', '企业微信通讯录里有这个人，但账号没有绑定企业微信登录凭证，也没有其他登录方式'],
+  no_login: ['在组织里但无法登录', '是组织成员，但没有任何登录方式，也没有组织密码'],
+  orphan: ['孤立账号', '不在任何组织、没有通讯录映射、没有任何登录方式'] };
+async function loadAnomalies() {
+  const box = document.getElementById('an-list');
+  const { ok, data } = await api('GET', '/admin/anomalies');
+  if (!ok) { box.innerHTML = '<span style="color:var(--err);">' + esc(data?.error || '加载失败') + '</span>'; return; }
+  _anItems = data.items || [];
+  if (!_anItems.length) { box.innerHTML = '没有异常账号。'; _anBulkSync(); return; }
+  box.innerHTML = Object.keys(AN_KIND).map(k => {
+    const list = _anItems.filter(a => a.kind === k); if (!list.length) return '';
+    return `<div style="margin:8px 0 4px;font-weight:600;color:var(--txt);">${AN_KIND[k][0]}（${list.length}） <span style="font-weight:400;color:var(--txd);">${AN_KIND[k][1]}</span></div>` + list.map(a => `
+      <label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--bd);">
+        <input type="checkbox" class="an-sel" value="${esc(a.id)}" onchange="_anBulkSync()" style="margin-top:3px;">
+        <span style="flex:1;min-width:0;line-height:1.7;"><b style="color:var(--txt);">${esc(a.name || '—')}</b> <span style="color:var(--txd);">${esc(a.uid)} · ${esc(String(a.created_at || '').slice(0, 16))} 创建${a.status === 'disabled' ? ' · 已停用' : ''}</span>
+          ${a.orgs.length ? `<div>组织：${a.orgs.map(esc).join('、')}</div>` : ''}
+          ${a.links.map(l => `<div>${esc(l.source_label)} · UserId <code>${esc(l.ext_id)}</code>${l.ext_name ? ' · ' + esc(l.ext_name) : ''}${l.bind_provider ? ' · <span style="color:#1F7A3A;">可补绑</span>' : ' · <span style="color:var(--warn);">没有可用的登录凭证</span>'}${l.can_write ? '' : ' · <span style="color:var(--txd);">未填管理用 Secret</span>'}</div>`).join('')}</span>
+        <button class="btn" style="font-size:11px;padding:2px 8px;" onclick="event.preventDefault();goto('adm-users');setTimeout(()=>loadAdmUserDetail('${a.id}'),300)">详情</button>
+      </label>`).join('');
+  }).join('');
+  _anBulkSync();
+}
+function _anPicked() { return [...document.querySelectorAll('#an-list .an-sel:checked')].map(c => _anItems.find(a => a.id === c.value)).filter(Boolean); }
+function _anBulkSync() {
+  const bar = document.getElementById('an-bulk'); if (!bar) return;
+  const sel = _anPicked(), nb = sel.filter(a => a.can_bind).length;
+  bar.style.display = _anItems.length ? 'flex' : 'none';
+  bar.innerHTML = `<label style="display:flex;gap:4px;align-items:center;"><input type="checkbox" ${sel.length && sel.length === _anItems.length ? 'checked' : ''} onchange="document.querySelectorAll('#an-list .an-sel').forEach(c=>c.checked=this.checked);_anBulkSync()"> 全选</label>
+    <span>已选 ${sel.length}</span><span style="flex:1;"></span>
+    <button class="btn" style="font-size:11px;padding:3px 9px;" ${nb ? '' : 'disabled'} onclick="anomalyBind()">补绑企业微信登录（${nb}）</button>
+    <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--err);" ${sel.length ? '' : 'disabled'} onclick="anomalyDelete()">删除…</button>`;
+}
+async function anomalyBind() {
+  const sel = _anPicked().filter(a => a.can_bind); if (!sel.length) return;
+  if (!await uiConfirm(`把下面 ${sel.length} 个账号绑定到对应企业的企业微信登录凭证？绑定后他们就能用企业微信登录。\n\n` + sel.slice(0, 15).map(a => `· ${a.name} ${a.uid}`).join('\n'), { title: '补绑企业微信登录' })) return;
+  const { ok, data } = await api('POST', '/admin/anomalies/action', { action: 'bind', ids: sel.map(a => a.id) });
+  if (!ok) { showToast('操作失败：' + (data?.error || '')); return; }
+  showToast(`已补绑 ${data.done} 个` + (data.failed ? `，${data.failed} 个失败` : ''));
+  if (data.failed) await uiAlert(data.results.filter(r => !r.ok).map(r => `· ${r.name} ${r.uid}：${r.error}`).join('\n'), { title: '部分失败' });
+  loadAnomalies();
+}
+async function anomalyDelete() {
+  const sel = _anPicked(); if (!sel.length) return;
+  const withExt = sel.filter(a => a.links.length).length;
+  let wecom = 'keep';
+  if (withExt) {
+    const ov = await _pickOverlay(`企业微信里的成员怎么处理（${withExt} 个账号有）`, `
+      <label style="display:block;padding:4px 0;"><input type="radio" name="an-wx" value="remove" checked> 在企业微信里一并删除（推荐，删干净）</label>
+      <label style="display:block;padding:4px 0;"><input type="radio" name="an-wx" value="disable"> 在企业微信里禁用（可在企业微信后台重新启用）</label>
+      <label style="display:block;padding:4px 0;"><input type="radio" name="an-wx" value="keep"> 保留企业微信成员，只删本系统账号（之后会列在「企业微信残留成员」里）</label>
+      <div style="font-size:11px;color:var(--txd);margin-top:4px;">删除 / 禁用要用同步源里的「通讯录同步 Secret（管理用）」；企业微信那边失败的账号不会被删除，会列出原因。</div>`, '下一步');
+    if (!ov) return;
+    wecom = ov.querySelector('input[name=an-wx]:checked').value; ov.remove();
+  }
+  const how = { remove: '，企业微信成员一并删除', disable: '，企业微信成员禁用', keep: withExt ? '，企业微信成员保留' : '' }[wecom];
+  if (!await uiConfirm(`删除下面 ${sel.length} 个异常账号${how}？保留期内可在「注销与删除」恢复。\n\n` + sel.slice(0, 15).map(a => `· ${a.name} ${a.uid}`).join('\n') + (sel.length > 15 ? `\n…等 ${sel.length} 个` : ''), { title: '删除异常账号', danger: true })) return;
+  const phrase = `删除 ${sel.length} 个异常账号`;
+  const v = await uiPrompt(`请原样输入「${phrase}」确认`, '', { title: '再次确认' });
+  if (v == null) return;
+  if (v.trim() !== phrase) { showToast('确认内容不正确，已取消'); return; }
+  showToast('处理中…');
+  const { ok, data } = await api('POST', '/admin/anomalies/action', { action: 'delete', ids: sel.map(a => a.id), wecom, confirm: phrase });
+  if (!ok) { showToast('操作失败：' + (data?.error || '')); return; }
+  const pend = data.results.filter(r => r.ok && r.needs_approval).length;
+  showToast(`已删除 ${data.done - pend} 个` + (pend ? `，${pend} 个等待审批` : '') + (data.failed ? `，${data.failed} 个失败` : ''));
+  if (data.failed) await uiAlert(data.results.filter(r => !r.ok).map(r => `· ${r.name} ${r.uid}：${r.error}`).join('\n'), { title: '部分失败' });
+  loadAnomalies();
+}
+
 // ── 企业微信残留成员（v3.5.57）──
 let _loItems = [];
 const LO_ST = { active: ['在职', 'var(--err)'], disabled: ['已禁用', 'var(--warn)'], quit: ['已退出企业', 'var(--warn)'], gone: ['已不存在', '#1F7A3A'], unknown: ['无法确认', 'var(--txd)'], error: ['核验失败', 'var(--err)'] };
