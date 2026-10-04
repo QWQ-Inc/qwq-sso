@@ -4901,6 +4901,14 @@ function _envMeta(key) {
   for (const g of ENV_GROUPS) { const v = g.vars.find(x => x.key === key); if (v) return { ...v, group: g }; }
   return null;
 }
+// 应用内自动登录（v3.5.42）：企业微信 / 微信 / 飞书 / 钉钉里打开登录页即用该平台凭证登录。
+// 一个平台配了多个主体时，自建应用主页地址带 ?inst=<凭证 id> 指定用哪一个（否则让用户选）。
+const _INAPP_PLATFORMS = ['wecom', 'wechat', 'feishu', 'dingtalk'];
+async function copyInappLoginUrl(instId) {
+  const url = location.origin + '/login.html' + (instId ? '?inst=' + encodeURIComponent(instId) : '');
+  try { await navigator.clipboard.writeText(url); showToast('已复制：' + url + '（填到自建应用的主页 / 工作台地址）'); }
+  catch (_) { prompt('应用内登录地址（填到自建应用的主页 / 工作台地址）：', url); }
+}
 async function renderDefaultSubjectCreds() {
   const box = document.getElementById('default-subject-creds');
   if (!box) return;
@@ -4914,6 +4922,7 @@ async function renderDefaultSubjectCreds() {
       <span style="font-size:15px;flex:none;">${g ? g.icon : '🔑'}</span>
       <span style="flex:1;min-width:120px;color:var(--txt);font-size:13px;">${esc(p.label)} <span style="color:var(--txd);font-size:11px;">${esc(p.primary)}：${esc((p.fields.find(f => f.key === p.primary) || {}).value || '')}</span></span>
       ${_credBadge(p.enabled)}
+      ${_INAPP_PLATFORMS.includes(p.platform) ? `<button class="btn" style="${_rowBtn}" title="填到${esc(p.label)}自建应用的主页地址：在${esc(p.label)}里打开即自动登录" onclick="copyInappLoginUrl(null)">应用内登录地址</button>` : ''}
       <button class="btn" style="${_rowBtn}" onclick="toggleDefaultCred('${p.platform}', ${!p.enabled})">${p.enabled ? '停用' : '启用'}</button>
       <button class="btn" style="${_rowBtn}" onclick="openDefaultCredModal('${p.platform}')">编辑</button>
       <button class="btn" style="${_rowDanger}" onclick="delDefaultCred('${p.platform}')">删除</button>
@@ -5232,6 +5241,7 @@ async function loadOauthSubjects() {
         <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">${esc(pname)}</span>
         <span style="flex:1;color:var(--txt);">${esc(c.label || pname)}</span>
         ${badge(c.enabled)}
+        ${_INAPP_PLATFORMS.includes(c.platform) ? `<button class="btn" style="font-size:11px;padding:2px 8px;" title="填到${esc(pname)}自建应用的主页地址：在${esc(pname)}里打开即用这个凭证自动登录" onclick='copyInappLoginUrl(${JSON.stringify(c.id)})'>应用内登录地址</button>` : ''}
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='toggleOauthProvider(${JSON.stringify(c.id)},${!c.enabled})'>${c.enabled ? '停用' : '启用'}</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)},${JSON.stringify(c).replace(/'/g,"&#39;")})'>编辑</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>删除</button>
@@ -8633,6 +8643,7 @@ const ENV_GROUPS = [
     desc: '控制「使用 QWQ SSO 登录」时，用户已授权过的应用免打扰直通的中转页倒计时。',
     vars: [
       { key: 'OIDC_LAUNCH_COUNTDOWN', label: '跳转倒计时（秒）', desc: '已授权应用直通时中转页「将在 N 秒后跳转」的秒数。默认 3，夹在 0~30；设为 0 则不倒计时、直接跳转', required: false, secret: false, placeholder: '3', value: '' },
+      { key: 'INAPP_AUTO_LOGIN', label: '应用内自动登录', desc: '在企业微信 / 微信 / 飞书 / 钉钉里打开登录页时，直接用该平台已配置的登录凭证登录（如企业微信自建应用里打开 → 自动企业微信登录）。留空或 all = 四个平台都开；off = 关闭；也可填逗号列表，如 wecom,feishu', required: false, secret: false, placeholder: 'all', value: '' },
     ]
   },
   {

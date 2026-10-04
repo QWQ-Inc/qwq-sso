@@ -6,15 +6,15 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.41**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.42**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.41，详见 `README.md` / `CHANGELOG.md`）：
-- **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
+功能范围（截至 v3.5.42，详见 `README.md` / `CHANGELOG.md`）：
+- **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
 - **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、域名验证文件（根目录验证文件，到期自动删除）。
@@ -433,6 +433,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.42 手机端第三方登录改为点击跳转 + 应用内自动登录（用户反馈）
+
+三级版本。用户：「手机端的第三方快捷登录默认是没有二维码显示的，那就做成点击跳转。如果在某允许的应用内打开 sso，检测到这个环境就直接按这个环境（如果配置了）的凭证登录，比如企业微信自建应用打开自动按企业微信凭证登录。」
+- `login.html`：`inAppPlatform()` 按 UA 判（**先判 `wxwork` 再判 `MicroMessenger`**，企业微信 UA 两个都带）；`useRedirectLogin(key)` = 窄屏（≤640px，`.qr-scene` 本就隐藏）或就在该应用里。`selectMethod` 扫码平台遇此 → 在该应用里直接 `location = /auth/<平台>`，否则 `showOpenInAppHint`（微信/企业微信网页授权只能在自家应用里完成：提示 + 复制链接）。窄屏下平台按钮不标 active、状态写「登录 ›」。
+- `maybeInAppAutoLogin()`（DOMContentLoaded 末尾、已登录跳控制台的判断之后、`await` 平台列表）：平台在 `inapp_auto` 里且有凭证 → 600ms 遮罩「正在用 X 登录…」（可取消）后跳；多个凭证弹 `showSubjectPicker`，`?inst=` 指定则直接用。不跳：`?error=` / `?tfa=` / `?noauto=1`、`sessionStorage.sso_inapp_tried_<平台>` 已有（同一会话只自动一次 → 退出后回登录页、失败回来都不会循环）。应用内打开时不再弹「打开 QWQ SSO App」条。
+- 后端：`/api/public/login-methods` 多回 `inapp_auto`（`inappAutoPlatforms()` 读 `INAPP_AUTO_LOGIN`：空/all/on=四个平台，off/0/false/no/none=关，或逗号列表）；`ENV_GROUPS.oidclogin` + init.js ENV_KEYS 同步。`/auth/wecom` scope `snsapi_privateinfo` → **`snsapi_base`**（静默；回调本就只用 userid + user/get，没用 user_ticket）。
+- 管理端：本站默认凭证行与组织凭证行，企业微信/微信/飞书/钉钉多一个「应用内登录地址」按钮（`copyInappLoginUrl`：`/login.html[?inst=<凭证id>]`），填到自建应用主页。
+- 🐛 顺手修：`selectPlatform(key, isAuto)` 原来先判「只有一个凭证就 selectMethod」再判 isAuto → 首个平台是飞书/钉钉等跳转类且只一个凭证时，**一打开登录页就被带去授权**。现在 isAuto 先判，载入时只给电脑上的扫码平台出二维码。
+- ⚠️ 微信内自动登录走 `/auth/wechat`（公众号网页授权 `oauth2/authorize`），WECHAT_APP_ID 需是公众号 appid；电脑扫码那套是开放平台网站应用 appid——两者若不同，微信内登录会失败（回 `?error=` 后不会再自动跳）。
+- ⚠️ 测试：playwright 打真服务 21 项（ui14 one 13 / multi 5 / off 3）：手机浏览器隐藏二维码不自动跳、点企业微信出提示；企业微信内自动跳且 `scope=snsapi_base`、appid/agentid 正确；同页第二次打开不再跳；带 error / noauto 不跳；飞书 / 微信内没配凭证不跳；电脑版企业微信也自动；电脑浏览器照旧二维码；多凭证弹选择→选后用对应 corp；`?inst=` 直接用；手机浏览器多凭证选后出提示；`INAPP_AUTO_LOGIN=off` 不自动但点击仍跳；零 JS 报错。回归 run 35 / run9 26 / run16 21。真实企业微信客户端未实测。
 
 ## v3.5.41 同一人多个账号合并（企业微信一人多号）（用户反馈）
 

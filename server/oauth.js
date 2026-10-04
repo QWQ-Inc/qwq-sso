@@ -331,7 +331,8 @@ router.get('/wecom', (req, res) => {
   const p = new URLSearchParams({
     appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID,
     redirect_uri: c.WECOM_REDIRECT_URI,
-    response_type: 'code', scope: 'snsapi_privateinfo', state,
+    // snsapi_base：企业微信内静默授权，不弹确认页（回调只用 userid，不需要敏感信息的 user_ticket）
+    response_type: 'code', scope: 'snsapi_base', state,
   });
   res.redirect(`https://open.weixin.qq.com/connect/oauth2/authorize?${p}#wechat_redirect`);
 });

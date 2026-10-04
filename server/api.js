@@ -1120,6 +1120,15 @@ function defaultPublic(platform) {
   }
   return out;
 }
+// 应用内自动登录（v3.5.42）：在企业微信 / 微信 / 飞书 / 钉钉的内置浏览器里打开登录页时，
+// 直接用该平台已配置的凭证登录。INAPP_AUTO_LOGIN：留空 / all = 四个平台都开；off = 关；也可填逗号列表（如 wecom,feishu）
+const INAPP_PLATFORMS = ['wecom', 'wechat', 'feishu', 'dingtalk'];
+function inappAutoPlatforms() {
+  const v = String(process.env.INAPP_AUTO_LOGIN || '').trim().toLowerCase();
+  if (!v || v === 'all' || v === 'on') return INAPP_PLATFORMS;
+  if (['off', '0', 'false', 'no', 'none'].includes(v)) return [];
+  return v.split(/[,，\s]+/).filter(p => INAPP_PLATFORMS.includes(p));
+}
 router.get('/public/login-methods', (req, res) => {
   const methods = [];
   for (const platform of Object.keys(OAUTH_META)) {
@@ -1132,7 +1141,7 @@ router.get('/public/login-methods', (req, res) => {
   if (methods.length === 0 && !req.query.raw) {
     methods.push(defaultPublic('wechat'), defaultPublic('wecom'));
   }
-  res.json({ success: true, methods });
+  res.json({ success: true, methods, inapp_auto: inappAutoPlatforms() });
 });
 
 // org-first 登录（v3.5.17）：登录页「直接登录到某组织」可选项。

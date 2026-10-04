@@ -1247,6 +1247,7 @@
 
   // 全部「登录方式」：每个渠道的默认主体 + 各数据库额外主体
   let LOGIN_METHODS = [];
+  let INAPP_AUTO = [];            // 允许「应用内自动登录」的平台（后端 INAPP_AUTO_LOGIN）
   let METHODS_BY_PLATFORM = {};   // platform -> [{m, idx}]（登录页按平台分组，点平台再选主体）
   let currentMethodIdx = 0;
 
@@ -1260,9 +1261,10 @@
     if (!list) return;
 
     let methods = [];
+    let _inappCfg = null;
     try {
       const res = await fetch('/api/public/login-methods');
-      if (res.ok) methods = (await res.json()).methods || [];
+      if (res.ok) { const d = await res.json(); methods = d.methods || []; _inappCfg = d.inapp_auto; }
     } catch(_) {}
 
     // 接口不通（file://）时兜底：微信 + 企业微信 默认主体
@@ -1273,6 +1275,7 @@
     const order = ['wechat','wecom','feishu','dingtalk','github','microsoft','qq','google','apple','douyin','kuaishou','xiaohongshu','bilibili'];
     methods.sort((a,b) => (order.indexOf(a.platform) - order.indexOf(b.platform)));
     LOGIN_METHODS = methods;
+    INAPP_AUTO = Array.isArray(_inappCfg) ? _inappCfg : [];
 
     // 按平台分组：一平台一按钮，点击时若该平台有多个主体则先弹「选择登录主体」
     METHODS_BY_PLATFORM = {};
@@ -1282,15 +1285,16 @@
       METHODS_BY_PLATFORM[m.platform].push({ m, idx });
     });
 
+    const narrow = window.matchMedia('(max-width: 640px)').matches;   // 手机：按钮就是「点击跳转」，没有「当前」二维码
     list.innerHTML = platforms.map((key, i) => {
       const p = PLATFORMS[key] || { icon:'', bg:'#888' };
       const brand = (window.BRAND_ICONS && BRAND_ICONS[key]) || '';
       const iconBg = brand ? `background:#fff;border:1px solid #E8E8E8;` : `background:${p.bg};`;
       const cnt = METHODS_BY_PLATFORM[key].length;
-      return `<button class="platform-btn ${i===0?'active':''}" id="pb-${key}" onclick="selectPlatform('${key}')">
+      return `<button class="platform-btn ${i===0 && !narrow?'active':''}" id="pb-${key}" onclick="selectPlatform('${key}')">
         <div class="p-icon" style="${iconBg}">${brand || p.icon}</div>
         <span class="p-name">${platformZh(key)}</span>
-        <span class="p-status">${cnt > 1 ? cnt + ' 个主体' : '当前'}</span>
+        <span class="p-status">${cnt > 1 ? cnt + ' 个主体' : (narrow ? '登录 ›' : '当前')}</span>
       </button>`;
     }).join('');
 
@@ -1302,8 +1306,9 @@
     document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('pb-' + key)?.classList.add('active');
     const arr = METHODS_BY_PLATFORM[key] || [];
+    // 页面载入时自动选中首个平台：只在电脑上给扫码平台出二维码；跳转类平台不能自动跳走（否则一打开登录页就被带去授权）
+    if (isAuto) { if (QR_PLATFORMS.includes(key) && !useRedirectLogin(key)) selectMethod(arr[0].idx); return; }
     if (arr.length === 1) { selectMethod(arr[0].idx); return; }
-    if (isAuto) { if (QR_PLATFORMS.includes(key)) selectMethod(arr[0].idx); return; }
     showSubjectPicker(key, arr);
   }
 
@@ -1344,6 +1349,70 @@
     return '/auth/' + m.platform + (q ? '?' + q : '');
   }
 
+  // ── 应用内环境识别（v3.5.42）──
+  // 企业微信 UA 同时带 MicroMessenger 和 wxwork，要先判企业微信
+  function inAppPlatform() {
+    const ua = navigator.userAgent || '';
+    if (/wxwork/i.test(ua)) return 'wecom';
+    if (/MicroMessenger/i.test(ua)) return 'wechat';
+    if (/Lark|Feishu/i.test(ua)) return 'feishu';
+    if (/DingTalk/i.test(ua)) return 'dingtalk';
+    return null;
+  }
+  // 窄屏（手机）不显示二维码 → 扫码类平台改为点击跳转；在该应用里时也直接跳（它自己就能授权）
+  function useRedirectLogin(key) {
+    return window.matchMedia('(max-width: 640px)').matches || inAppPlatform() === key;
+  }
+  // 手机浏览器里点微信 / 企业微信：它们的网页授权只能在自家应用里完成，提示换到应用里打开
+  function showOpenInAppHint(key) {
+    document.getElementById('inapp-hint')?.remove();
+    const name = platformZh(key);
+    const ov = document.createElement('div');
+    ov.id = 'inapp-hint';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
+    ov.innerHTML = `<div style="background:#fff;border-radius:12px;padding:20px;max-width:340px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);color:#222;">
+      <div style="font-size:15px;font-weight:700;margin-bottom:8px;">请在${name}里打开</div>
+      <div style="font-size:13px;color:#555;line-height:1.7;margin-bottom:14px;">${name}登录需要在${name}里完成。复制本页链接，到${name}里打开（可以发给自己再点开），会自动用${name}登录；也可以在电脑上用${name}扫码，或用下方账号密码 / 验证码登录。</div>
+      <button id="inapp-copy" style="display:block;width:100%;padding:11px;border:none;border-radius:8px;background:#1677FF;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">复制本页链接</button>
+      <button onclick="document.getElementById('inapp-hint').remove()" style="display:block;width:100%;padding:10px;margin-top:6px;border:none;background:none;color:#888;font-size:13px;cursor:pointer;">关闭</button>
+    </div>`;
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
+    document.getElementById('inapp-copy').onclick = async () => {
+      const url = location.origin + location.pathname + location.search;
+      let ok = false;
+      try { await navigator.clipboard.writeText(url); ok = true; } catch (_) {}
+      if (!ok) { try { const t = document.createElement('textarea'); t.value = url; document.body.appendChild(t); t.select(); ok = document.execCommand('copy'); t.remove(); } catch (_) {} }
+      document.getElementById('inapp-copy').textContent = ok ? '已复制 ✓' : url;
+    };
+  }
+  // 在企业微信 / 微信 / 飞书 / 钉钉里打开且配了该平台凭证 → 直接用它登录（每个会话只自动试一次，失败 / 退出后不再自动跳）
+  function maybeInAppAutoLogin() {
+    const key = inAppPlatform();
+    if (!key || !INAPP_AUTO.includes(key)) return false;
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('error') || qs.get('tfa') || qs.get('noauto')) return false;
+    const arr = METHODS_BY_PLATFORM[key] || [];
+    if (!arr.length) return false;
+    const flag = 'sso_inapp_tried_' + key;
+    try { if (sessionStorage.getItem(flag)) return false; sessionStorage.setItem(flag, '1'); } catch (_) {}
+    // ?inst=<凭证 id> 指定用哪个主体（自建应用主页地址可带上）；只有一个就用它；多个让用户选
+    const inst = qs.get('inst');
+    const pick = (inst && arr.find(x => x.m.instance_id === inst)) || (arr.length === 1 ? arr[0] : null);
+    if (!pick) { showSubjectPicker(key, arr); return true; }
+    const ov = document.createElement('div');
+    ov.id = 'inapp-auto';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px;color:#222;';
+    ov.innerHTML = `<div style="width:34px;height:34px;border:3px solid #ddd;border-top-color:#1677FF;border-radius:50%;animation:spin .8s linear infinite;"></div>
+      <div style="font-size:15px;font-weight:600;">正在用${methodName(pick.m).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}登录…</div>
+      <button id="inapp-cancel" style="border:none;background:none;color:#888;font-size:13px;cursor:pointer;">改用其他方式登录</button>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+    document.body.appendChild(ov);
+    const timer = setTimeout(() => { window.location.href = methodAuthUrl(pick.m); }, 600);
+    document.getElementById('inapp-cancel').onclick = () => { clearTimeout(timer); ov.remove(); };
+    return true;
+  }
+
   // ── 登录方式切换（按主体）──
   function selectMethod(idx) {
     const m = LOGIN_METHODS[idx];
@@ -1353,6 +1422,12 @@
     // 非扫码平台：直接跳授权（带 inst，服务端据此选对应主体的凭证）
     if (!QR_PLATFORMS.includes(key)) {
       window.location.href = methodAuthUrl(m);
+      return;
+    }
+    // 微信 / 企业微信，在手机上（不显示二维码）或就在该应用里：点击跳转，不出二维码（v3.5.42）
+    if (useRedirectLogin(key)) {
+      if (inAppPlatform() === key) { window.location.href = methodAuthUrl(m); return; }
+      showOpenInAppHint(key);
       return;
     }
 
@@ -1975,7 +2050,7 @@
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
-    renderPlatformList();
+    const methodsReady = renderPlatformList();
 
     // 第三方登录若用户开了 2FA，会带 ?tfa= 跳回这里，直接弹二段验证浮层
     const tfaToken = new URLSearchParams(location.search).get('tfa');
@@ -2013,7 +2088,8 @@
     } catch (_) {}
 
     // 手机端：检测客户端，尝试用 QWQ SSO App 登录（qwqsso:// 深链），未装则留在网页登录
-    maybeOfferAppLogin();
+    // 在企业微信 / 微信 / 飞书 / 钉钉里打开时不提示 App（那里走应用内自动登录）
+    if (!inAppPlatform()) maybeOfferAppLogin();
 
     const isFileProtocol = location.protocol === 'file:';
     const isLocalhost    = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -2045,6 +2121,10 @@
         // 网络错误：不强制跳转，留在登录页让用户手动重试
       }
     }
+
+    // 应用内自动登录（v3.5.42）：没登录、且在企业微信 / 微信 / 飞书 / 钉钉里打开 → 用该平台凭证直接登录
+    try { await methodsReady; } catch (_) {}
+    maybeInAppAutoLogin();
   });
 
   // ── 展开/收起角色选择 ──
