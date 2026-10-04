@@ -615,6 +615,7 @@ router.post('/public/forgot-password/reset', async (req, res) => {
 // ── 用户信息 ──
 // ── KYC 实名认证接口 ──
 const { createKycSession, verifyKycDirect, verifyDiditWebhook, verifyStripeWebhook, queryAlipayCertify, identityHashes, kycHmac, normName, normId, kycPseudonymEnabled, envGetter: kycEnvGetter } = require('./kyc');
+const userMerge = require('./user-merge');
 const { audit, actorOf, verifyChain: auditVerifyChain, list: auditList, bySubject: auditBySubject } = require('./audit');
 
 // ── 账号撤销主动推送（v3.5.11）：SSO 主动把「停用/删除/撤销」事件签名推给应用的撤销回调 ──
@@ -1486,7 +1487,15 @@ router.get('/admin/orgs/:sid/members', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
-  res.json({ success: true, org: { id: s.id, name: s.name, uid_prefix: s.uid_prefix || '', uid_len: s.uid_len || 4, members_open: !!s.members_open }, members: orgMembers.listBySubject.all(s.id) });
+  // 每个成员在本组织各同步源里对应的外部账号（企业微信 UserId 等）——一人多号时能看出来，好合并（v3.5.41）
+  const ext = new Map();
+  for (const l of db.prepare(`SELECT l.user_id, l.ext_id, d.label FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
+      WHERE d.subject_id=? ORDER BY l.ext_id`).all(s.id)) {
+    if (!ext.has(l.user_id)) ext.set(l.user_id, []);
+    ext.get(l.user_id).push({ id: l.ext_id, source: l.label || '' });
+  }
+  const members = orgMembers.listBySubject.all(s.id).map(m => ({ ...m, ext_ids: ext.get(m.user_id) || [] }));
+  res.json({ success: true, org: { id: s.id, name: s.name, uid_prefix: s.uid_prefix || '', uid_len: s.uid_len || 4, members_open: !!s.members_open }, members });
 });
 
 // 可复用成员池（v3.5.18）：列出其他「成员开放」组织里的成员，供本组织管理员复用（避免重复建号）。
@@ -1554,6 +1563,45 @@ router.delete('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   if (!target) return res.status(404).json({ error: '成员不存在' });
   orgMembers.remove.run(req.params.sid, target.id);
   res.json({ success: true });
+});
+
+// 同一人多个账号合并（v3.5.41）：企业微信等通讯录里一人多号（多个 UserId）时，同步会各建一个账号，
+// 组织管理员在成员列表里把它们合并成一个——登录绑定、同步映射、组织成员关系等搬到保留账号，其余停用。
+// 组织管理员（非系统管理员）只能合并「只在本组织、没有平台密码 / 实名 / Passkey / 两步验证」的账号，
+// 免得把别处有身份的人并走；系统管理员不受此限（管理员账号、实名不同人一律不能被合并）。
+router.post('/admin/orgs/:sid/members/merge', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const targetId = String(req.body?.target || '');
+  const sourceIds = [...new Set((Array.isArray(req.body?.sources) ? req.body.sources : []).map(String))].filter(id => id && id !== targetId);
+  for (const id of [targetId, ...sourceIds]) {
+    if (!orgMembers.get.get(s.id, id)) return res.status(400).json({ error: '只能合并本组织的成员' });
+  }
+  const target = users.findById.get(targetId);
+  const sources = sourceIds.map(id => users.findById.get(id));
+  const bad = userMerge.checkMerge(target, sources);
+  if (bad) return res.status(400).json({ error: bad });
+  if (!isSysAdmin(req, 2)) {
+    for (const u of sources) {
+      const why = db.prepare('SELECT COUNT(*) AS n FROM org_members WHERE user_id=?').get(u.id).n > 1 ? '还在其他组织里'
+        : u.password_hash ? '设置了平台密码'
+        : u.kyc_verified ? '已实名'
+        : u.twofa_enabled ? '开了两步验证'
+        : db.prepare('SELECT 1 FROM webauthn_credentials WHERE user_id=?').get(u.id) ? '绑了 Passkey' : '';
+      if (why) return res.status(403).json({ error: `「${u.name}」${why}，需要系统管理员来合并` });
+    }
+  }
+  try {
+    const r = userMerge.mergeUsers(target.id, sources.map(u => u.id), {
+      onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+    });
+    audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req),
+      detail: { org: s.id, via: 'org_admin', sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+    res.json({ success: true, ...r });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // 组织自有密码（v3.5.20）：组织管理员给成员设/改组织内登录密码（独立于平台密码）。

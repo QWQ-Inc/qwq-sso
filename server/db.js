@@ -280,6 +280,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS group_admins (
 // KYC 假名化标识 + 姓名/证件号哈希（S-08 去重、S-02 姓名比对）——只存 HMAC，绝不存原文
 try { db.exec('ALTER TABLE users ADD COLUMN kyc_pseudonym TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN kyc_name_hash TEXT'); } catch(_) {}
+// v3.5.41：同一人多个账号合并后，被合并的账号停用并记下并入了谁（不删行：登录日志等历史还挂在它上面）
+try { db.exec('ALTER TABLE users ADD COLUMN merged_into TEXT'); } catch(_) {}
 try { db.exec("ALTER TABLE shop_goods ADD COLUMN redeem_mode TEXT NOT NULL DEFAULT 'code'"); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN allow_instant INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN redirect_url TEXT'); } catch(_) {}

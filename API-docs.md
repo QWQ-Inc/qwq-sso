@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.23　　最后更新：2026-10
+> 版本：v3.5.41　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1886,7 +1886,8 @@ GET /api/public/login-methods       # 各渠道默认凭证 + 各启用凭证；
 
 ```
 GET    /api/admin/orgs                       # 组织列表（含成员数、组织内 UID 规则）
-GET    /api/admin/orgs/:sid/members          # 某组织成员（含 org_uid）
+GET    /api/admin/orgs/:sid/members          # 某组织成员（含 org_uid；ext_ids = 在本组织各同步源里对应的外部账号，如企业微信 UserId）
+POST   /api/admin/orgs/:sid/members/merge    # 一人多号合并（v3.5.41）{ target: 保留账号 user_id, sources: [被合并 user_id] }
 POST   /api/admin/orgs/:sid/members          # 加成员 { account, org_uid?, auto_uid? }
 PATCH  /api/admin/orgs/:sid/members/:uid     # 改成员的组织内 UID { org_uid }
 DELETE /api/admin/orgs/:sid/members/:uid     # 移出成员
@@ -1904,6 +1905,13 @@ GET    /api/user/orgs                        # 用户端：我所属的组织 + 
 - 组织内 UID **组内唯一、跨组织可重复**；公共账号不能作为组织成员。
 - 应用被限定到组织后，非成员访问 `/apps/market` 看不到它，`/apps/:id/auth` 与 OIDC `/oauth/consent` 返回 `403`。
 - 用户端应用市场支持 `GET /api/apps/market?org=<sid>` 按当前组织过滤（全局应用 + 该组织开放的应用）。
+
+**一人多号合并**（v3.5.41，`POST /members/merge`，需能管理该组织）：企业微信等通讯录里同一人有多个账号（多个 UserId）、又拿不到手机/邮箱时，同步会各建一个账号，用它合并成一个。
+- 被合并账号的登录绑定（`user_oauth`）、同步映射、组织成员关系（保留账号已在该组织则去重，组织内 UID / 组织密码保留账号没有时接过来）、组织/分组管理员、Passkey、备忘录、门禁卡、积分（累加并记明细）、保留账号缺的邮箱/手机/实名，全部转到保留账号；被合并账号停用并记 `merged_into`，其应用授权与令牌作废，并向配了 `deprovision_url` 的应用推送 `user.merged`（带 `merged_into`）。
+- 之后用任何一个外部账号登录都进保留账号，同步也不会再分开建号。
+- 所有账号都必须是本组织成员；公共账号、管理员账号不能被合并，实名不同的人不能合并，已合并过的不能再合并。
+- 组织管理员（非系统管理员）只能合并「只在本组织、没有平台密码 / 实名 / Passkey / 两步验证」的账号，否则 `403`。写审计 `user.merged`。
+- 用户本人自助：登录后在「登录方式绑定」里绑定自己的另一个企业微信账号时，如果它挂在一个同步自动建的空壳账号上（无密码 / 联系方式 / 实名 / Passkey，只在同步来的组织里），会自动把空壳并进本人账号。
 
 **外部通讯录同步**（把外部目录/HR 的人员批量灌进组织）：
 

@@ -15,6 +15,8 @@ const crypto  = require('crypto');
 const { AsyncLocalStorage } = require('async_hooks');
 const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, state: stateStore, logs } = require('./db');
+const userMerge = require('./user-merge');
+const { audit } = require('./audit');
 const { signToken, signShortToken, requireAuth } = require('./auth');
 const { subjectGateError } = require('./org-policy');
 
@@ -152,7 +154,18 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   if (bindOk) {
     const target = users.findById.get(bindUserId);
     const existing = oauth.findByProvider.get(provider, openId);
-    if (existing && existing.id !== bindUserId) {
+    if (existing && existing.id !== bindUserId && target && !target.is_public && userMerge.isShellAccount(existing)) {
+      // 一人多号（v3.5.41）：这个三方账号挂在一个同步自动建的「空壳账号」上（没有密码/联系方式/实名，只靠这个三方身份登录）。
+      // 本人刚用它走完一遍授权，证明了是自己的 → 把空壳并进当前账号，绑定随之过来。
+      try {
+        const r = userMerge.mergeUsers(target.id, [existing.id]);
+        audit('user.merged', { subject: String(target.uid_seq), actor: 'user:' + target.uid_seq,
+          detail: { via: 'self_bind', provider, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+        creq._bind = { ok: true, merged: true };
+      } catch (e) {
+        creq._bind = { error: e.message || '该三方账号已被其他账号绑定' };
+      }
+    } else if (existing && existing.id !== bindUserId) {
       creq._bind = { error: '该三方账号已被其他账号绑定' };
     } else if (!target || target.is_public) {
       creq._bind = { error: '登录态已失效，请重新登录后再绑定' };
@@ -213,7 +226,7 @@ function loginSuccess(res, user) {
     if (creq.session) { delete creq.session.bindUserId; delete creq.session.bindExpire; }
     const b = creq._bind;
     return res.redirect(b.ok
-      ? '/dashboard.html?bind=success'
+      ? '/dashboard.html?bind=success' + (b.merged ? '&merged=1' : '')
       : `/dashboard.html?bind=error&msg=${encodeURIComponent(b.error || '绑定失败')}`);
   }
   if (!user || user.status === 'disabled') {

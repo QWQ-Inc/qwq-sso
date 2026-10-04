@@ -6,16 +6,16 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.40**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.41**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.40，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.41，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
-- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
+- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
 - **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
@@ -55,6 +55,7 @@ server/
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
 ├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉所选部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId + 默认组织密码（v3.5.37，单独改过的不覆盖）
+├── user-merge.js # 同一人多个账号合并（v3.5.41）：mergeUsers/checkMerge/isShellAccount，组织成员合并 + 自助绑定时并入空壳账号
 ├── org-policy.js # 组织登录策略判定（IP 白名单/登录时段，v3.5.24）：三方登录与「登录到组织」两条通道共用
 ├── updater.js    # 系统版本更新（v3.5.6）：checkUpdate 查 GitHub tag + applyUpdate 自托管一键拉取（默认关）
 ├── pkpass.js     # Apple Wallet 访客码 .pkpass 生成+签名（v3.5.10，passkit-generator 懒加载，需 Apple 证书）
@@ -199,10 +200,10 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.40）
+## 数据库表清单（截至 v3.5.41）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
-- `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
+- `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）
 - `apps` 关键增补列：`client_id`/`client_secret`/`callback_url`、`launch_url`、`required_scopes`、`category`、`deprovision_url`、`backchannel_logout_uri`、`icon_url`
 - 应用图片 / 文件夹（v3.5.28）：`app_icons`（图片 BLOB 独立存，**不进 apps**）、`app_folders`/`app_folder_items`（个人文件夹，一应用一夹）
 
@@ -432,6 +433,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.41 同一人多个账号合并（企业微信一人多号）（用户反馈）
+
+三级版本。用户：「某些人在企业微信或者类似的应用里有多个账号，实际上是同一人。我有三个企业微信账号在同组织里，但是出来三个我。」
+- 根因：企业微信 2022 年起不给自建应用下发手机/邮箱，同步只能按 UserId 认人 → 一人三个 UserId = 三个账号。同步本身没法自动判断（同名≠同人），所以做**人工合并 + 本人自助合并**，合并后同步与登录都稳定落到一个账号。
+- 新 `server/user-merge.js`：`checkMerge` / `mergeUsers(targetId, sourceIds, {onAppRevoked})`（事务）/ `isShellAccount`。搬：`user_oauth`（`UNIQUE(provider,open_id)`，一个用户可有同一 provider 的多条绑定）、`dir_source_links`、`org_members`（保留账号已在则删，org_uid / 组织密码缺则接）、`oauth_subject_admins` / `group_admins` / `public_account_members`、Passkey、备忘录、门禁卡、人脸（保留账号没有时）、积分（累加 + 两边 points_log）、保留账号缺的邮箱/手机/实名；删 `dir_sync_applied`（下次同步按保留账号重记）、应用授权 / 令牌 / 授权码。被合并账号 `status='disabled'` + `users.merged_into`（新列），**不删行**（登录日志等历史挂在上面）。不能并：公共账号、管理员账号、已合并过的、实名假名不同的。
+- 接口 `POST /admin/orgs/:sid/members/merge {target, sources}`（`canManageOrg`；全员须是本组织成员）。非系统管理员只能并「只在本组织、无平台密码/实名/两步验证/Passkey」的账号（403 说明原因）。审计 `user.merged`；被合并账号授权过的应用推 `user.merged`（带 merged_into）。`GET /admin/orgs/:sid/members` 每人多 `ext_ids`（本组织各同步源里的外部 UserId + 源名）。
+- 自助（`oauth.js` 绑定模式）：要绑的三方身份已挂在别人身上、且那人是 `isShellAccount`（非公共/非管理员、无密码/邮箱/手机/实名/2FA/Passkey、所有组织成员关系都不是 manual）→ 本人刚用它走完授权，直接 `mergeUsers` 把空壳并进来，跳 `?bind=success&merged=1`。
+- ⚠️ `dirsync-wecom.applyBind` 修：这个 UserId 已绑在本人身上就直接记录返回——否则一人多号时 `userOauthOf` 取到另一个 UserId，会被当成「被改绑过」计入 kept，force 时还会解绑另外几个号。
+- 前端（组织成员弹窗）：成员行前加勾选框 + 外部账号行；同名成员黄条提示「选中并合并」；选 ≥2 人出「合并为同一人…」→ 面板选保留账号（默认：有组织密码 > 手动加入 > 编号最小）→ 确认。dev mock 齐。
+- ⚠️ 已知：JWT 无状态，被合并账号已签发的令牌到期前仍可用（与「停用用户」现有行为一致）。
+- ⚠️ 测试：run16 共 21 项全过（复现一人三号、ext_ids、组织管理员不能并多组织/有密码的人、非成员 400、别的组织 403、合并后停用+merged_into、三个 UserId 绑定与映射都在保留账号、组织只剩一人、积分转入、审计、再同步不建号/无冲突/无保留、全部覆盖同步不拆开、一个号离职人不移出、已合并不能再并、管理员不能被并、系统管理员可并多组织成员且接过联系方式与组织管理员身份、被合并账号不能登录）；isShellAccount 单测；回归 run10 36 / run12 25（需 `DIRSYNC_EVENT_DELAY_MS=400`）/ run13 10 / run9 26 / run 35；playwright：同名提示 → 选中并合并 → 面板 → 确认 → 列表只剩一人且挂三个 UserId，零 JS 报错。
 
 ## v3.5.40 域名验证文件（企业微信可信域名等的根目录验证文件，到期自动删除）（用户反馈）
 

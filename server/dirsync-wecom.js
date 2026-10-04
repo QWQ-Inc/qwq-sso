@@ -212,6 +212,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
   function applyBind(user, extId, p) {
     const owner = oauth.findByProvider.get(p, extId);
     if (owner && owner.id !== user.id) { out.conflicts++; return; }        // 这个 UserId 已绑在别人身上，从不抢
+    if (owner) { appliedSet.run(source.id, user.id, 'bind', p, extId); return; }   // 已绑在本人身上（一人多号合并后会有多个 UserId）
     const cur = userOauthOf.get(user.id, p)?.open_id || null;
     if (cur === extId) { appliedSet.run(source.id, user.id, 'bind', p, extId); return; }
     const rec = appliedGet.get(source.id, user.id, 'bind', p);

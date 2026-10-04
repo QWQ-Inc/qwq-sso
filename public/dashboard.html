@@ -600,6 +600,8 @@ function _devApi(method, path, body) {
   let msh = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/shareable$/);
   if (msh && method === 'GET') return ok({ success:true, data:[{ uid:'#01008', name:'周可复用', email:'z**@corp.com', phone:'138****8899', from_orgs:'B集团,示例集团' }] });
   if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:body.account, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid }); return ok({ success:true, org_uid:uid }); }
+  let mmg = path.match(/^\/admin\/orgs\/([^/]+)\/members\/merge$/);
+  if (mmg && method === 'POST') { const arr=db._orgMembers[mmg[1]]||[]; const t=arr.find(x=>x.user_id===body.target); const src=arr.filter(x=>(body.sources||[]).includes(x.user_id)); if(t){ t.ext_ids=[...(t.ext_ids||[]),...src.flatMap(x=>x.ext_ids||[])]; } db._orgMembers[mmg[1]]=arr.filter(x=>!(body.sources||[]).includes(x.user_id)); return ok({ success:true, merged:src.map(x=>({id:x.user_id,uid_seq:x.uid_seq,name:x.name})), target:t?{id:t.user_id}:null, moved:{} }); }
   let mp = path.match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)$/);
   if (mp && method === 'PATCH') { const arr=db._orgMembers[mp[1]]||[]; const m=arr.find(x=>String(x.uid_seq)===mp[2]); if(m)m.org_uid=body.org_uid||null; return ok({ success:true }); }
   if (mp && method === 'DELETE') { db._orgMembers[mp[1]]=(db._orgMembers[mp[1]]||[]).filter(x=>String(x.uid_seq)!==mp[2]); return ok({ success:true }); }
@@ -2882,6 +2884,13 @@ async function loadMe() {
       位数 <input id="orgmem-len" type="number" min="1" max="24" style="width:52px;padding:3px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;" onclick="saveOrgUidRule()">保存规则</button>
     </div>
+    <div id="orgmem-dup" style="display:none;margin-bottom:8px;padding:8px 10px;border:1px solid #E8C26A;background:rgba(232,194,106,.12);border-radius:6px;font-size:12px;color:var(--txt);"></div>
+    <div id="orgmem-mergebar" style="display:none;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--txm);">
+      已选 <b id="orgmem-selcount">0</b> 人
+      <button class="btn primary" style="font-size:11px;padding:2px 9px;" onclick="openOrgMerge()">合并为同一人…</button>
+      <button class="btn" style="font-size:11px;padding:2px 9px;" onclick="clearOrgMemSel()">取消选择</button>
+    </div>
+    <div id="orgmem-merge" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;">加载中…</div>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);">📇 批量导入（外部通讯录）</summary>
@@ -7114,6 +7123,7 @@ async function delSubject(id, name) {
 let _orgMemSid = null;
 async function openOrgMembers(sid, name) {
   _orgMemSid = sid;
+  _orgMemSel = new Set();
   document.getElementById('orgmem-title').textContent = '组织成员 · ' + name;
   document.getElementById('orgmem-account').value = '';
   document.getElementById('orgmem-uid').value = '';
@@ -7132,11 +7142,18 @@ async function loadOrgMembers() {
   document.getElementById('orgmem-prefix').value = data.org?.uid_prefix || '';
   document.getElementById('orgmem-len').value = data.org?.uid_len || 4;
   const rows = data.members || [];
+  _orgMemRows = rows;
+  _orgMemSel = new Set([..._orgMemSel].filter(id => rows.some(m => m.user_id === id)));
+  document.getElementById('orgmem-merge').style.display = 'none';
+  renderOrgDupHint();
+  updateOrgMemSel();
   box.innerHTML = rows.length ? rows.map(m => {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
     const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
+    const ext = (m.ext_ids || []).length ? `<br><span style="color:var(--txd);font-size:10px;">外部账号：${m.ext_ids.map(x => esc(x.id) + (x.source ? '（' + esc(x.source) + '）' : '')).join('、')}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
-      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}</span>
+      <input type="checkbox" class="omsel" data-id="${esc(m.user_id)}" ${_orgMemSel.has(m.user_id) ? 'checked' : ''} onchange="toggleOrgMemSel(this)" title="勾选多个 → 合并为同一人">
+      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
       <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:120px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemUid(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存UID</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>组织密码</button>
@@ -7144,6 +7161,78 @@ async function loadOrgMembers() {
       <button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='delOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>移出</button>
     </div>`;
   }).join('') : '<div style="color:var(--txd);padding:8px 4px;">该组织还没有成员。</div>';
+}
+// ── 一人多号合并（v3.5.41）──
+let _orgMemRows = [];
+let _orgMemSel = new Set();
+function _orgMemUid(m) { return m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0')); }
+function toggleOrgMemSel(el) {
+  if (el.checked) _orgMemSel.add(el.dataset.id); else _orgMemSel.delete(el.dataset.id);
+  updateOrgMemSel();
+}
+function clearOrgMemSel() {
+  _orgMemSel.clear();
+  document.querySelectorAll('#orgmem-list .omsel').forEach(c => { c.checked = false; });
+  document.getElementById('orgmem-merge').style.display = 'none';
+  updateOrgMemSel();
+}
+function updateOrgMemSel() {
+  const bar = document.getElementById('orgmem-mergebar');
+  document.getElementById('orgmem-selcount').textContent = _orgMemSel.size;
+  bar.style.display = _orgMemSel.size >= 2 ? 'flex' : 'none';
+}
+// 同名成员提示（多半是同一人在企业微信里的几个账号）
+function renderOrgDupHint() {
+  const box = document.getElementById('orgmem-dup');
+  const by = new Map();
+  for (const m of _orgMemRows) { const k = (m.name || '').trim(); if (!k) continue; if (!by.has(k)) by.set(k, []); by.get(k).push(m); }
+  const dups = [...by.entries()].filter(([, l]) => l.length > 1);
+  if (!dups.length) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = '⚠️ 有同名成员，可能是同一人的多个账号（比如企业微信里一人多号）：' + dups.map(([n, l]) =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;margin:4px 8px 0 0;">${esc(n)} ×${l.length}
+      <button class="btn" style="font-size:11px;padding:1px 7px;" onclick='selectOrgDup(${JSON.stringify(l.map(m => m.user_id))})'>选中并合并</button></span>`).join('')
+    + '<div style="font-size:11px;color:var(--txd);margin-top:4px;">同名不一定是同一人，合并前请确认。</div>';
+}
+function selectOrgDup(ids) {
+  _orgMemSel = new Set(ids);
+  document.querySelectorAll('#orgmem-list .omsel').forEach(c => { c.checked = _orgMemSel.has(c.dataset.id); });
+  updateOrgMemSel();
+  openOrgMerge();
+}
+// 默认保留「东西最多」的那个：有组织密码 / 手动加入 / 编号最小
+function _orgMergeDefault(list) {
+  return [...list].sort((a, b) => (b.has_pw - a.has_pw) || ((b.source === 'manual') - (a.source === 'manual')) || (a.uid_seq - b.uid_seq))[0];
+}
+function openOrgMerge() {
+  const list = _orgMemRows.filter(m => _orgMemSel.has(m.user_id));
+  if (list.length < 2) { showToast('请至少勾选 2 个成员'); return; }
+  const def = _orgMergeDefault(list);
+  const box = document.getElementById('orgmem-merge');
+  box.style.display = 'block';
+  box.innerHTML = `<div style="font-weight:600;color:var(--txt);margin-bottom:6px;">合并为同一人 · 选择保留哪个账号</div>
+    ${list.map(m => `<label style="display:flex;align-items:center;gap:6px;padding:4px 0;cursor:pointer;">
+      <input type="radio" name="orgmerge-target" value="${esc(m.user_id)}" ${m.user_id === def.user_id ? 'checked' : ''}>
+      <span>${esc(m.name || '—')} <span style="color:var(--txd);">${esc(_orgMemUid(m))}</span>${m.org_uid ? ' · 组织内 UID ' + esc(m.org_uid) : ''}${(m.ext_ids || []).length ? ' · ' + m.ext_ids.map(x => esc(x.id)).join('、') : ''}</span></label>`).join('')}
+    <div style="font-size:11px;color:var(--txd);margin:6px 0;line-height:1.6;">合并后：其余账号的登录绑定（如企业微信）、通讯录同步关联、组织成员关系、积分等都转到保留账号；用其中任何一个企业微信账号登录都会进入保留账号，之后同步也不会再分开建号。其余账号会被停用（标记为「已合并」），对第三方应用的授权作废。<b>此操作不能撤销。</b></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn" style="font-size:12px;" onclick="document.getElementById('orgmem-merge').style.display='none'">取消</button>
+      <button class="btn primary" style="font-size:12px;" onclick="doOrgMerge()">确认合并</button>
+    </div>`;
+  box.scrollIntoView({ block: 'nearest' });
+}
+async function doOrgMerge() {
+  const target = document.querySelector('input[name="orgmerge-target"]:checked')?.value;
+  if (!target) { showToast('请选择保留账号'); return; }
+  const sources = [..._orgMemSel].filter(id => id !== target);
+  const t = _orgMemRows.find(m => m.user_id === target);
+  if (!confirm(`把其余 ${sources.length} 个账号合并到「${t?.name || ''} ${t ? _orgMemUid(t) : ''}」？此操作不能撤销。`)) return;
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members/merge', { target, sources });
+  if (ok) {
+    showToast(`已合并 ${data.merged?.length || sources.length} 个账号`);
+    _orgMemSel.clear();
+    loadOrgMembers();
+  } else showToast('合并失败：' + (data?.error || '未知错误'));
 }
 async function addOrgMember() {
   const account = document.getElementById('orgmem-account').value.trim();
@@ -8114,7 +8203,7 @@ const _origGoto = goto;
   // 三方账号绑定结果回跳
   if (urlParams.get('bind')) {
     const b = urlParams.get('bind');
-    if (b === 'success') showToast('✓ 三方账号绑定成功');
+    if (b === 'success') showToast(urlParams.get('merged') ? '✓ 已绑定，并把这个三方账号原来自动建的账号合并进你的账号' : '✓ 三方账号绑定成功');
     else showToast('⚠️ ' + (urlParams.get('msg') || '三方账号绑定失败'));
     history.replaceState({}, '', '/dashboard.html');
   }
