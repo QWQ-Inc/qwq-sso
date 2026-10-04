@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.50**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.51**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.50，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.51，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -202,7 +202,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.50）
+## 数据库表清单（截至 v3.5.51）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）、`deletion_state`/`deleted_at`/`purge_at`（注销删除，v3.5.44）
@@ -211,7 +211,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体；+`folder_id` 文件夹共用凭证，v3.5.47）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39；+`folder_id`/`parent_id` 文件夹通讯录连接与组织套用，v3.5.47）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44；+`ext_snapshot` 删除时摘下的三方绑定 / 通讯录映射快照，v3.5.49）、`identity_blocks`（已删除账号被封存的外部身份：oauth provider+open_id / dir 连接+UserId，v3.5.49）、`merge_records`/`merge_journal`（账号合并记录 + 改动日志，撤销合并用，v3.5.48）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体；+`folder_id` 文件夹共用凭证，v3.5.47）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39；+`folder_id`/`parent_id` 文件夹通讯录连接与组织套用，v3.5.47）、`folder_cred_orgs`（文件夹凭证由哪些组织使用，v3.5.51）、`dir_source_alias`（并进连接的旧同步源 id → 连接，旧回调地址用，v3.5.51）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44；+`ext_snapshot` 删除时摘下的三方绑定 / 通讯录映射快照，v3.5.49）、`identity_blocks`（已删除账号被封存的外部身份：oauth provider+open_id / dir 连接+UserId，v3.5.49）、`merge_records`/`merge_journal`（账号合并记录 + 改动日志，撤销合并用，v3.5.48）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -435,6 +435,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.51 文件夹资源「交给」而非「套用」+ 文件夹凭证按组织使用 + 按部门建组织（用户反馈）
+
+三级版本。用户：「把组织凭证/通讯录权限迁移给文件夹后，默认不是套用了，而是把这些给了文件夹，要使用再由组织设定。可以用文件夹已有凭证/通讯录权限绑定到现有文件夹内组织，或勾选回传的部门（比如企业微信）自动创建组织。」
+- **同步源迁移**（`POST /admin/org-folders/:id/migrate`）：没有同企业连接 → 原同步源**就地**变成文件夹连接（`subject_id=''`、`folder_id`、`parent_id=NULL`、config 只留 CONN_KEYS、state 清空；id 不变 → 旧回调地址直接是连接）；有 → 回调 / 管理用 Secret 缺的带过去，映射 `UPDATE OR IGNORE` 挪到连接 id 下，原同步源删掉，写 `dir_source_alias(old_id → conn_id)`（`dirEventSource` 和 GET 校验都先查 alias）。两种都删 `dir_sync_applied`。组织成员保留。挪到连接上的映射不参与任何组织的同步 / 移出（`stillSynced` 按 subject 查，连接 subject 为空），只供 `corpUsers` 认人——组织再套用时 created=0。
+- **文件夹凭证按组织使用**：新表 `folder_cred_orgs(provider_id, subject_id)`；`oauthProviders.orgsUsing/usedBy/setUse/unsetUse/clearUsesOf/clearUsesBy`。一次性迁移：表首次创建（建表前查 sqlite_master）时把已有文件夹凭证设定给当时文件夹里的所有组织。消费方：`dirsync-wecom.wecomCredsOf`（→ `loginProviderChoices` / auto 绑定）改为「本组织凭证 + folder_cred_orgs 里本组织的」；`oauth.mergeScopeKeys` 组织凭证 = 本组织 + 本组织使用的文件夹凭证，文件夹凭证 = 自己 + 使用它的组织的凭证（及它们使用的文件夹凭证）。登录页列出照旧（已绑用户照常登录）。组织换文件夹删掉对旧文件夹凭证的使用；删组织 / 删凭证连带清。凭证迁移不设定任何使用。
+- 接口：`PUT /admin/folder-credentials/:id/orgs {subject_ids}`、`POST /admin/orgs/:sid/folder-credentials/:cid {use}`（都 Lv.2；只能是文件夹里的组织；审计 `folder.credential_orgs`）；`POST /admin/folder-dir-sources/:id/create-orgs {depts:[{id,name}], run, bind_creds}`（每部门：`oauthSubjects.insert` + 放进文件夹 + `insertUse`（dept_ids=[id]、bind auto、uid userid、idonly_create）+ 同企业 wecom 文件夹凭证 setUse；run 时逐个 `runDirSource`；审计 `folder.orgs_created`）。`folderResources.credentials[].orgs`。
+- 前端：组织卡片列出所在文件夹的凭证行（📁 · 本组织在用 / 未使用 · 使用 / 不再使用 → `useFolderCred`）；文件夹面板凭证行「使用的组织：…」+「设定使用的组织…」（`openFolderCredOrgs`），连接行「套用到组织…」（`openConnUseModal` → `openDirSourceModal(sid, null, connId)` 预选来源）/「按部门建组织…」（`openConnCreateOrgs`：拉 scope-tree 缩进勾选 + 立即同步）；通用 `_pickOverlay`（沿用 ui-dlg 样式）。迁移提示文案改为「交给文件夹，组织要用再设定」。
+- ⚠️ 测试：run22 改为新语义 62 项（设定使用前 bind_choices 无文件夹凭证、组织管理员不能设定、设定后有、凭证带 orgs、迁移后原源删除且组织无同步源、映射挪到连接、成员保留、旧回调地址经 alias 可用、再套用 created=0 不新建账号、凭证迁移后无人使用、文件夹面板设定 / 不在文件夹 400、按部门建两个组织 + 套用 + 凭证使用 + 同步无重复建号、就地变连接 id 不变、D 不再有同步源）；升级回填（删表后重启 → 文件夹里两个组织都设定使用）；回归 run 35 / run8 20 / run9 26 / run10 36 / run11 15 / run12 25 / run13 10 / run16 22 / run17 9 / run18 19 / run19 35 / run20 12 / run23 38 / run24 27 / run25 19 / run26 8；playwright ui26：使用、设定使用的组织、按部门建组织、套用到组织预选来源，无原生弹窗、零 JS 报错。真实企业微信未联调。
 
 ## v3.5.50 企业微信「同企业 + 同 UserId = 同一人」+ 读写两份 Secret + 系统内弹窗（用户反馈）
 

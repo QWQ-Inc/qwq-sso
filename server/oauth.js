@@ -133,8 +133,8 @@ function subjectOfProviderKey(providerKey) {
   return row ? (row.subject_id || null) : null;
 }
 // 同人合并的查找范围（providerKey 列表）；env 默认凭证返回 null（走全局邮箱合并）
-//   组织凭证：本组织的凭证 + 所在文件夹共用的凭证
-//   文件夹凭证（v3.5.47）：文件夹共用的凭证 + 文件夹里各组织的凭证
+//   组织凭证：本组织的凭证 + 本组织设定使用的文件夹凭证
+//   文件夹凭证（v3.5.47）：它自己 + 设定使用它的各组织的凭证（v3.5.51 起只算设定使用的组织）
 function mergeScopeKeys(providerKey) {
   const idx = providerKey.indexOf(':');
   if (idx < 0) return null;
@@ -143,11 +143,12 @@ function mergeScopeKeys(providerKey) {
   let rows = [];
   if (row.subject_id) {
     const subj = oauthSubjects.get.get(row.subject_id);
-    rows = oauthProviders.bySubject.all(row.subject_id);
-    if (subj && subj.folder_id) rows = rows.concat(oauthProviders.byFolder.all(subj.folder_id));
+    rows = oauthProviders.bySubject.all(row.subject_id).concat(oauthProviders.usedBy.all(row.subject_id));
   } else if (row.folder_id) {
-    rows = oauthProviders.byFolder.all(row.folder_id).concat(
-      db.prepare('SELECT p.* FROM oauth_providers p JOIN oauth_subjects s ON s.id=p.subject_id WHERE s.folder_id=?').all(row.folder_id));
+    // v3.5.51：文件夹凭证 + 设定使用它的各组织的凭证（及它们使用的其他文件夹凭证）
+    const orgs = oauthProviders.orgsUsing.all(row.id).map(r => r.subject_id);
+    rows = [row];
+    for (const sid of orgs) rows = rows.concat(oauthProviders.bySubject.all(sid), oauthProviders.usedBy.all(sid));
   } else return null;
   return rows.map(r => `${r.platform}:${r.id}`);
 }

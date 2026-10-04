@@ -1410,6 +1410,9 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   // 套用着当前文件夹通讯录的组织不能直接挪走（v3.5.47）
   if (folder !== undefined && (folder || null) !== (row.folder_id || null) && dirSources.bySubject.all(row.id).some(x => x.parent_id))
     return res.status(400).json({ error: '本组织在套用所在文件夹的通讯录，先在组织里删掉套用，再移出文件夹' });
+  // 换了文件夹：原文件夹凭证的使用设定随之取消（v3.5.51）
+  if (folder !== undefined && (folder || null) !== (row.folder_id || null))
+    db.prepare("DELETE FROM folder_cred_orgs WHERE subject_id=? AND provider_id NOT IN (SELECT id FROM oauth_providers WHERE folder_id=?)").run(row.id, folder || '');
   const { name, enabled, sort_weight, require_2fa, ip_allow, login_start, login_end } = req.body || {};
   oauthSubjects.update.run(
     name != null ? String(name).trim() : row.name,
@@ -1454,6 +1457,7 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
 router.delete('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   const row = oauthSubjects.get.get(req.params.id);
   if (!row) return res.status(404).json({ error: '主体不存在' });
+  oauthProviders.clearUsesBy.run(row.id);       // 连带取消它对文件夹凭证的使用设定（v3.5.51）
   oauthProviders.removeBySubject.run(row.id);   // 连带删除其下所有凭证（登录入口消失；已绑用户 user_oauth 行保留可查）
   orgMembers.removeBySubject.run(row.id);        // 连带清成员关系
   appOrgs.removeBySubject.run(row.id);           // 连带清应用开放关系
@@ -1523,6 +1527,7 @@ router.delete('/admin/oauth-providers/:id', requireAdmin(2), (req, res) => {
   const row = oauthProviders.get.get(req.params.id);
   if (!row) return res.status(404).json({ error: '凭证不存在' });
   oauthProviders.remove.run(row.id);
+  oauthProviders.clearUsesOf.run(row.id);
   res.json({ success: true });
 });
 
@@ -2315,7 +2320,8 @@ function folderMigrations(folderId) {
 function folderResources(folderId) {
   return {
     dir_connections: dirSources.byFolder.all(folderId).map(dirConnView),
-    credentials: oauthProviders.byFolder.all(folderId).map(credView),
+    credentials: oauthProviders.byFolder.all(folderId).map(c => ({ ...credView(c),
+      orgs: oauthProviders.orgsUsing.all(c.id).map(r => { const o = oauthSubjects.get.get(r.subject_id); return o ? { id: o.id, name: o.name } : null; }).filter(Boolean) })),
     migrations: folderMigrations(folderId),
   };
 }
@@ -2417,31 +2423,106 @@ router.post('/admin/org-folders/:id/migrate', requireAdmin(2), (req, res) => {
     audit('folder.migrated', { subject: f.id, actor: actorOf(req), detail: { kind: 'credential', id: item.id, from_org: item.org_id, platform: item.platform } });
     return res.json({ success: true, kind: 'credential' });
   }
+  // v3.5.51：交给文件夹 ≠ 套用。连接字段（企业 ID / Secret / 回调）归文件夹，组织不再自己同步；
+  // 要继续同步，由组织自己（或在文件夹面板上）设定套用并选部门。已有的组织成员保留不动。
   const src = dirSources.get.get(item.id);
   const cfg = parseJ(src.config) || {};
   let conn = item.attach_to ? dirSources.get.get(item.attach_to.id) : null;
   db.transaction(() => {
     if (!conn) {
+      // 没有同企业连接：原同步源就地变成文件夹连接（id 不变 → 企业微信后台填的回调地址照旧可用）
       const connCfg = {};
       for (const k of dirsyncWecom.CONN_KEYS) if (cfg[k] !== undefined) connCfg[k] = cfg[k];
-      const cid = uuidv4();
-      dirSources.insertFolder.run(cid, f.id, src.type, src.label || DIR_TYPES[src.type], JSON.stringify(connCfg), 1);
-      if (src.event_state) dirSources.setEventState.run(src.event_state, cid);
-      conn = dirSources.get.get(cid);
+      db.prepare("UPDATE dir_sync_sources SET subject_id='', folder_id=?, parent_id=NULL, config=?, state=NULL, updated_at=datetime('now') WHERE id=?")
+        .run(f.id, JSON.stringify(connCfg), src.id);
+      conn = dirSources.get.get(src.id);
     } else {
-      // 并进已有连接：它没设回调 / 停用同步时，把这一份的带过去
+      // 并进已有连接：它没设回调 / 管理用 Secret 时，把这一份的带过去；原同步源删掉，旧回调地址转到这份连接
       const cc = parseJ(conn.config) || {};
       let changed = false;
       if (!(cc.cb_token && cc.cb_aes_key) && cfg.cb_token && cfg.cb_aes_key) { cc.cb_token = cfg.cb_token; cc.cb_aes_key = cfg.cb_aes_key; changed = true; }
       if (!cc.write_secret && cfg.write_secret) { cc.write_secret = cfg.write_secret; changed = true; }
       if (changed) dirSources.update.run(conn.label, JSON.stringify(cc), conn.enabled, conn.id);
+      // 映射挪到连接上：不参与任何组织的同步 / 移出，只作为「企业 + UserId → 账号」的认人依据，以后套用时认回同一账号
+      db.prepare('UPDATE OR IGNORE dir_source_links SET source_id=? WHERE source_id=?').run(conn.id, src.id);
+      dirSources.removeLinks.run(src.id);
+      dirSources.remove.run(src.id);
+      db.prepare('INSERT OR REPLACE INTO dir_source_alias (old_id, conn_id) VALUES (?,?)').run(src.id, conn.id);
+      db.prepare('UPDATE dir_source_alias SET conn_id=? WHERE conn_id=?').run(conn.id, src.id);
     }
-    const useCfg = { ...cfg };
-    for (const k of dirsyncWecom.CONN_KEYS) delete useCfg[k];
-    dirSources.setParent.run(conn.id, JSON.stringify(useCfg), src.id);   // 同步源 id 不变：映射、「设过什么」记录、老回调地址都照旧可用
+    dirSources.removeApplied.run(src.id);
   })();
   audit('folder.migrated', { subject: f.id, actor: actorOf(req), detail: { kind: 'dir_source', id: src.id, from_org: item.org_id, conn_id: conn.id, attached: !!item.attach_to, secret_differs: item.secret_differs } });
   res.json({ success: true, kind: 'dir_source', connection_id: conn.id, attached: !!item.attach_to, secret_differs: item.secret_differs });
+});
+// ── 文件夹资源给组织使用（v3.5.51）──
+// 登录凭证：设定哪些组织使用（只能是文件夹里的组织）
+function setFolderCredOrgs(cred, subjectIds, req) {
+  const inFolder = new Set(oauthSubjects.all.all().filter(o => o.folder_id === cred.folder_id).map(o => o.id));
+  const want = [...new Set((subjectIds || []).map(String))];
+  const bad = want.find(id => !inFolder.has(id));
+  if (bad) return '只能设定给这个文件夹里的组织';
+  db.transaction(() => {
+    oauthProviders.clearUsesOf.run(cred.id);
+    for (const sid of want) oauthProviders.setUse.run(cred.id, sid);
+  })();
+  audit('folder.credential_orgs', { subject: cred.folder_id, actor: actorOf(req), detail: { credential: cred.id, orgs: want } });
+  return null;
+}
+const folderCredFor = (id) => { const c = oauthProviders.get.get(id); return c && c.folder_id && !c.subject_id ? c : null; };
+router.put('/admin/folder-credentials/:id/orgs', requireAdmin(2), (req, res) => {
+  const cred = folderCredFor(req.params.id);
+  if (!cred) return res.status(404).json({ error: '文件夹凭证不存在' });
+  const err = setFolderCredOrgs(cred, Array.isArray(req.body?.subject_ids) ? req.body.subject_ids : [], req);
+  if (err) return res.status(400).json({ error: err });
+  res.json({ success: true, orgs: oauthProviders.orgsUsing.all(cred.id).map(r => r.subject_id) });
+});
+// 组织侧：使用 / 不再使用所在文件夹的某套凭证
+router.post('/admin/orgs/:sid/folder-credentials/:cid', requireAdmin(2), (req, res) => {
+  const o = oauthSubjects.get.get(req.params.sid);
+  const cred = folderCredFor(req.params.cid);
+  if (!o || !cred) return res.status(404).json({ error: '组织或文件夹凭证不存在' });
+  if (o.folder_id !== cred.folder_id) return res.status(400).json({ error: '这个组织不在该凭证所在的文件夹里' });
+  const cur = oauthProviders.orgsUsing.all(cred.id).map(r => r.subject_id).filter(x => x !== o.id);
+  if (req.body?.use !== false) cur.push(o.id);
+  const err = setFolderCredOrgs(cred, cur, req);
+  if (err) return res.status(400).json({ error: err });
+  res.json({ success: true, use: req.body?.use !== false });
+});
+// 按企业微信部门自动建组织：勾选的每个部门建一个组织（放进本文件夹）+ 套用这份通讯录、只同步该部门（含子部门），
+// 同企业的文件夹登录凭证一并设定给新组织使用；run=true 时建完立即同步
+router.post('/admin/folder-dir-sources/:id/create-orgs', requireAdmin(2), async (req, res) => {
+  const conn = folderConnFor(req, res); if (!conn) return;
+  const ccfg = parseJ(conn.config) || {};
+  const depts = (Array.isArray(req.body?.depts) ? req.body.depts : []).slice(0, 100)
+    .map(d => ({ id: parseInt(d && d.id, 10), name: String((d && d.name) || '').trim().slice(0, 60) })).filter(d => d.id > 0);
+  if (!depts.length) return res.status(400).json({ error: '请勾选要建成组织的部门' });
+  const bindCreds = req.body?.bind_creds !== false;
+  const creds = bindCreds ? oauthProviders.byFolder.all(conn.folder_id).filter(c => {
+    if (c.platform !== 'wecom') return false;
+    try { return String(JSON.parse(c.config || '{}').WECOM_CORP_ID || '').toLowerCase() === String(ccfg.corp_id || '').toLowerCase(); } catch (_) { return false; }
+  }) : [];
+  const created = [];
+  for (const d of depts) {
+    const name = d.name || ('部门 ' + d.id);
+    const sid = uuidv4(), uid = uuidv4();
+    db.transaction(() => {
+      oauthSubjects.insert.run(sid, name, 1, 0);
+      orgFolders.setSubject.run(conn.folder_id, sid);
+      const useCfg = { dept_ids: [d.id], dept_names: d.name ? { [d.id]: d.name } : {}, bind_mode: 'auto', uid_mode: 'userid', remove_missing: true, idonly_create: true, interval_hours: 0 };
+      dirSources.insertUse.run(uid, sid, conn.id, conn.type, conn.label || DIR_TYPES[conn.type], JSON.stringify(useCfg), 1);
+      for (const c of creds) oauthProviders.setUse.run(c.id, sid);
+    })();
+    created.push({ org_id: sid, name, dept_id: d.id, source_id: uid });
+  }
+  audit('folder.orgs_created', { subject: conn.folder_id, actor: actorOf(req), detail: { conn_id: conn.id, orgs: created.map(c => ({ id: c.org_id, name: c.name, dept: c.dept_id })), creds: creds.map(c => c.id) } });
+  if (req.body?.run && conn.enabled) {
+    for (const c of created) {
+      try { c.state = await runDirSource(dirSources.get.get(c.source_id), actorOf(req)); }
+      catch (e) { c.error = e.message; }
+    }
+  }
+  res.json({ success: true, created, bound_creds: creds.length });
 });
 // 开放 API：把该组织所有启用的同步源依次跑一遍
 router.post('/v1/orgs/:sid/dir-sync/run', requireApiKey('org:sync'), async (req, res) => {
@@ -2501,6 +2582,7 @@ function noteVerifyAttempt(src, ok, reason, req) {
 //   组织自己的同步源 → 它自己；文件夹连接 → 套用它的各组织；套用（迁移前的老地址）→ 转到它的文件夹连接
 function dirEventSource(req) {
   let src = dirSources.get.get(req.params.id);
+  if (!src) { const al = db.prepare('SELECT conn_id FROM dir_source_alias WHERE old_id=?').get(req.params.id); if (al) src = dirSources.get.get(al.conn_id); }   // v3.5.51：并进连接的旧同步源
   if (!src || src.type !== 'wecom') return null;
   if (src.parent_id) src = dirSources.get.get(src.parent_id);
   if (!src) return null;
@@ -2511,6 +2593,7 @@ function dirEventSource(req) {
 }
 router.get('/public/dirsync/wecom/:id', (req, res) => {
   let src = dirSources.get.get(req.params.id);
+  if (!src) { const al = db.prepare('SELECT conn_id FROM dir_source_alias WHERE old_id=?').get(req.params.id); if (al) src = dirSources.get.get(al.conn_id); }
   if (src && src.parent_id) src = dirSources.get.get(src.parent_id) || src;
   const ctx = dirEventSource(req);
   if (!ctx) {

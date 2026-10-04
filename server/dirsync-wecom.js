@@ -33,12 +33,12 @@ const linkDelete = db.prepare('DELETE FROM dir_source_links WHERE source_id=? AN
 const stillSynced = db.prepare(`SELECT 1 FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
   WHERE d.subject_id=? AND l.user_id=? LIMIT 1`);
 const userOauthOf = db.prepare('SELECT open_id FROM user_oauth WHERE user_id=? AND provider=?');
-// 本组织可用的企业微信登录凭证：组织自己的 + 所在文件夹共用的（v3.5.47）
+// 本组织可用的企业微信登录凭证：组织自己的 + 所在文件夹里、本组织设定使用的（v3.5.47；v3.5.51 起要组织设定）
 const wecomCredsStmt = db.prepare(`SELECT p.id, p.label, p.config, p.folder_id, f.name AS folder_name FROM oauth_providers p
   LEFT JOIN org_folders f ON f.id=p.folder_id
-  WHERE p.platform='wecom' AND (p.subject_id=? OR (p.folder_id IS NOT NULL AND p.folder_id<>'' AND p.folder_id=?))
+  WHERE p.platform='wecom' AND (p.subject_id=? OR p.id IN (SELECT provider_id FROM folder_cred_orgs WHERE subject_id=?))
   ORDER BY (p.folder_id IS NOT NULL AND p.folder_id<>''), p.sort_weight, p.created_at`);
-const wecomCredsOf = { all: (subject) => wecomCredsStmt.all(subject.id, subject.folder_id || '') };
+const wecomCredsOf = { all: (subject) => wecomCredsStmt.all(subject.id, subject.id) };   // v3.5.51：文件夹凭证只算本组织设定使用的
 // 同一份文件夹通讯录的其他「套用」里的映射：一人同时在两个组织的部门里时落到同一账号
 const siblingLink = db.prepare(`SELECT l.user_id FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
   WHERE d.parent_id=? AND d.id<>? AND l.ext_id=? LIMIT 1`);

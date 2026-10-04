@@ -440,6 +440,26 @@ try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN event_state TEXT'); } cat
 // 文件夹里的各组织「套用」它（parent_id = 那份连接，各自选部门、绑定方式、默认密码…）。parent_id 为空 = 组织自己单独配的。
 try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN folder_id TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN parent_id TEXT'); } catch(_) {}
+// v3.5.51：文件夹上的登录凭证不再自动给文件夹里所有组织用——哪些组织使用由组织 / 系统管理员设定（folder_cred_orgs）。
+// 一次性迁移：表第一次建时，把已有文件夹凭证绑给当时在该文件夹里的所有组织（保持 v3.5.47~50 的现状）
+try {
+  const had = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_cred_orgs'").get();
+  db.exec(`CREATE TABLE IF NOT EXISTS folder_cred_orgs (
+    provider_id TEXT NOT NULL,
+    subject_id  TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (provider_id, subject_id)
+  )`);
+  if (!had) db.exec(`INSERT OR IGNORE INTO folder_cred_orgs (provider_id, subject_id)
+    SELECT p.id, s.id FROM oauth_providers p JOIN oauth_subjects s ON s.folder_id=p.folder_id
+    WHERE p.folder_id IS NOT NULL AND p.folder_id<>''`);
+} catch(_) {}
+// v3.5.51：同步源交给文件夹时并进了已有的通讯录连接，原同步源删掉——它的旧回调地址转到那份连接
+try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_alias (
+  old_id  TEXT PRIMARY KEY,
+  conn_id TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+)`); } catch(_) {}
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
   source_id  TEXT NOT NULL,
   ext_id     TEXT NOT NULL,
@@ -1083,6 +1103,13 @@ const oauthProviderStmts = {
   byFolder:     db.prepare('SELECT * FROM oauth_providers WHERE folder_id=? ORDER BY platform, sort_weight, created_at'),
   insertFolder: db.prepare('INSERT INTO oauth_providers (id,subject_id,folder_id,platform,label,config,enabled,sort_weight) VALUES (?,NULL,?,?,?,?,?,?)'),
   moveToFolder: db.prepare('UPDATE oauth_providers SET folder_id=?, subject_id=NULL WHERE id=?'),
+  // v3.5.51：文件夹凭证由哪些组织使用
+  orgsUsing:    db.prepare('SELECT subject_id FROM folder_cred_orgs WHERE provider_id=?'),
+  usedBy:       db.prepare(`SELECT p.* FROM folder_cred_orgs u JOIN oauth_providers p ON p.id=u.provider_id WHERE u.subject_id=? ORDER BY p.platform, p.sort_weight, p.created_at`),
+  setUse:       db.prepare('INSERT OR IGNORE INTO folder_cred_orgs (provider_id, subject_id) VALUES (?,?)'),
+  unsetUse:     db.prepare('DELETE FROM folder_cred_orgs WHERE provider_id=? AND subject_id=?'),
+  clearUsesOf:  db.prepare('DELETE FROM folder_cred_orgs WHERE provider_id=?'),
+  clearUsesBy:  db.prepare('DELETE FROM folder_cred_orgs WHERE subject_id=?'),
 };
 
 // 「主体」（组织）CRUD + 同人合并查询

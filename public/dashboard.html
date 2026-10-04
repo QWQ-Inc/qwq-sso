@@ -5690,7 +5690,7 @@ async function loadDirSources() {
   const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/dir-sources');
   box.innerHTML = ok ? dirSourceRowsHtml(_orgMemSid, data.sources) : '<div style="color:var(--err);">' + esc(data.error || '加载失败') + '</div>';
 }
-async function openDirSourceModal(sid, srcId) {
+async function openDirSourceModal(sid, srcId, presetParent) {
   const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
   const c = src ? src.config : { dept_ids: [], uid_mode: 'userid', interval_hours: 0, remove_missing: true, bind_mode: 'auto' };
   // 可绑定的登录凭证（本组织的企业微信凭证 + 本站默认企业微信）
@@ -5787,6 +5787,7 @@ async function openDirSourceModal(sid, srcId) {
     const on = !!curParent();
     ['#dsm-conn', '#dsm-cb-box', '#dsm-suspend-row'].forEach(q => { const el = $(q); if (el) el.style.display = on ? 'none' : ''; });
   };
+  if (presetParent && $('#dsm-parent')) $('#dsm-parent').value = presetParent;   // 从文件夹面板「套用到组织…」进来（v3.5.51）
   applyParent();
   if ($('#dsm-parent')) $('#dsm-parent').onchange = () => { applyParent(); visibleIds = null; $('#dsm-tree').style.display = 'none'; renderChips(); };
   $('#dsm-dept-addbtn').onclick = () => { const v = parseInt($('#dsm-dept-add').value, 10); if (v > 0) { picked.set(v, picked.get(v) || ''); $('#dsm-dept-add').value = ''; renderChips(); syncTree(); } };
@@ -5973,8 +5974,21 @@ async function loadOauthSubjects() {
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)},${JSON.stringify(c).replace(/'/g,"&#39;")})'>编辑</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>删除</button>
       </div>`;
-    }).join('') || (() => { const fc = ((_orgFolders.find(f => f.id === s.folder_id) || {}).credentials || []).length;
-      return `<div style="padding:7px 14px 7px 30px;border-top:1px solid var(--bd);color:var(--txd);font-size:11px;">${fc ? `（本组织没有自己的凭证，用所在文件夹共用的 ${fc} 套）` : '（该主体下还没有凭证）'}</div>`; })();
+    }).join('') + (() => {
+      // v3.5.51：所在文件夹的登录凭证——组织自己设定用不用
+      const fcs = ((_orgFolders.find(f => f.id === s.folder_id) || {}).credentials || []);
+      const rows = fcs.map(c => {
+        const meta = _oauthPlatforms.find(p => p.key === c.platform);
+        const pname = meta ? meta.label : c.platform;
+        const on = (c.orgs || []).some(o => o.id === s.id);
+        return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px 7px 30px;border-top:1px solid var(--bd);">
+          <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">📁 ${esc(pname)}</span>
+          <span style="flex:1;color:${on ? 'var(--txt)' : 'var(--txd)'};">${esc(c.label || pname)} <span style="font-size:11px;color:var(--txd);">文件夹凭证 · ${on ? '本组织在用' : '本组织未使用'}</span></span>
+          <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='useFolderCred(${JSON.stringify(s.id)},${JSON.stringify(c.id)},${!on})'>${on ? '不再使用' : '使用'}</button>
+        </div>`;
+      }).join('');
+      return rows || ((s.credentials || []).length ? '' : '<div style="padding:7px 14px 7px 30px;border-top:1px solid var(--bd);color:var(--txd);font-size:11px;">（该主体下还没有凭证）</div>');
+    })();
     return `<div style="border:1px solid var(--bd);border-radius:6px;margin:0 12px 12px;overflow:hidden;">
       <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--sf2);flex-wrap:wrap;">
         <span style="font-weight:700;color:var(--txt);">🏢 ${esc(s.name)}</span>
@@ -6150,8 +6164,10 @@ function folderResourcesHtml(f) {
     return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 14px;border-top:1px solid var(--bd);">
       <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
       <span style="flex:1;min-width:160px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')}${x.callback_ready ? ' · <span style="color:#1F7A3A;">⚡ 实时</span>' : ''}${x.config.push_suspend ? ' · 停用同步' : ''}</span>
-        <div style="font-size:11px;color:var(--tx);margin-top:2px;">${uses ? '套用：' + uses : '<span style="color:var(--txd);">还没有组织套用——在组织卡片「+ 通讯录同步」里选这份</span>'}</div></span>
+        <div style="font-size:11px;color:var(--tx);margin-top:2px;">${uses ? '套用：' + uses : '<span style="color:var(--txd);">还没有组织套用——点「套用到组织…」或「按部门建组织…」</span>'}</div></span>
       ${_credBadge(x.enabled)}
+      <button class="btn" style="${_rowBtn}" onclick='openConnUseModal(${fid},${JSON.stringify(x.id)})'>套用到组织…</button>
+      <button class="btn" style="${_rowBtn}" onclick='openConnCreateOrgs(${fid},${JSON.stringify(x.id)})'>按部门建组织…</button>
       ${x.enabled && (x.uses || []).length ? `<button class="btn" style="${_rowBtn}" onclick='runFolderConn(${JSON.stringify(x.id)})'>全部同步</button>` : ''}
       <button class="btn" style="${_rowBtn}" onclick='toggleFolderConn(${JSON.stringify(x.id)},${!x.enabled})'>${x.enabled ? '停用' : '启用'}</button>
       <button class="btn" style="${_rowBtn}" onclick='openDirConnModal(${fid},${JSON.stringify(x.id)})'>编辑</button>
@@ -6163,8 +6179,9 @@ function folderResourcesHtml(f) {
     const pname = meta ? meta.label : c.platform;
     return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid var(--bd);">
       <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔑 ${esc(pname)}</span>
-      <span style="flex:1;color:var(--txt);">${esc(c.label || pname)} <span style="color:var(--txd);font-size:11px;">文件夹里的组织共用</span></span>
+      <span style="flex:1;color:var(--txt);">${esc(c.label || pname)} <span style="color:var(--txd);font-size:11px;">${(c.orgs || []).length ? '使用的组织：' + c.orgs.map(o => esc(o.name)).join('、') : '还没有组织使用'}</span></span>
       ${_credBadge(c.enabled)}
+      <button class="btn" style="${_rowBtn}" onclick='openFolderCredOrgs(${fid},${JSON.stringify(c.id)})'>设定使用的组织…</button>
       ${_INAPP_PLATFORMS.includes(c.platform) ? `<button class="btn" style="${_rowBtn}" onclick='copyInappLoginUrl(${JSON.stringify(c.id)})'>应用内登录地址</button>` : ''}
       <button class="btn" style="${_rowBtn}" onclick='toggleOauthProvider(${JSON.stringify(c.id)},${!c.enabled})'>${c.enabled ? '停用' : '启用'}</button>
       <button class="btn" style="${_rowBtn}" onclick='openOauthModal(null,${JSON.stringify(c).replace(/'/g,"&#39;")},${fid})'>编辑</button>
@@ -6183,13 +6200,13 @@ function folderResourcesHtml(f) {
   return `<div style="border:1px dashed var(--ac);border-radius:6px;margin:0 12px 12px;overflow:hidden;">
     <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;flex-wrap:wrap;">
       <span style="font-weight:700;color:var(--txt);font-size:13px;">📁 文件夹共用</span>
-      <span style="font-size:11px;color:var(--txd);flex:1;min-width:180px;">通讯录、登录凭证放在这里，文件夹里的组织套用（各自选部门）；密钥只存一份</span>
+      <span style="font-size:11px;color:var(--txd);flex:1;min-width:180px;">通讯录、登录凭证放在这里，密钥只存一份；文件夹里的组织要用，需设定套用（各自选部门）/ 使用</span>
       <button class="btn" style="${_rowBtn}" onclick='openDirConnModal(${fid})'>+ 通讯录</button>
       <button class="btn" style="${_rowBtn}" onclick='openOauthModal(null,null,${fid})'>+ 登录凭证</button>
     </div>
     ${connRows}${credRows}
     ${mig.length ? `<div style="border-top:1px solid var(--bd);background:var(--sf2);padding:6px 0 4px;">
-      <div style="padding:2px 14px 4px;font-size:12px;color:var(--warn);font-weight:600;">💡 文件夹里有 ${mig.length} 项组织自己配的通讯录 / 登录凭证，可以逐条迁到文件夹共用（不迁照旧可用）</div>
+      <div style="padding:2px 14px 4px;font-size:12px;color:var(--warn);font-weight:600;">💡 文件夹里有 ${mig.length} 项组织自己配的通讯录 / 登录凭证，可以逐条交给文件夹（不迁照旧可用；迁过去后组织要用，再设定套用 / 使用）</div>
       ${migRows}</div>` : ''}
   </div>`;
 }
@@ -6197,14 +6214,81 @@ async function migrateToFolder(fid, kind, id) {
   const f = _orgFolders.find(x => x.id === fid); if (!f) return;
   const m = (f.migrations || []).find(x => x.kind === kind && x.id === id); if (!m) return;
   const desc = kind === 'dir_source'
-    ? `把「${m.org_name}」的通讯录「${m.label}」（${m.corp_id}）迁到文件夹「${f.name}」：\n· ${m.attach_to ? '并入文件夹已有的「' + m.attach_to.label + '」' + (m.secret_differs ? '（两边 Secret 不同，之后用文件夹的）' : '') : '在文件夹上新建一份，企业 ID / Secret / 接收事件服务器搬过去'}\n· 本组织改为「套用」它，所选部门、绑定、默认密码等照旧\n· 已同步的成员、旧的回调地址都继续有效`
-    : `把「${m.org_name}」的登录凭证「${m.label || m.platform_name}」挪到文件夹「${f.name}」共用：\n· 文件夹里的组织都能用它登录，同一人会在整个文件夹范围内认作同一账号\n· 已绑定的用户照旧能登录${m.has_policy ? '\n· ⚠️ 该组织的登录 IP 白名单 / 登录时段 / 强制两步验证，不再作用于经这套凭证的登录' : ''}`;
+    ? `把「${m.org_name}」的通讯录「${m.label}」（${m.corp_id}）迁到文件夹「${f.name}」：\n· ${m.attach_to ? '并入文件夹已有的「' + m.attach_to.label + '」' + (m.secret_differs ? '（两边 Secret 不同，之后用文件夹的）' : '') : '在文件夹上新建一份，企业 ID / Secret / 接收事件服务器搬过去'}\n· 交给文件夹后本组织<b>不再自动同步</b>；要继续同步，在本组织「+ 通讯录同步」里选这份文件夹通讯录（或在文件夹面板「套用到组织…」）重新选部门\n· 已同步进来的成员保留；以后再套用时按企业 + UserId 认回同一账号\n· 企业微信后台填的旧回调地址继续有效`
+    : `把「${m.org_name}」的登录凭证「${m.label || m.platform_name}」交给文件夹「${f.name}」：\n· 交过去后默认没有组织在用它；哪个组织要用（同步时绑定、同人合并范围），在组织卡片上点「使用」或在文件夹面板「设定使用的组织」\n· 已绑定的用户照旧能用它登录${m.has_policy ? '\n· ⚠️ 该组织的登录 IP 白名单 / 登录时段 / 强制两步验证，不再作用于经这套凭证的登录' : ''}`;
   const v = await uiPrompt(desc + '\n\n确认请输入：迁移');
   if (v === null) return;
   if (v.trim() !== '迁移') { showToast('确认词不正确，已取消'); return; }
   const { ok, data } = await api('POST', '/admin/org-folders/' + fid + '/migrate', { kind, id, confirm: '迁移' });
   if (!ok) { showToast(data.error || '迁移失败'); return; }
-  showToast(kind === 'dir_source' ? (data.attached ? '已并入文件夹通讯录' : '已迁到文件夹通讯录') : '凭证已挪到文件夹共用');
+  showToast(kind === 'dir_source' ? (data.attached ? '已并入文件夹通讯录（组织要同步请再设定套用）' : '已交给文件夹（组织要同步请再设定套用）') : '凭证已交给文件夹（组织要用请设定使用）');
+  loadOauthSubjects();
+}
+// ── v3.5.51：文件夹资源给组织用 ──
+async function useFolderCred(sid, cid, use) {
+  const { ok, data } = await api('POST', `/admin/orgs/${sid}/folder-credentials/${cid}`, { use });
+  if (!ok) { showToast(data.error || '操作失败'); return; }
+  showToast(use ? '本组织开始使用这套凭证' : '本组织不再使用这套凭证'); loadOauthSubjects();
+}
+function _pickOverlay(title, bodyHtml, okText) {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'ui-dlg-mask';
+    ov.innerHTML = `<div class="ui-dlg" style="max-width:520px;"><div class="ui-dlg-title">${esc(title)}</div><div class="ui-dlg-msg" style="white-space:normal;">${bodyHtml}</div>
+      <div class="ui-dlg-btns"><button class="btn" data-x="0">取消</button><button class="btn primary ui-dlg-ok" data-x="1">${esc(okText || '确定')}</button></div></div>`;
+    const done = v => { ov.remove(); resolve(v); };
+    ov.addEventListener('click', e => { if (e.target === ov) done(null); const x = e.target.getAttribute && e.target.getAttribute('data-x'); if (x === '0') done(null); if (x === '1') done(ov); });
+    document.body.appendChild(ov);
+  });
+}
+async function openFolderCredOrgs(fid, cid) {
+  const f = _orgFolders.find(x => x.id === fid); const c = (f?.credentials || []).find(x => x.id === cid); if (!c) return;
+  const orgs = _oauthSubjects.filter(o => o.folder_id === fid);
+  if (!orgs.length) { await uiAlert('这个文件夹里还没有组织'); return; }
+  const on = new Set((c.orgs || []).map(o => o.id));
+  const ov = await _pickOverlay('设定使用这套凭证的组织', `<div style="font-size:12px;color:var(--txd);margin-bottom:6px;">勾选的组织：通讯录同步时把 UserId 绑定到这套凭证、用它登录的同一人在这些组织范围内认作同一账号。</div>` +
+    orgs.map(o => `<label style="display:block;padding:3px 0;"><input type="checkbox" value="${esc(o.id)}" ${on.has(o.id) ? 'checked' : ''}> ${esc(o.name)}</label>`).join(''), '保存');
+  if (!ov) return;
+  const ids = [...ov.querySelectorAll('input:checked')].map(i => i.value); ov.remove();
+  const { ok, data } = await api('PUT', `/admin/folder-credentials/${cid}/orgs`, { subject_ids: ids });
+  if (!ok) { showToast(data.error || '保存失败'); return; }
+  showToast('已保存'); loadOauthSubjects();
+}
+async function openConnUseModal(fid, connId) {
+  const f = _orgFolders.find(x => x.id === fid); const x = (f?.dir_connections || []).find(c => c.id === connId); if (!x) return;
+  const used = new Set((x.uses || []).map(u => u.subject_id));
+  const orgs = _oauthSubjects.filter(o => o.folder_id === fid && !used.has(o.id));
+  if (!orgs.length) { await uiAlert('文件夹里的组织都已套用这份通讯录（或文件夹里还没有组织）。没有组织可以用「按部门建组织…」直接建。'); return; }
+  const ov = await _pickOverlay('套用到组织', `<div style="font-size:12px;color:var(--txd);margin-bottom:6px;">选一个组织，下一步在它的同步设置里选要同步的部门。</div>` +
+    orgs.map((o, i) => `<label style="display:block;padding:3px 0;"><input type="radio" name="cu-org" value="${esc(o.id)}" ${i ? '' : 'checked'}> ${esc(o.name)}</label>`).join(''), '下一步');
+  if (!ov) return;
+  const sid = ov.querySelector('input:checked')?.value; ov.remove();
+  if (sid) openDirSourceModal(sid, null, connId);
+}
+async function openConnCreateOrgs(fid, connId) {
+  const f = _orgFolders.find(x => x.id === fid); const x = (f?.dir_connections || []).find(c => c.id === connId); if (!x) return;
+  showToast('正在从企业微信加载部门…');
+  const { ok, data } = await api('POST', `/admin/folder-dir-sources/${connId}/scope-tree`, {});
+  if (!ok) { showToast('加载部门失败：' + (data.error || '')); return; }
+  const nodes = data.nodes || [];
+  const byParent = {}; nodes.forEach(n => { (byParent[n.parent] = byParent[n.parent] || []).push(n); });
+  const ids = new Set(nodes.map(n => n.id));
+  const roots = nodes.filter(n => !ids.has(n.parent));
+  const row = (n, d) => `<label style="display:block;padding:2px 0 2px ${d * 16}px;"><input type="checkbox" data-id="${n.id}" data-name="${esc(n.name || '')}"> ${esc(n.name || ('部门 #' + n.id))} <span style="color:var(--txd);font-size:11px;">#${n.id}</span></label>` + (byParent[n.id] || []).map(c => row(c, d + 1)).join('');
+  const ov = await _pickOverlay('按部门建组织', `<div style="font-size:12px;color:var(--txd);margin-bottom:6px;">勾选的每个部门建一个同名组织（放进本文件夹），套用这份通讯录、只同步该部门（含子部门）；同企业的文件夹登录凭证一并设定给新组织使用。${data.limited ? '<br><span style="color:var(--warn);">⚠️ 这个 Secret 读不到部门名，组织名会用「部门 #ID」，建好后可改名。</span>' : ''}</div>
+    <div style="max-height:46vh;overflow:auto;border:1px solid var(--bd);border-radius:4px;padding:6px 8px;">${roots.map(n => row(n, 0)).join('') || '没有可见的部门'}</div>
+    <label style="display:block;margin-top:8px;font-size:13px;"><input type="checkbox" id="co-run" checked> 建好后立即同步</label>`, '建组织');
+  if (!ov) return;
+  const depts = [...ov.querySelectorAll('input[data-id]:checked')].map(i => ({ id: +i.dataset.id, name: i.dataset.name }));
+  const run = ov.querySelector('#co-run').checked; ov.remove();
+  if (!depts.length) { showToast('没有勾选部门'); return; }
+  if (!await uiConfirm(`建 ${depts.length} 个组织：${depts.map(d => d.name || ('部门 #' + d.id)).join('、')}？`, { title: '按部门建组织' })) return;
+  showToast('正在建组织' + (run ? '并同步' : '') + '…');
+  const r = await api('POST', `/admin/folder-dir-sources/${connId}/create-orgs`, { depts, run });
+  if (!r.ok) { showToast('失败：' + (r.data.error || '')); return; }
+  const errs = (r.data.created || []).filter(c => c.error);
+  showToast(`已建 ${r.data.created.length} 个组织` + (r.data.bound_creds ? `，并设定使用 ${r.data.bound_creds} 套登录凭证` : '') + (errs.length ? `；${errs.length} 个同步失败` : ''));
+  if (errs.length) await uiAlert(errs.map(c => `· ${c.name}：${c.error}`).join('\n'), { title: '同步失败' });
   loadOauthSubjects();
 }
 async function toggleFolderConn(id, enabled) {

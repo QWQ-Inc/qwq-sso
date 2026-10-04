@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.50　　最后更新：2026-10
+> 版本：v3.5.51　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1911,12 +1911,19 @@ DELETE /api/admin/folder-dir-sources/:id             # 删除（还有组织套�
 POST   /api/admin/folder-dir-sources/:id/scope-tree  # 该连接能看到的部门
 POST   /api/admin/folder-dir-sources/:id/run         # 依次同步所有启用的套用 → { results:[{source_id, org_name, state|error}] }
 POST   /api/admin/org-folders/:id/credentials        # 文件夹共用登录凭证 { platform, label, config, enabled }
-POST   /api/admin/org-folders/:id/migrate            # 逐条迁移 { kind:"dir_source"|"credential", id, confirm:"迁移" }
+POST   /api/admin/org-folders/:id/migrate            # 逐条交给文件夹 { kind:"dir_source"|"credential", id, confirm:"迁移" }
+PUT    /api/admin/folder-credentials/:id/orgs        # v3.5.51：设定使用这套文件夹凭证的组织 { subject_ids:[] }（只能是文件夹里的组织）
+POST   /api/admin/orgs/:sid/folder-credentials/:cid  # v3.5.51：组织使用 / 不再使用 { use: true|false }
+POST   /api/admin/folder-dir-sources/:id/create-orgs # v3.5.51：按部门建组织 { depts:[{id,name}], run?, bind_creds? } → { created:[{org_id,name,dept_id,source_id,state|error}], bound_creds }
 ```
+
+- **v3.5.51：交给文件夹 ≠ 套用。** 同步源迁移后组织不再自己同步：没有同企业连接时原同步源就地变成文件夹连接（id 不变），有则并进去、原同步源删掉（旧回调地址转到连接）；它的 UserId 映射留在连接上作为认人依据。组织要继续同步，再设定套用（组织「+ 通讯录同步」选这份，或文件夹面板「套用到组织…」）。凭证迁移后默认没有组织使用，要用再设定。
+- 文件夹凭证由哪些组织「使用」决定：同步时可绑定的凭证（`bind_choices`、auto 绑定）、同人合并范围都只算设定使用它的组织。升级时已有文件夹凭证自动设定给当时在该文件夹里的组织。组织移出文件夹时随之取消。
+- 按部门建组织：每个部门建一个同名组织放进文件夹，套用这份连接、只同步该部门（含子部门），同企业的文件夹企业微信凭证一并设定给新组织使用。
 
 - 组织套用：`POST /api/admin/orgs/:sid/dir-sources` 带 `parent_id`（连接 id，须是本组织所在文件夹的；须系统管理员），其余字段同普通同步源但不收企业 ID / Secret / 回调。`GET /api/admin/orgs/:sid/dir-sources` 多回 `folder_connections`、`can_use_folder`；同步源视图多回 `parent_id` / `parent_label` / `parent_enabled`，`callback_path` 指向连接。
 - 接收事件服务器：填连接的地址，一条事件会让所有启用的套用各同步一次；迁移前的组织同步源地址仍可用（自动转到连接）。
-- 文件夹凭证没有所属组织：组织的登录 IP / 时段 / 强制两步验证策略不作用于它；同人合并范围是整个文件夹。
+- 文件夹凭证没有所属组织：组织的登录 IP / 时段 / 强制两步验证策略不作用于它；同人合并范围是它自己 + 设定使用它的组织（v3.5.51）。
 - 套用着文件夹通讯录的组织不能移出文件夹；文件夹上有通讯录 / 凭证时不能删除文件夹。
 
 **公开接口**（登录页 / 账号绑定页用，无需鉴权，只给公开字段、绝不含 secret）：
