@@ -60,7 +60,7 @@ jobs:
             else
               export GIT_INDEX_FILE="${RUNNER_TEMP}/idx-$VER"
               git read-tree "$SHA"
-              git rm -r -q --cached .github/workflows
+              git rm -r -q --cached -f .github/workflows
               git read-tree --prefix=.github/workflows/ "$WF_TREE"
               TREE=$(git write-tree)
               unset GIT_INDEX_FILE
