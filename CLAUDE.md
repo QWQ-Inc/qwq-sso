@@ -429,6 +429,7 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - **不要尝试"保留完整连续 git 历史"的方案**——之前尝试过，因为主目录曾经有个误建的 `.git`（在 `C:\Users\xurui` 根目录，混入了大量个人文件和 Codex 运行时缓存），排查耗费大量精力，最终放弃，回到"每次重新初始化"的简单方案
 - 部署路径确认：本地解压 zip 到某个 `sso-deploy_XX/sso-system` 目录后，直接在**该子目录**里 `git init`，不要在上层目录操作
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
+- ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支），v3.5.24~v3.5.37 的 tag 因此一度缺失。现在 `.github/workflows/release.yml` 在每次推 main（或手动运行）时扫描 main 历史，提交标题以 `vX.Y.Z:` 开头而远端没有对应 tag 的，**由 Actions 用 GITHUB_TOKEN 在该提交上补打 tag 并建 Release**（说明取 CHANGELOG 对应小节）。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式；本地能推 tag 时照常推，已存在的 tag 不会被改动。
 
 ---
 

@@ -1,11 +1,20 @@
 name: Release
 
-# 每次推送 vX.Y.Z tag → 自动在 GitHub 建 Release（线性发行记录）。
-# 用 Actions 内置 GITHUB_TOKEN，无需本地 gh 登录；说明取自 CHANGELOG.md 对应小节。
+# 线性发行记录：每个版本一个 tag + 一个 GitHub Release，说明取自 CHANGELOG.md 对应小节。
+# 用 Actions 内置 GITHUB_TOKEN，无需本地 gh 登录。
+#
+# 两种触发：
+#   1. 推送 vX.Y.Z tag（本地能推 tag 时）→ 给这个 tag 建/更新 Release
+#   2. 推送 main / 手动运行 → 扫描 main 历史里提交标题以「vX.Y.Z:」开头的发版提交，
+#      远端还没有对应 tag 的，在该提交上补打 tag 并建 Release（v3.5.37 加：有的环境推不了 tag，
+#      只能推分支，由这里在服务端补打；已存在的 tag 不动）
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,22 +24,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Build release notes + publish
+      - name: 补打 tag + 发布 Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          NOTES_FILE="${RUNNER_TEMP}/notes.md"
-          # 取 CHANGELOG.md 里 "## <TAG>" 到下一个 "## v" 之间的内容作为 Release 说明
-          awk -v tag="$TAG" '
-            index($0, "## " tag)==1 {grab=1; next}
-            grab && /^## v/ {exit}
-            grab {print}
-          ' CHANGELOG.md > "$NOTES_FILE"
-          if [ ! -s "$NOTES_FILE" ]; then echo "Release $TAG" > "$NOTES_FILE"; fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
-          else
-            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --force
+
+          publish() {   # $1 = tag
+            TAG="$1"
+            NOTES_FILE="${RUNNER_TEMP}/notes-${TAG}.md"
+            # 取 CHANGELOG.md 里 "## <TAG> " 到下一个 "## v" 之间的内容作为 Release 说明
+            awk -v tag="$TAG" '
+              ($0 == "## " tag || index($0, "## " tag " ")==1) {grab=1; next}
+              grab && /^## v/ {exit}
+              grab {print}
+            ' CHANGELOG.md > "$NOTES_FILE"
+            if [ ! -s "$NOTES_FILE" ]; then echo "Release $TAG" > "$NOTES_FILE"; fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+            else
+              gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --verify-tag
+            fi
+          }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            publish "${GITHUB_REF_NAME}"
+            exit 0
           fi
+
+          # 从旧到新扫描 main 上的发版提交，缺 tag 的补上（按版本顺序发布，Release 列表保持线性）
+          git log --reverse --format='%H %s' HEAD | while read -r SHA SUBJ; do
+            VER=$(printf '%s' "$SUBJ" | sed -nE 's/^(v[0-9]+(\.[0-9]+){2,3}):.*/\1/p')
+            [ -z "$VER" ] && continue
+            if git rev-parse -q --verify "refs/tags/$VER" >/dev/null; then
+              # tag 已有：只确保 Release 存在
+              gh release view "$VER" >/dev/null 2>&1 || publish "$VER"
+              continue
+            fi
+            echo "补打 $VER → $SHA"
+            git tag -a "$VER" -m "$VER" "$SHA"
+            git push origin "refs/tags/$VER"
+            publish "$VER"
+          done
