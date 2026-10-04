@@ -2,6 +2,8 @@ name: Release
 
 # 每次推送 vX.Y.Z tag → 自动在 GitHub 建 Release（线性发行记录）。
 # 用 Actions 内置 GITHUB_TOKEN，无需本地 gh 登录；说明取自 CHANGELOG.md 对应小节。
+# ⚠️ 补打旧 tag 不能交给 Actions：GITHUB_TOKEN 没有 workflows 权限，GitHub 拒绝它给
+#   「workflow 文件与当前不同」的提交建引用（git push 和 Release API 都一样，v3.5.37 实测）。
 on:
   push:
     tags:
@@ -20,17 +22,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          NOTES_FILE="${RUNNER_TEMP}/notes.md"
-          # 取 CHANGELOG.md 里 "## <TAG>" 到下一个 "## v" 之间的内容作为 Release 说明
-          awk -v tag="$TAG" '
-            index($0, "## " tag)==1 {grab=1; next}
-            grab && /^## v/ {exit}
-            grab {print}
-          ' CHANGELOG.md > "$NOTES_FILE"
-          if [ ! -s "$NOTES_FILE" ]; then echo "Release $TAG" > "$NOTES_FILE"; fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
-          else
-            gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
-          fi
+          set -e
+
+          publish() {   # $1 = tag，$2 = 提交（可选：tag 还不存在时由 Release API 在该提交上创建）
+            TAG="$1"; TARGET="${2:-}"
+            NOTES_FILE="${RUNNER_TEMP}/notes-${TAG}.md"
+            # 取 CHANGELOG.md 里 "## <TAG> " 到下一个 "## v" 之间的内容作为 Release 说明
+            awk -v tag="$TAG" '
+              ($0 == "## " tag || index($0, "## " tag " ")==1) {grab=1; next}
+              grab && /^## v/ {exit}
+              grab {print}
+            ' CHANGELOG.md > "$NOTES_FILE"
+            if [ ! -s "$NOTES_FILE" ]; then echo "Release $TAG" > "$NOTES_FILE"; fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
+            else
+              if [ -n "$TARGET" ]; then
+                gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --target "$TARGET"
+              else
+                gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --verify-tag
+              fi
+            fi
+          }
+
+          publish "${GITHUB_REF_NAME}"
