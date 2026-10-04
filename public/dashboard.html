@@ -2349,11 +2349,11 @@ async function loadMe() {
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
             <h3>默认主体（本站）· 三方登录凭证</h3>
-            <button class="btn primary" style="font-size:11px;" onclick="saveDefaultSubjectCreds()">保存</button>
+            <button class="btn primary" style="font-size:11px;" onclick="openDefaultCredModal()">+ 添加凭证</button>
           </div>
           <div style="font-size:11px;color:var(--txd);padding:8px 16px 0;line-height:1.7;">
-            这里配置<b>本站默认主体</b>的各平台三方登录凭证（原「系统配置 → 三方登录」已<b>统一搬到这里</b>）。<br>
-            这些凭证对应登录页各平台的「默认（本站）」入口；需要多组织 / 多套凭证时，用下方「新建主体」分别挂凭证。
+            这里配置<b>本站默认主体</b>的各平台三方登录凭证，对应登录页各平台的「默认（本站）」入口；点「编辑」进入该平台的配置页，「停用」只关闭登录入口、凭证保留。<br>
+            需要多组织 / 多套凭证时，用下方「新建主体」分别挂凭证。
           </div>
           <div class="card-body"><div id="default-subject-creds" style="font-size:12px;color:var(--txd);">加载中…</div></div>
         </div>
@@ -2862,30 +2862,13 @@ async function loadMe() {
       <textarea id="orgmem-import" rows="4" placeholder="zhang@x.com, 张三, EMP0001&#10;13800138000, 李四" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:monospace;background:var(--sf);color:var(--tx);"></textarea>
       <div style="display:flex;justify-content:flex-end;margin-top:6px;"><button class="btn primary" style="font-size:12px;" onclick="doOrgImport()">导入</button></div>
     </details>
-    <details id="orgmem-dirsync" style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadDirSync()">
-      <summary style="cursor:pointer;color:var(--txm);">🔄 企业微信通讯录同步</summary>
-      <div style="font-size:11px;color:var(--txd);margin:6px 0;line-height:1.7;">
-        把企业微信某个部门（含子部门）的成员同步进本组织：按企业微信 UserId → 邮箱 → 手机 匹配已有账号，匹配不到才新建；
-        离职 / 禁用的成员会从本组织移出（只动同步进来的成员，手动加入的不动）。
-        需要企业微信后台「管理工具 → 通讯录同步」的 <b>Secret</b>，并把本服务器出口 IP 加进它的可信 IP。
+    <details id="orgmem-dirsync" style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadDirSources()">
+      <summary style="cursor:pointer;color:var(--txm);">🔄 通讯录同步（企业微信等，可多个）</summary>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:8px;">
+        <span style="font-size:11px;color:var(--txd);">每个同步源对应一个外部通讯录（如一家企业微信），可分别启停、同步。</span>
+        <button class="btn primary" style="font-size:11px;flex:none;" onclick="openDirSourceModal(_orgMemSid)">+ 添加同步源</button>
       </div>
-      <div style="display:grid;grid-template-columns:110px 1fr;gap:6px 8px;align-items:center;">
-        <span style="color:var(--txd);">企业 ID</span><input id="ds-corp" placeholder="ww开头的 corpid" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
-        <span style="color:var(--txd);">通讯录 Secret</span><input id="ds-secret" type="password" autocomplete="new-password" placeholder="通讯录同步 Secret" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
-        <span style="color:var(--txd);">同步部门 ID</span><input id="ds-dept" type="number" min="1" value="1" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
-        <span style="color:var(--txd);">组织内 UID</span>
-        <select id="ds-uid" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);"><option value="userid">用企业微信 UserId</option><option value="rule">按本组织 UID 规则生成</option><option value="none">不设置</option></select>
-        <span style="color:var(--txd);">自动同步</span>
-        <select id="ds-interval" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);"><option value="0">只手动</option><option value="1">每 1 小时</option><option value="6">每 6 小时</option><option value="24">每天</option></select>
-      </div>
-      <label style="display:block;margin-top:6px;color:var(--tx);"><input type="checkbox" id="ds-remove" checked> 企业微信里离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
-      <div id="ds-bind" style="font-size:11px;color:var(--txd);margin-top:6px;"></div>
-      <div id="ds-state" style="font-size:12px;margin-top:6px;"></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap;">
-        <button class="btn" style="font-size:12px;color:var(--err);border-color:var(--err);" onclick="clearDirSync()">停用并清除</button>
-        <button class="btn" style="font-size:12px;" onclick="saveDirSync()">保存配置</button>
-        <button class="btn primary" style="font-size:12px;" id="ds-run" onclick="runDirSyncNow()">立即同步</button>
-      </div>
+      <div id="orgmem-dirsrc" style="font-size:12px;">加载中…</div>
     </details>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);">🔗 从开放组织复用成员（v3.5.18）</summary>
@@ -4869,50 +4852,187 @@ async function loadGroupsTags() {
 let _oauthPlatforms = [];   // [{key,label,fields,secret,env_configured}]
 let _oauthSubjects = [];    // [{id,name,enabled,credentials:[...]}]
 
-// ── 默认主体（本站）三方凭证：复用系统配置的 env 编辑器渲染 category==='oauth' 的 ENV_GROUPS ──
-function _envRowHtml(v) {
-  const filled = (v.value || '').trim().length > 0;
-  const isVisible = envSecretVisible[v.key] || false;
-  const inputClass = ['env-input', v.secret && !isVisible ? 'secret' : '', filled ? 'filled' : ''].filter(Boolean).join(' ');
-  const displayVal = v.secret && !isVisible && filled ? '•'.repeat(Math.min(v.value.length, 24)) : (v.value || '');
-  return `<div class="env-row" id="envrow-${v.key}">
-    <div class="env-key-cell"><div class="env-key">${v.key}</div><div class="env-key-desc">${v.label} · ${v.desc}</div></div>
-    <div class="env-val-cell"><input class="${inputClass}" id="envinput-${v.key}" type="${v.secret&&!isVisible?'password':'text'}" value="${esc(displayVal)}" placeholder="${esc(v.placeholder||'请填写…')}" oninput="onEnvInput('${v.key}',this.value)" autocomplete="off" spellcheck="false"/></div>
-    <div class="env-status-cell">${filled?'<span class="badge ok">已配置</span>':'<span class="badge grey">未配置</span>'}</div>
-    <div class="env-action-cell">${v.secret?`<button class="env-eye-btn" onclick="toggleEnvSecret('${v.key}')">${isVisible?'🙈':'👁'}</button>`:'<span></span>'}</div>
-  </div>`;
+// ── 默认主体（本站）三方凭证（v3.5.36 改为「列表 + 子页面」，与组织凭证同一种交互）──
+// 值仍存环境变量；后端 /admin/oauth-defaults 按平台切片读写 + 启停（OAUTH_DEFAULT_DISABLED）。
+let _defaultCreds = [];
+const _credBadge = (on) => on
+  ? '<span style="font-size:10px;color:#1a7f37;background:#e6f4ea;padding:1px 7px;border-radius:10px;">启用</span>'
+  : '<span style="font-size:10px;color:var(--txd);background:var(--sf2);padding:1px 7px;border-radius:10px;">停用</span>';
+const _rowBtn = 'font-size:11px;padding:2px 8px;';
+const _rowDanger = 'font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);';
+function _envMeta(key) {
+  for (const g of ENV_GROUPS) { const v = g.vars.find(x => x.key === key); if (v) return { ...v, group: g }; }
+  return null;
 }
 async function renderDefaultSubjectCreds() {
   const box = document.getElementById('default-subject-creds');
   if (!box) return;
-  const { ok, data } = await api('GET', '/admin/env');
-  const oauthGroups = ENV_GROUPS.filter(g => g.category === 'oauth');
-  if (ok) oauthGroups.forEach(g => g.vars.forEach(v => { v.dirty = false; if (data.env[v.key] !== undefined) v.value = data.env[v.key]; }));
-  box.innerHTML = oauthGroups.map(g => `
-    <div class="env-section" id="envsec-${g.key}">
-      <div class="env-section-header" onclick="toggleEnvSection('${g.key}')">
-        <span class="env-section-icon">${g.icon}</span>
-        <span class="env-section-name">${g.label}</span>
-        <span class="env-section-meta">${g.vars.filter(v=>(v.value||'').trim()).length}/${g.vars.length} · ${g.desc}</span>
-        <span class="env-section-chevron">▾</span>
-      </div>
-      <div class="env-rows">${g.vars.map(_envRowHtml).join('')}</div>
-    </div>`).join('');
+  const { ok, data } = await api('GET', '/admin/oauth-defaults');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + esc(data.error || '加载失败（需超级管理员）') + '</div>'; return; }
+  _defaultCreds = data.platforms || [];
+  const list = _defaultCreds.filter(p => p.configured);
+  box.innerHTML = list.length ? list.map(p => {
+    const g = ENV_GROUPS.find(x => x.key === p.platform);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
+      <span style="font-size:15px;flex:none;">${g ? g.icon : '🔑'}</span>
+      <span style="flex:1;min-width:120px;color:var(--txt);font-size:13px;">${esc(p.label)} <span style="color:var(--txd);font-size:11px;">${esc(p.primary)}：${esc((p.fields.find(f => f.key === p.primary) || {}).value || '')}</span></span>
+      ${_credBadge(p.enabled)}
+      <button class="btn" style="${_rowBtn}" onclick="toggleDefaultCred('${p.platform}', ${!p.enabled})">${p.enabled ? '停用' : '启用'}</button>
+      <button class="btn" style="${_rowBtn}" onclick="openDefaultCredModal('${p.platform}')">编辑</button>
+      <button class="btn" style="${_rowDanger}" onclick="delDefaultCred('${p.platform}')">删除</button>
+    </div>`;
+  }).join('') : '<div style="color:var(--txd);padding:8px 4px;">本站还没有配置任何三方登录凭证，点右上角「+ 添加凭证」。</div>';
 }
-async function saveDefaultSubjectCreds() {
-  const vars = {};
-  ENV_GROUPS.filter(g => g.category === 'oauth').forEach(g => g.vars.forEach(v => {
-    const el = document.getElementById('envinput-' + v.key);
-    const cur = el ? el.value : v.value;
-    if (cur === undefined || cur === null) return;
-    if (isMaskedValue(cur)) return;         // 圆点占位不覆盖
-    if (v.secret && !v.dirty) return;       // 未改过的 secret 跳过
-    vars[v.key] = cur;
-  }));
-  if (!Object.keys(vars).length) { showToast('没有需要保存的改动'); return; }
-  const { ok, data } = await api('POST', '/admin/env', { vars });
-  if (ok) { showToast('已保存并生效'); renderDefaultSubjectCreds(); }
-  else showToast('保存失败：' + (data?.error || '未知错误'));
+function openDefaultCredModal(platform) {
+  const editing = !!platform;
+  const avail = _defaultCreds.filter(p => !p.configured);
+  if (!editing && !avail.length) { showToast('所有平台都已配置'); return; }
+  const cur = editing ? _defaultCreds.find(p => p.platform === platform) : avail[0];
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  const fieldsHtml = (p) => p.fields.map(f => {
+    const m = _envMeta(f.key) || {};
+    const ph = f.secret && f.set ? '已配置，留空不修改' : (m.placeholder || '');
+    return `<div style="margin-bottom:10px;">
+      <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">${esc(m.label || f.key)}${f.key === p.primary ? ' *' : ''} <code style="font-size:10px;">${esc(f.key)}</code>${f.secret ? ' 🔒' : ''}</label>
+      <input class="dc-f" data-key="${esc(f.key)}" type="${f.secret ? 'password' : 'text'}" autocomplete="off" value="${esc(f.value || '')}" placeholder="${esc(ph)}"
+        style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+      ${m.desc ? `<div style="font-size:11px;color:var(--txd);margin-top:3px;">${esc(m.desc)}</div>` : ''}
+    </div>`;
+  }).join('');
+  ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:540px;text-align:left;">
+    <h3 style="margin-bottom:14px;">${editing ? '编辑本站凭证 · ' + esc(cur.label) : '添加本站凭证'}</h3>
+    ${editing ? '' : `<div style="margin-bottom:12px;"><label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">平台</label>
+      <select id="dc-platform" style="width:100%;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+      ${avail.map(p => `<option value="${p.platform}">${esc(p.label)}</option>`).join('')}</select></div>`}
+    <div id="dc-fields">${fieldsHtml(cur)}</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);"><input type="checkbox" id="dc-enabled" ${cur.enabled ? 'checked' : ''}> 启用（登录页显示「默认（本站）」入口）</label>
+    <div style="font-size:11px;color:var(--txd);margin-top:8px;line-height:1.6;">🔒 为密钥字段，编辑时留空即保留原值。若这些变量同时配在部署平台（如 Zeabur）的环境变量里，以部署平台为准。</div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+      <button class="btn" id="dc-cancel">取消</button><button class="btn primary" id="dc-save">保存</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  let p = cur;
+  const sel = ov.querySelector('#dc-platform');
+  if (sel) sel.onchange = () => { p = _defaultCreds.find(x => x.platform === sel.value); ov.querySelector('#dc-fields').innerHTML = fieldsHtml(p); ov.querySelector('#dc-enabled').checked = true; };
+  ov.querySelector('#dc-cancel').onclick = () => ov.remove();
+  ov.querySelector('#dc-save').onclick = async () => {
+    const values = {};
+    ov.querySelectorAll('.dc-f').forEach(el => { values[el.dataset.key] = el.value.trim(); });
+    const { ok, data } = await api('PUT', '/admin/oauth-defaults/' + p.platform, { values, enabled: ov.querySelector('#dc-enabled').checked });
+    if (!ok) { showToast(data.error || '保存失败'); return; }
+    ov.remove(); showToast('已保存并生效'); renderDefaultSubjectCreds();
+  };
+}
+async function toggleDefaultCred(platform, enabled) {
+  const { ok, data } = await api('PUT', '/admin/oauth-defaults/' + platform, { enabled });
+  if (!ok) { showToast(data.error || '操作失败'); return; }
+  showToast(enabled ? '已启用' : '已停用（凭证保留）'); renderDefaultSubjectCreds();
+}
+async function delDefaultCred(platform) {
+  const p = _defaultCreds.find(x => x.platform === platform);
+  if (!confirm(`删除本站的「${p ? p.label : platform}」登录凭证？会清空它的全部配置，登录入口随之消失（已绑定用户的历史记录保留）。`)) return;
+  const { ok, data } = await api('DELETE', '/admin/oauth-defaults/' + platform);
+  if (!ok) { showToast(data.error || '删除失败'); return; }
+  showToast('已删除'); renderDefaultSubjectCreds();
+}
+
+// ── 通讯录同步源（v3.5.36）：一个组织可以有多个（多个企业微信 / 以后飞书、钉钉），像凭证一样逐个启停 ──
+let _dirSourcesBySid = {};
+function _dirStateText(st) {
+  if (!st) return '<span style="color:var(--txd);">未同步</span>';
+  const at = esc(String(st.at || '').replace('T', ' ').slice(5, 16));
+  if (!st.ok) return `<span style="color:var(--err);" title="${esc(st.error || '')}">✗ ${at} 失败</span>`;
+  return `<span style="color:#1F7A3A;" title="新建 ${st.created} · 关联 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${(st.errors||[]).length ? ' · 异常 ' + st.errors.length : ''}">✓ ${at} · 在册 ${st.total}${st.removed ? ' · 移出 ' + st.removed : ''}${(st.errors||[]).length ? ' · ⚠' + st.errors.length : ''}</span>`;
+}
+function dirSourceRowsHtml(sid, sources, indent) {
+  const pad = indent ? 'padding:7px 14px 7px 30px;border-top:1px solid var(--bd);' : 'padding:7px 4px;border-bottom:1px solid var(--bd);';
+  _dirSourcesBySid[sid] = sources || [];
+  if (!(sources || []).length) return indent ? '' : '<div style="color:var(--txd);padding:8px 4px;font-size:12px;">还没有同步源，点「+ 添加同步源」。</div>';
+  return sources.map(x => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${pad}">
+    <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
+    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · 部门 ${esc(x.config.dept_id || 1)}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
+    <span style="font-size:11px;">${_dirStateText(x.state)}</span>
+    ${_credBadge(x.enabled)}
+    ${x.enabled ? `<button class="btn" style="${_rowBtn}" onclick="runDirSource('${x.id}','${esc(sid)}')">立即同步</button>` : ''}
+    <button class="btn" style="${_rowBtn}" onclick="toggleDirSource('${x.id}','${esc(sid)}',${!x.enabled})">${x.enabled ? '停用' : '启用'}</button>
+    <button class="btn" style="${_rowBtn}" onclick="openDirSourceModal('${esc(sid)}','${x.id}')">编辑</button>
+    <button class="btn" style="${_rowDanger}" onclick="delDirSource('${x.id}','${esc(sid)}')">删除</button>
+  </div>`).join('');
+}
+async function refreshDirSourceViews(sid) {
+  const modal = document.getElementById('orgmem-modal');
+  if (modal && modal.classList.contains('show') && _orgMemSid === sid) loadDirSources();
+  if (document.getElementById('page-adm-oauth')?.classList.contains('active')) loadOauthSubjects();
+}
+async function loadDirSources() {
+  const box = document.getElementById('orgmem-dirsrc'); if (!box) return;
+  if (_IS_DEV) { box.innerHTML = dirSourceRowsHtml(_orgMemSid, []); return; }
+  const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/dir-sources');
+  box.innerHTML = ok ? dirSourceRowsHtml(_orgMemSid, data.sources) : '<div style="color:var(--err);">' + esc(data.error || '加载失败') + '</div>';
+}
+function openDirSourceModal(sid, srcId) {
+  const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
+  const c = src ? src.config : { dept_id: 1, uid_mode: 'userid', interval_hours: 0, remove_missing: true };
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
+  const lab = (t) => `<label style="display:block;font-size:12px;color:var(--txd);margin:10px 0 4px;">${t}</label>`;
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:540px;text-align:left;">
+    <h3 style="margin-bottom:6px;">${src ? '编辑通讯录同步源' : '添加通讯录同步源'}</h3>
+    <div style="font-size:11px;color:var(--txd);line-height:1.7;">把外部通讯录某部门（含子部门）的成员同步成本组织成员：按 UserId → 邮箱 → 手机 匹配已有账号，匹配不到才新建；离开的人从本组织移出（只动同步进来、且已不在本组织任何同步源里的成员）。</div>
+    ${lab('类型')}<select id="dsm-type" ${src ? 'disabled' : ''} style="${inp}"><option value="wecom">企业微信</option><option disabled>飞书（即将支持）</option><option disabled>钉钉（即将支持）</option></select>
+    ${lab('名称（如「A 公司企业微信」）')}<input id="dsm-label" value="${esc(src ? src.label : '')}" placeholder="企业微信" style="${inp}">
+    ${lab('企业 ID（corpid）')}<input id="dsm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
+    ${lab('通讯录 Secret（企业微信后台「管理工具 → 通讯录同步」，并把本服务器出口 IP 加进可信 IP）')}<input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;">${lab('同步部门 ID')}<input id="dsm-dept" type="number" min="1" value="${esc(c.dept_id || 1)}" style="${inp}"></div>
+      <div style="flex:1;">${lab('自动同步')}<select id="dsm-interval" style="${inp}">${[[0,'只手动'],[1,'每 1 小时'],[6,'每 6 小时'],[24,'每天']].map(([v,t]) => `<option value="${v}" ${Number(c.interval_hours||0)===v?'selected':''}>${t}</option>`).join('')}</select></div>
+    </div>
+    ${lab('组织内 UID')}<select id="dsm-uid" style="${inp}">${[['userid','用企业微信 UserId'],['rule','按本组织 UID 规则生成'],['none','不设置']].map(([v,t]) => `<option value="${v}" ${c.uid_mode===v?'selected':''}>${t}</option>`).join('')}</select>
+    <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
+    <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
+    ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${src.bind_provider ? '🔐 已找到同一企业的企业微信登录凭证，同步的成员会绑定其 UserId，之后用企业微信登录进同一账号。' : 'ℹ️ 本系统还没配置这家企业的企业微信登录——同步照常；配好登录后再同步一次即可绑定 UserId。'}</div>
+      <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>` : ''}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+      <button class="btn" id="dsm-cancel">取消</button><button class="btn primary" id="dsm-save">保存</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#dsm-cancel').onclick = () => ov.remove();
+  ov.querySelector('#dsm-save').onclick = async () => {
+    const body = {
+      type: ov.querySelector('#dsm-type').value, label: ov.querySelector('#dsm-label').value.trim(),
+      corp_id: ov.querySelector('#dsm-corp').value.trim(), secret: ov.querySelector('#dsm-secret').value.trim(),
+      dept_id: parseInt(ov.querySelector('#dsm-dept').value, 10) || 1, interval_hours: parseInt(ov.querySelector('#dsm-interval').value, 10) || 0,
+      uid_mode: ov.querySelector('#dsm-uid').value, remove_missing: ov.querySelector('#dsm-remove').checked, enabled: ov.querySelector('#dsm-enabled').checked,
+    };
+    if (_IS_DEV) { ov.remove(); showToast('演示模式：已保存'); return; }
+    const { ok, data } = src ? await api('PATCH', '/admin/dir-sources/' + src.id, body) : await api('POST', '/admin/orgs/' + sid + '/dir-sources', body);
+    if (!ok) { showToast(data.error || '保存失败'); return; }
+    ov.remove(); showToast('已保存'); refreshDirSourceViews(sid);
+  };
+}
+async function toggleDirSource(id, sid, enabled) {
+  const { ok, data } = await api('PATCH', '/admin/dir-sources/' + id, { enabled });
+  if (!ok) { showToast(data.error || '操作失败'); return; }
+  showToast(enabled ? '已启用' : '已停用'); refreshDirSourceViews(sid);
+}
+async function runDirSource(id, sid) {
+  showToast('同步中…');
+  const { ok, data } = await api('POST', '/admin/dir-sources/' + id + '/run');
+  if (!ok) { showToast(data.error || '同步失败'); refreshDirSourceViews(sid); return; }
+  const st = data.state;
+  showToast(`同步完成：在册 ${st.total}，新建 ${st.created}，新加入 ${st.added}，移出 ${st.removed}`);
+  refreshDirSourceViews(sid);
+  const modal = document.getElementById('orgmem-modal');
+  if (modal && modal.classList.contains('show') && _orgMemSid === sid) loadOrgMembers();
+}
+async function delDirSource(id, sid) {
+  const x = (_dirSourcesBySid[sid] || []).find(s => s.id === id);
+  if (!confirm(`删除同步源「${x ? x.label : ''}」？已同步进来的成员不会被移出。`)) return;
+  const { ok, data } = await api('DELETE', '/admin/dir-sources/' + id);
+  if (!ok) { showToast(data.error || '删除失败'); return; }
+  showToast('已删除'); refreshDirSourceViews(sid);
 }
 
 async function loadOauthSubjects() {
@@ -4939,6 +5059,7 @@ async function loadOauthSubjects() {
         <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">${esc(pname)}</span>
         <span style="flex:1;color:var(--txt);">${esc(c.label || pname)}</span>
         ${badge(c.enabled)}
+        <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='toggleOauthProvider(${JSON.stringify(c.id)},${!c.enabled})'>${c.enabled ? '停用' : '启用'}</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)},${JSON.stringify(c).replace(/'/g,"&#39;")})'>编辑</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>删除</button>
       </div>`;
@@ -4955,10 +5076,12 @@ async function loadOauthSubjects() {
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOrgAdmins(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>🛡️ 组织管理员</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openSubjectApps(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>📦 开放应用</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)})'>+ 凭证</button>
+        <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openDirSourceModal(${JSON.stringify(s.id)})'>+ 通讯录同步</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openSubjectModal(${JSON.stringify(s).replace(/'/g,"&#39;")})'>编辑</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delSubject(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>删除</button>
       </div>
       ${creds}
+      ${dirSourceRowsHtml(s.id, s.dir_sources, true)}
     </div>`;
   }).join('');
 }
@@ -6709,69 +6832,6 @@ async function saveOrgUidRule() {
   const { ok, data } = await api('PATCH', '/admin/orgs/' + _orgMemSid + '/uid-rule', { uid_prefix, uid_len });
   if (ok) showToast('规则已保存'); else showToast('保存失败：' + (data?.error || '未知错误'));
 }
-// ── 企业微信通讯录同步（v3.5.35）──
-function renderDirSyncState(st, running) {
-  const el = document.getElementById('ds-state'); if (!el) return;
-  if (running) { el.innerHTML = '<span style="color:var(--txd);">同步中…</span>'; return; }
-  if (!st) { el.innerHTML = '<span style="color:var(--txd);">还没同步过。</span>'; return; }
-  const at = esc(String(st.at || '').replace('T', ' ').slice(0, 19));
-  if (!st.ok) { el.innerHTML = `<span style="color:var(--err);">✗ ${at} 同步失败：${esc(st.error || '')}</span>`; return; }
-  const errs = (st.errors || []).length ? `<div style="color:#B26A00;margin-top:3px;">⚠ ${st.errors.length} 条异常：${esc(st.errors.slice(0, 3).map(e => (e.userid ? e.userid + '：' : '') + e.error).join('；'))}</div>` : '';
-  el.innerHTML = `<span style="color:#1F7A3A;">✓ ${at} 同步完成</span>
-    <span style="color:var(--txd);">· 在册 ${st.total} 人 · 新建账号 ${st.created} · 关联已有账号 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${st.skipped ? ' · 跳过离职/禁用 ' + st.skipped : ''}</span>${errs}`;
-}
-function renderDirSyncBind(bp) {
-  const el = document.getElementById('ds-bind'); if (!el) return;
-  el.innerHTML = bp ? `🔐 已找到同一企业的企业微信登录凭证，同步的成员会绑定其 UserId，之后用企业微信登录会进到同一个账号。`
-    : `ℹ️ 本系统还没配置这家企业的企业微信登录（或企业 ID 不一致）——同步照常进行；配好登录后，再同步一次即可把账号与 UserId 绑定。`;
-}
-async function loadDirSync() {
-  if (_IS_DEV) { renderDirSyncState(null); renderDirSyncBind(null); return; }
-  const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/dir-sync');
-  if (!ok) { renderDirSyncState({ ok: false, error: data.error || '加载失败' }); return; }
-  const c = data.config || {};
-  document.getElementById('ds-corp').value = c.corp_id || '';
-  document.getElementById('ds-secret').value = c.secret || '';
-  document.getElementById('ds-dept').value = c.dept_id || 1;
-  document.getElementById('ds-uid').value = c.uid_mode || 'userid';
-  document.getElementById('ds-interval').value = String(c.interval_hours || 0);
-  document.getElementById('ds-remove').checked = c.remove_missing !== false;
-  renderDirSyncBind(data.bind_provider);
-  renderDirSyncState(data.state, data.running);
-}
-async function saveDirSync(silent) {
-  const body = {
-    corp_id: document.getElementById('ds-corp').value.trim(),
-    secret: document.getElementById('ds-secret').value.trim(),
-    dept_id: parseInt(document.getElementById('ds-dept').value, 10) || 1,
-    uid_mode: document.getElementById('ds-uid').value,
-    interval_hours: parseInt(document.getElementById('ds-interval').value, 10) || 0,
-    remove_missing: document.getElementById('ds-remove').checked,
-  };
-  if (_IS_DEV) { if (!silent) showToast('演示模式：已保存'); return true; }
-  const { ok, data } = await api('PUT', '/admin/orgs/' + _orgMemSid + '/dir-sync', body);
-  if (!ok) { showToast(data.error || '保存失败'); return false; }
-  document.getElementById('ds-secret').value = data.config?.secret || '';
-  renderDirSyncBind(data.bind_provider);
-  if (!silent) showToast('已保存同步配置');
-  return true;
-}
-async function runDirSyncNow() {
-  if (!(await saveDirSync(true))) return;
-  if (_IS_DEV) { renderDirSyncState({ at: new Date().toISOString(), ok: true, total: 3, created: 1, linked: 2, added: 3, removed: 0, errors: [] }); return; }
-  const btn = document.getElementById('ds-run'); btn.disabled = true; renderDirSyncState(null, true);
-  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/dir-sync/run');
-  btn.disabled = false;
-  if (!ok) { showToast(data.error || '同步失败'); loadDirSync(); return; }
-  renderDirSyncState(data.state);
-  showToast('同步完成'); loadOrgMembers();
-}
-async function clearDirSync() {
-  if (!confirm('停用并清除企业微信通讯录同步配置？已同步进来的成员不会被移出。')) return;
-  if (!_IS_DEV) { const { ok, data } = await api('PUT', '/admin/orgs/' + _orgMemSid + '/dir-sync', { clear: true }); if (!ok) { showToast(data.error || '操作失败'); return; } }
-  ['ds-corp', 'ds-secret'].forEach(id => document.getElementById(id).value = '');
-  renderDirSyncState(null); renderDirSyncBind(null); showToast('已清除');
-}
 async function doOrgImport() {
   const text = document.getElementById('orgmem-import').value.trim();
   if (!text) { showToast('请粘贴要导入的成员'); return; }
@@ -6862,6 +6922,11 @@ async function saveOauthProvider() {
   else showToast('保存失败：' + (res.data?.error || '未知错误'));
 }
 
+async function toggleOauthProvider(id, enabled) {
+  const { ok, data } = await api('PATCH', '/admin/oauth-providers/' + id, { enabled });
+  if (ok) { showToast(enabled ? '已启用' : '已停用'); loadOauthSubjects(); }
+  else showToast('操作失败：' + (data?.error || '未知错误'));
+}
 async function delOauthProvider(id, name) {
   if (!confirm(`确定删除登录凭证「${name}」？该凭证的登录入口会消失（已绑定用户的历史记录保留）。`)) return;
   const { ok, data } = await api('DELETE', '/admin/oauth-providers/' + id);

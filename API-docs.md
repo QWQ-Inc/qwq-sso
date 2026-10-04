@@ -775,7 +775,7 @@ GET /api/apps/authed
 | 存证 | GET | `/v1/audit/verify` | `audit:read` | 校验存证链完整性 |
 | 存证 | GET | `/v1/users/:uid/audit` | `audit:read` | 查某用户的存证事件 |
 | 组织 | POST | `/v1/orgs/:sid/members/import` | `org:sync` | 外部通讯录批量导入组织成员 |
-| 组织 | POST | `/v1/orgs/:sid/dir-sync/run` | `org:sync` | 立即执行一次企业微信通讯录同步（v3.5.35） |
+| 组织 | POST | `/v1/orgs/:sid/dir-sync/run` | `org:sync` | 依次执行该组织所有启用的通讯录同步源（v3.5.35/36） |
 | 用户 | GET | `/v1/users/:uid/org` | `users:read` | 该用户的分组 + 标签（仅名称/颜色） |
 | 积分 | GET | `/v1/users/:uid/points` | `points:read` | 积分余额 |
 | 积分 | GET | `/v1/users/:uid/points/logs` | `points:read` | 积分明细（最近 50） |
@@ -1516,26 +1516,29 @@ PUT /api/v1/watermark     scope: config:write
 
 ---
 
-### 6.18 企业微信通讯录同步（v3.5.35）
+### 6.18 企业微信通讯录同步（v3.5.35；v3.5.36 起一个组织可有多个同步源）
 
 企业微信没有标准 SCIM，本系统用它自己的通讯录 API **拉取**某个部门（含子部门）的成员，同步成某组织的成员。
-配置在管理端「组织成员 → 🔄 企业微信通讯录同步」（系统管理员或该组织的组织管理员），需要企业微信后台「管理工具 → 通讯录同步」的 Secret，并把本服务器出口 IP 加进可信 IP。
+一个组织可以配置**多个同步源**（如多家企业微信），每个同步源像登录凭证一样单独启停、编辑、同步；配置入口在管理端「组织管理」的组织卡片（「+ 通讯录同步」）或组织成员弹窗（系统管理员或该组织的组织管理员），需要企业微信后台「管理工具 → 通讯录同步」的 Secret，并把本服务器出口 IP 加进可信 IP。
 
 ```
-POST /api/v1/orgs/:sid/dir-sync/run      scope: org:sync    # 立即同步一次（配置须先在管理端填好）
+POST /api/v1/orgs/:sid/dir-sync/run      scope: org:sync    # 依次跑该组织所有启用的同步源
 ```
 
-响应：`{ success, state: { at, ok, total, created, linked, added, removed, skipped, bind_provider, errors[] } }`；未配置 400、正在同步 409、企业微信报错 502（`error` 带企业微信 errcode）。
+响应：`{ success, results: [{ source_id, label, state: { at, ok, total, created, linked, added, removed, skipped, bind_provider, errors[] } } | { source_id, label, error }] }`；没有启用的同步源 400。
 
 同步规则：
 - 匹配顺序：本组织历次同步的 UserId 映射 → 已绑定该 UserId 的企业微信登录 → 邮箱（email / biz_mail）→ 手机 → 新建账号。
 - 若本系统配置了**同一企业**的企业微信登录（环境变量默认凭证或该组织下的企业微信凭证），会把 UserId 绑定到该登录，之后用企业微信登录进入同一账号。
 - 成员状态 1（已激活）/4（未激活）计入；2（禁用）/5（退出企业）视为离开。
-- 「离开」的成员从组织移出——**只动同步进来的成员**（`source=wecom`），手动加入/批量导入的不动；本次一个人都没拉到时不做任何移除。
+- 「离开」的成员从组织移出——**只动同步进来的成员**（`source=wecom`），且他已不在本组织**任何一个**同步源里；手动加入/批量导入的不动；本次一个人都没拉到时不做任何移除。
+- UserId 映射按同步源隔离：两家企业里同名的 UserId 不会被当成同一个人。
 - 组织内 UID 默认取企业微信 UserId（冲突则不设），也可改为按本组织 UID 规则生成或不设置。
 - 可设自动同步间隔（1/6/24 小时）；每次同步写审计存证 `org.dir_synced`。
 
-管理端接口：`GET/PUT /api/admin/orgs/:sid/dir-sync`（`secret` 读取时打码，提交打码串不覆盖原值；`{clear:true}` 停用并清除）、`POST /api/admin/orgs/:sid/dir-sync/run`。
+管理端接口（v3.5.36）：`GET/POST /api/admin/orgs/:sid/dir-sources`（列表 / 新增；`secret` 读取时打码）、`PATCH /api/admin/dir-sources/:id`（编辑，或只传 `{enabled}` 启停；打码串/留空不覆盖 secret）、`DELETE /api/admin/dir-sources/:id`（删除同步源，已同步成员保留）、`POST /api/admin/dir-sources/:id/run`（立即同步，停用的源 400，同组织并发 409）。
+
+本站（默认主体）三方登录凭证（v3.5.36，Lv.1）：`GET /api/admin/oauth-defaults`（按平台列出，密钥只给「是否已设置」）、`PUT /api/admin/oauth-defaults/:platform`（`{values, enabled}`；密钥留空不改，`enabled:false` 只关闭登录入口、凭证保留——记在 `OAUTH_DEFAULT_DISABLED`）、`DELETE /api/admin/oauth-defaults/:platform`（清空该平台配置）。
 
 ---
 

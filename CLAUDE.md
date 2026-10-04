@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.35**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.36**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.35，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.36，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员、外部通讯录导入、**企业微信通讯录同步**、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -199,7 +199,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.35）
+## 数据库表清单（截至 v3.5.36）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
@@ -208,7 +208,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`dir_sync_links`（通讯录同步 UserId→用户 映射，v3.5.35；`oauth_subjects.dir_sync`/`dir_sync_state` 存配置与结果）、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36）/`dir_source_links`（按同步源隔离的 UserId→用户映射）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -431,6 +431,25 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 
 ---
+
+## v3.5.36 通讯录同步改为「多同步源」+ 本站凭证改为「列表 + 子页面」（用户反馈）
+
+三级版本。用户：「某组织可能不止拥有单一企业微信以及类似的应用，需要做多个；不是直接添加，而是像添加凭证那样做子页面，开启或者关闭。目前主平台的凭证也得像组织的一样 UI，全部展开太乱了。」
+
+### 多同步源
+- 新表 `dir_sync_sources(id, subject_id, type, label, config JSON, enabled, state JSON, …)` + `dir_source_links(source_id, ext_id, user_id, depts, PK(source_id,ext_id))`——**映射按同步源隔离**（两家企业的 UserId 可能重名，旧表按组织做主键会串人）。`db.dirSources` 语句集。
+- ⚠️ **一次性迁移**（db.js 迁移区块）：v3.5.35 的 `oauth_subjects.dir_sync` 非空 → 建一个同步源（label「企业微信」，state 带过来）+ 把 `dir_sync_links` 该组织的行搬进 `dir_source_links` + 旧列/旧行清空；迁完 `dir_sync` 为 NULL，所以重启不会重复迁（事务包裹）。
+- `dirsync-wecom.syncWecom(source, subject, cfg, helpers)`：移出逻辑改为「本源这次丢掉的人（删映射）→ 若他已不在本组织**任何**同步源（`stillSynced` 查 dir_source_links JOIN dir_sync_sources）且 source='wecom' → 移出」。别的源负责的人不碰。
+- 接口全换（v3.5.35 的 `/admin/orgs/:sid/dir-sync*` 已删）：`GET/POST /admin/orgs/:sid/dir-sources`、`PATCH /admin/dir-sources/:id`（只传 `{enabled}` = 纯启停，配置不动）、`DELETE /admin/dir-sources/:id`（清映射，成员保留）、`POST /admin/dir-sources/:id/run`（停用 400）。权限 `dirSourceFor` → `canManageOrg(src.subject_id)`。开放 API `POST /v1/orgs/:sid/dir-sync/run` 改为依次跑所有启用源、返回 `results[]`。`DIR_TYPES` 目前只有 wecom（飞书/钉钉在 UI 里置灰「即将支持」）；锁仍按**组织**（同组织多源串行，避免移出判断互相干扰）；定时器遍历 `dirSources.dueList`（源启用且组织启用）。`/admin/oauth-subjects` 每个组织多 `dir_sources`（`dirSourceView`，secret 打码）。删组织连带清源与映射。
+- 前端：组织卡片在凭证行下面列同步源行（类型 · 名称 · corp/部门/频率 · 上次结果 · 启用徽章 · 立即同步/停用·启用/编辑/删除），卡片头加「+ 通讯录同步」；组织成员弹窗的折叠区改为同一份行列表 +「+ 添加同步源」（`dirSourceRowsHtml` 两处共用、`refreshDirSourceViews` 两处刷新）。编辑走动态子页面 `openDirSourceModal(sid, srcId)`（secret 占位「已配置，留空不修改」、绑定提示、上次结果）。组织的登录凭证行也加了「停用/启用」快捷按钮（`toggleOauthProvider` → PATCH `{enabled}`）。
+
+### 本站（默认主体）凭证
+- 后端 `GET/PUT/DELETE /admin/oauth-defaults(/:platform)`（Lv.1，与系统配置同级）：按 `OAUTH_META` 切片读写环境变量；密钥只回 `set`，留空不改、打码串不改；主字段不能清空。**启停**：`OAUTH_DEFAULT_DISABLED`（逗号平台列表），`envConfigured`/`configured-platforms`/`oauth.js getCred` 默认分支都尊重它——停用后登录页不显示，直接打 `/auth/<平台>` 也返回 not_configured；凭证保留。删除 = 清空该平台全部字段（`setEnvVal('')` 同时 delete process.env）。init.js ENV_KEYS 补 `OAUTH_DEFAULT_DISABLED`。
+- 前端：「默认主体（本站）」卡片从「13 个平台全部展开的环境变量编辑器」改为**只列已配置平台的行**（图标 · 名称 · 主字段值 · 启用徽章 · 停用/启用 · 编辑 · 删除）+ 头部「+ 添加凭证」（下拉只列未配置平台）。编辑 / 添加是子页面 `openDefaultCredModal(platform)`，字段说明取自 ENV_GROUPS。旧的 `_envRowHtml`/`saveDefaultSubjectCreds` 已删。
+- ⚠️ 若变量同时配在 Zeabur 平台环境变量里，删除只清本库与当前进程，重启后平台变量会重新生效（弹窗里有提示）。
+
+### 测试
+- 新 run9 共 26 项全过：旧配置迁移（源 + 映射 + 旧列清空）、权限、两个源、不支持类型、组织列表无明文 secret、**两家企业同名 UserId 不串人**、同一人在两家（手机关联）→ 离开一家不移出 / 两家都离开才移出、纯启停保留配置、停用源不能跑、编辑打码不覆盖、开放 API 跑全部源、删除源成员保留；本站凭证：非超管 403、配置后登录页出现、列表不回密钥、停用后登录页消失且 `/auth/wecom` 被拦、停用保留、密钥留空不覆盖、主字段不能清空、删除。run8（单源边界：0 人不移除、user/list 回退、错 secret、幂等）改用新接口 20 项全过；其余回归全过；playwright：本站添加→行→停用；组织卡片两源 + 立即同步；成员弹窗行列表 + 编辑子页面，零 JS 报错。
 
 ## v3.5.35 企业微信通讯录同步（用户：「SCIM：目前先做企业微信的」）
 

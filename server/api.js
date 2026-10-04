@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const wmBurn = require('./watermark-burn');
@@ -1073,7 +1073,7 @@ router.get('/public/configured-platforms', (req, res) => {
     // 先查数据库，再查进程环境变量
     const row = env.get.get(envKey);
     const val = row?.value || process.env[envKey];
-    if (val && val.trim()) configured.push(platform);
+    if (val && val.trim() && !defaultDisabled(platform)) configured.push(platform);
   }
   // 登录页在一个都没配置时兜底显示微信+企业微信；?raw=1（如账号绑定页）不兜底，只给真实配置的
   if (configured.length === 0 && !req.query.raw) configured.push('wechat', 'wecom');
@@ -1085,9 +1085,14 @@ router.get('/public/configured-platforms', (req, res) => {
 // 每个渠道可有：环境变量配的「默认主体」(instance_id=null) + 若干数据库额外主体。
 // 只下发公开字段（平台、实例 id、主体名、扫码用的 appid/redirect），绝不含 secret。
 // ══════════════════════════════════════════
+// 本站默认凭证的启停（v3.5.36）：停用的平台记在 OAUTH_DEFAULT_DISABLED（逗号分隔），凭证本身保留
+function defaultDisabled(platform) {
+  return String(process.env.OAUTH_DEFAULT_DISABLED || '').split(',').map(x => x.trim()).filter(Boolean).includes(platform);
+}
 function envConfigured(platform) {
   const meta = OAUTH_META[platform];
   if (!meta) return false;
+  if (defaultDisabled(platform)) return false;
   const row = env.get.get(meta.primary);
   const val = row?.value || process.env[meta.primary];
   return !!(val && String(val).trim());
@@ -1198,6 +1203,7 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     org_code: s.allow_direct_login ? ensureOrgCode(s) : (s.org_code || ''),
     // 成员数 / 开放应用数（卡片上直接显示，更直观）
     member_count: orgMembers.countBySubject.get(s.id).n,
+    dir_sources: dirSources.bySubject.all(s.id).map(x => dirSourceView(x, s)),   // 通讯录同步源（v3.5.36，secret 已打码）
     open_app_count: appOrgs.countBySubject.get(s.id).n,
     admin_count: oauthSubjects.admins.all(s.id).length,
     credentials: oauthProviders.bySubject.all(s.id).map(credView),
@@ -1262,7 +1268,8 @@ router.delete('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   oauthProviders.removeBySubject.run(row.id);   // 连带删除其下所有凭证（登录入口消失；已绑用户 user_oauth 行保留可查）
   orgMembers.removeBySubject.run(row.id);        // 连带清成员关系
   appOrgs.removeBySubject.run(row.id);           // 连带清应用开放关系
-  db.prepare('DELETE FROM dir_sync_links WHERE subject_id=?').run(row.id);   // 连带清通讯录同步映射
+  dirSources.removeLinksBySubject.run(row.id);   // 连带清通讯录同步源与映射
+  dirSources.removeBySubject.run(row.id);
   oauthSubjects.clearAdmins.run(row.id);         // 连带清组织管理员
   oauthSubjects.remove.run(row.id);
   res.json({ success: true });
@@ -1762,87 +1769,135 @@ router.post('/v1/orgs/:sid/members/import', requireApiKey('org:sync'), (req, res
 // ══════════════════════════════════════════
 const dirsyncWecom = require('./dirsync-wecom');
 const SECRET_MASK = '••••••••';
-const _dirSyncRunning = new Set();
-function dirSyncCfg(s) { try { return s.dir_sync ? JSON.parse(s.dir_sync) : null; } catch (_) { return null; } }
-function dirSyncState(s) { try { return s.dir_sync_state ? JSON.parse(s.dir_sync_state) : null; } catch (_) { return null; } }
-async function runDirSync(subject, actor) {
-  const cfg = dirSyncCfg(subject);
-  if (!cfg || !cfg.corp_id || !cfg.secret) throw Object.assign(new Error('还没配置企业微信通讯录同步（企业 ID / 通讯录 Secret）'), { status: 400 });
+const DIR_TYPES = { wecom: '企业微信' };          // 以后加飞书 / 钉钉：在这里登记 + 写对应的 dirsync-xxx.js
+const _dirSyncRunning = new Set();               // 按组织加锁：同一组织的多个源不并发跑（会互相影响移出判断）
+const parseJ = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
+function dirSourceView(src, subject) {
+  const cfg = parseJ(src.config) || {};
+  return { id: src.id, subject_id: src.subject_id, type: src.type, type_label: DIR_TYPES[src.type] || src.type,
+    label: src.label || DIR_TYPES[src.type] || src.type, enabled: !!src.enabled,
+    config: { ...cfg, secret: cfg.secret ? SECRET_MASK : '' }, state: parseJ(src.state),
+    bind_provider: subject && cfg.corp_id ? dirsyncWecom.loginProviderFor(subject, cfg.corp_id) : null,
+    running: _dirSyncRunning.has(src.subject_id), created_at: src.created_at };
+}
+function dirSourceCfgFromBody(b, old) {
+  old = old || {};
+  const corp_id = String(b.corp_id ?? old.corp_id ?? '').trim().slice(0, 64);
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(corp_id)) return { error: '请填写正确的企业 ID（corpid）' };
+  let secret = String(b.secret ?? '').trim();
+  if (!secret || /^•+$/.test(secret)) secret = old.secret || '';   // 打码串 / 留空 = 不改
+  if (!secret) return { error: '请填写通讯录同步 Secret' };
+  return { cfg: {
+    corp_id, secret: secret.slice(0, 200),
+    dept_id: Math.max(1, parseInt(b.dept_id ?? old.dept_id, 10) || 1),
+    uid_mode: ['userid', 'rule', 'none'].includes(b.uid_mode) ? b.uid_mode : (old.uid_mode || 'userid'),
+    remove_missing: b.remove_missing !== undefined ? b.remove_missing !== false : old.remove_missing !== false,
+    interval_hours: Math.min(168, Math.max(0, parseInt(b.interval_hours ?? old.interval_hours, 10) || 0)),
+  } };
+}
+async function runDirSource(src, actor) {
+  const subject = oauthSubjects.get.get(src.subject_id);
+  if (!subject) throw Object.assign(new Error('组织不存在'), { status: 404 });
+  const cfg = parseJ(src.config);
+  if (!cfg || !cfg.corp_id || !cfg.secret) throw Object.assign(new Error('同步源配置不完整（企业 ID / 通讯录 Secret）'), { status: 400 });
+  if (src.type !== 'wecom') throw Object.assign(new Error('暂不支持该类型的同步源'), { status: 400 });
   if (_dirSyncRunning.has(subject.id)) throw Object.assign(new Error('该组织正在同步中，请稍后'), { status: 409 });
   _dirSyncRunning.add(subject.id);
   const at = new Date().toISOString();
   try {
-    const out = await dirsyncWecom.syncWecom(subject, cfg, { genOrgUid, isEmail, isPhone });
+    const out = await dirsyncWecom.syncWecom(src, subject, cfg, { genOrgUid, isEmail, isPhone });
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
       removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, errors: out.errors.slice(0, 20) };
-    oauthSubjects.setDirSyncState.run(JSON.stringify(state), subject.id);
-    audit('org.dir_synced', { subject: subject.id, actor, detail: { source: 'wecom', total: out.total, created: out.created, added: out.added, removed: out.removed, errors: out.errors.length } });
+    dirSources.setState.run(JSON.stringify(state), src.id);
+    audit('org.dir_synced', { subject: subject.id, actor, detail: { source: src.type, source_id: src.id, label: src.label, total: out.total, created: out.created, added: out.added, removed: out.removed, errors: out.errors.length } });
     return state;
   } catch (e) {
-    const state = { at, ok: false, error: String(e.message || e).slice(0, 300) };
-    oauthSubjects.setDirSyncState.run(JSON.stringify(state), subject.id);
+    dirSources.setState.run(JSON.stringify({ at, ok: false, error: String(e.message || e).slice(0, 300) }), src.id);
     throw e;
   } finally {
     _dirSyncRunning.delete(subject.id);
   }
 }
-router.get('/admin/orgs/:sid/dir-sync', requireAuth, (req, res) => {
+// 取同步源 + 校验对其所属组织的管理权
+function dirSourceFor(req, res, write = true) {
+  const src = dirSources.get.get(req.params.id);
+  if (!src) { res.status(404).json({ error: '同步源不存在' }); return null; }
+  if (!canManageOrg(req, src.subject_id, write)) { res.status(403).json({ error: '无权管理该组织' }); return null; }
+  return src;
+}
+router.get('/admin/orgs/:sid/dir-sources', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
-  const cfg = dirSyncCfg(s);
-  res.json({ success: true,
-    config: cfg ? { ...cfg, secret: cfg.secret ? SECRET_MASK : '' } : null,
-    state: dirSyncState(s),
-    bind_provider: cfg?.corp_id ? dirsyncWecom.loginProviderFor(s, cfg.corp_id) : null,
-    running: _dirSyncRunning.has(s.id) });
+  res.json({ success: true, types: Object.entries(DIR_TYPES).map(([key, label]) => ({ key, label })),
+    sources: dirSources.bySubject.all(s.id).map(x => dirSourceView(x, s)) });
 });
-router.put('/admin/orgs/:sid/dir-sync', requireAuth, (req, res) => {
+router.post('/admin/orgs/:sid/dir-sources', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const type = String(req.body?.type || 'wecom');
+  if (!DIR_TYPES[type]) return res.status(400).json({ error: '暂不支持该类型的同步源' });
+  if (dirSources.bySubject.all(s.id).length >= 20) return res.status(400).json({ error: '同步源太多了（上限 20）' });
+  const { cfg, error } = dirSourceCfgFromBody(req.body || {});
+  if (error) return res.status(400).json({ error });
+  const id = uuidv4();
+  const label = String(req.body?.label || '').trim().slice(0, 40) || DIR_TYPES[type];
+  dirSources.insert.run(id, s.id, type, label, JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1);
+  audit('org.dir_sync_configured', { subject: s.id, actor: actorOf(req), detail: { op: 'create', source: type, source_id: id, label, corp_id: cfg.corp_id, dept_id: cfg.dept_id } });
+  res.json({ success: true, source: dirSourceView(dirSources.get.get(id), s) });
+});
+router.patch('/admin/dir-sources/:id', requireAuth, (req, res) => {
+  const src = dirSourceFor(req, res); if (!src) return;
   const b = req.body || {};
-  if (b.clear === true) { oauthSubjects.setDirSync.run(null, s.id); oauthSubjects.setDirSyncState.run(null, s.id); return res.json({ success: true, cleared: true }); }
-  const old = dirSyncCfg(s) || {};
-  const corp_id = String(b.corp_id || '').trim().slice(0, 64);
-  if (!/^[A-Za-z0-9_-]{4,64}$/.test(corp_id)) return res.status(400).json({ error: '请填写正确的企业 ID（corpid）' });
-  let secret = String(b.secret || '').trim();
-  if (!secret || /^•+$/.test(secret)) secret = old.secret || '';   // 打码串 / 留空 = 不改（同系统配置的 secret 规矩）
-  if (!secret) return res.status(400).json({ error: '请填写通讯录同步 Secret' });
-  const cfg = {
-    type: 'wecom', corp_id, secret: secret.slice(0, 200),
-    dept_id: Math.max(1, parseInt(b.dept_id, 10) || 1),
-    uid_mode: ['userid', 'rule', 'none'].includes(b.uid_mode) ? b.uid_mode : 'userid',
-    remove_missing: b.remove_missing !== false,
-    interval_hours: Math.min(168, Math.max(0, parseInt(b.interval_hours, 10) || 0)),
-    enabled: b.enabled !== false,
-  };
-  oauthSubjects.setDirSync.run(JSON.stringify(cfg), s.id);
-  audit('org.dir_sync_configured', { subject: s.id, actor: actorOf(req), detail: { source: 'wecom', corp_id, dept_id: cfg.dept_id, interval_hours: cfg.interval_hours } });
-  res.json({ success: true, config: { ...cfg, secret: SECRET_MASK }, bind_provider: dirsyncWecom.loginProviderFor(s, corp_id) });
+  let cfg = parseJ(src.config) || {};
+  const onlyToggle = Object.keys(b).every(k => k === 'enabled');
+  if (!onlyToggle) {
+    const r = dirSourceCfgFromBody(b, cfg);
+    if (r.error) return res.status(400).json({ error: r.error });
+    cfg = r.cfg;
+  }
+  const label = b.label !== undefined ? (String(b.label).trim().slice(0, 40) || DIR_TYPES[src.type]) : src.label;
+  const enabled = b.enabled !== undefined ? (b.enabled ? 1 : 0) : src.enabled;
+  dirSources.update.run(label, JSON.stringify(cfg), enabled, src.id);
+  audit('org.dir_sync_configured', { subject: src.subject_id, actor: actorOf(req), detail: { op: onlyToggle ? (enabled ? 'enable' : 'disable') : 'update', source_id: src.id, label } });
+  res.json({ success: true, source: dirSourceView(dirSources.get.get(src.id), oauthSubjects.get.get(src.subject_id)) });
 });
-router.post('/admin/orgs/:sid/dir-sync/run', requireAuth, async (req, res) => {
-  const s = oauthSubjects.get.get(req.params.sid);
-  if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
-  try { res.json({ success: true, state: await runDirSync(s, actorOf(req)) }); }
+router.delete('/admin/dir-sources/:id', requireAuth, (req, res) => {
+  const src = dirSourceFor(req, res); if (!src) return;
+  dirSources.removeLinks.run(src.id);
+  dirSources.remove.run(src.id);
+  audit('org.dir_sync_configured', { subject: src.subject_id, actor: actorOf(req), detail: { op: 'delete', source_id: src.id, label: src.label } });
+  res.json({ success: true });   // 已同步进来的成员保留（不随同步源删除而移出）
+});
+router.post('/admin/dir-sources/:id/run', requireAuth, async (req, res) => {
+  const src = dirSourceFor(req, res); if (!src) return;
+  if (!src.enabled) return res.status(400).json({ error: '该同步源已停用，先启用再同步' });
+  try { res.json({ success: true, state: await runDirSource(src, actorOf(req)) }); }
   catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
+// 开放 API：把该组织所有启用的同步源依次跑一遍
 router.post('/v1/orgs/:sid/dir-sync/run', requireApiKey('org:sync'), async (req, res) => {
-  if (req.isSandbox) return res.json({ success: true, _sandbox: true, state: { at: new Date().toISOString(), ok: true, total: 2, created: 1, linked: 1, added: 2, removed: 0, skipped: 0, errors: [] } });
+  if (req.isSandbox) return res.json({ success: true, _sandbox: true, results: [{ source_id: 'sandbox-src', label: '企业微信', state: { at: new Date().toISOString(), ok: true, total: 2, created: 1, linked: 1, added: 2, removed: 0, skipped: 0, errors: [] } }] });
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  try { res.json({ success: true, state: await runDirSync(s, actorOf(req)) }); }
-  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+  const list = dirSources.bySubject.all(s.id).filter(x => x.enabled);
+  if (!list.length) return res.status(400).json({ error: '该组织没有启用的通讯录同步源' });
+  const results = [];
+  for (const src of list) {
+    try { results.push({ source_id: src.id, label: src.label, state: await runDirSource(src, actorOf(req)) }); }
+    catch (e) { results.push({ source_id: src.id, label: src.label, error: e.message }); }
+  }
+  res.json({ success: results.some(r => r.state), results });
 });
-// 定时同步：每 10 分钟看一眼，到点（interval_hours）的组织跑一次。0 = 只手动。
+// 定时同步：每 10 分钟看一眼，到点（interval_hours）的启用同步源跑一次。0 = 只手动。
 function runDueDirSyncs() {
-  for (const s of oauthSubjects.withDirSync.all()) {
-    const cfg = dirSyncCfg(s);
-    if (!cfg || cfg.enabled === false || !(cfg.interval_hours > 0)) continue;
-    const last = Date.parse(dirSyncState(s)?.at || '') || 0;
+  for (const src of dirSources.dueList.all()) {
+    const cfg = parseJ(src.config);
+    if (!cfg || !(cfg.interval_hours > 0)) continue;
+    const last = Date.parse(parseJ(src.state)?.at || '') || 0;
     if (Date.now() - last < cfg.interval_hours * 3600e3) continue;
-    runDirSync(s, 'system:scheduler').catch(e => console.warn('[通讯录同步]', s.name, e.message));
+    runDirSource(src, 'system:scheduler').catch(e => console.warn('[通讯录同步]', src.label, e.message));
   }
 }
 setInterval(runDueDirSyncs, 10 * 60 * 1000).unref();
@@ -2892,6 +2947,57 @@ router.post('/admin/env', requireAdmin(1), (req, res) => {
     message: '环境变量已保存并立即生效',
     ...(skipped.length ? { skipped } : {}),
   });
+});
+
+// ── 本站（默认主体）三方登录凭证：按平台逐个管理（v3.5.36，与组织的凭证同一种「列表 + 子页面」交互）──
+// 值仍存在环境变量（env_config + process.env），这里只是按平台切片读写 + 启停开关。权限同系统配置（Lv.1）。
+function setEnvVal(k, v) {
+  env.set.run(k, v);
+  if (String(v).trim()) process.env[k] = String(v); else delete process.env[k];
+}
+function envVal(k) { const row = env.get.get(k); return (row && row.value) || process.env[k] || ''; }
+router.get('/admin/oauth-defaults', requireAdmin(1), (req, res) => {
+  const list = Object.entries(OAUTH_META).map(([platform, meta]) => {
+    const fields = meta.fields.map(k => {
+      const v = envVal(k); const secret = (meta.secret || []).includes(k);
+      return { key: k, secret, set: !!String(v).trim(), value: secret ? '' : v };
+    });
+    return { platform, label: meta.label, configured: !!String(envVal(meta.primary)).trim(),
+      enabled: !defaultDisabled(platform), primary: meta.primary, fields };
+  });
+  res.json({ success: true, platforms: list });
+});
+router.put('/admin/oauth-defaults/:platform', requireAdmin(1), (req, res) => {
+  const meta = OAUTH_META[req.params.platform];
+  if (!meta) return res.status(404).json({ error: '未知平台' });
+  const values = req.body?.values || {};
+  if (values && typeof values === 'object') {
+    const primaryNext = values[meta.primary] !== undefined ? String(values[meta.primary]).trim() : envVal(meta.primary);
+    if (!primaryNext) return res.status(400).json({ error: `请填写 ${meta.primary}` });
+    for (const k of meta.fields) {
+      if (!(k in values)) continue;
+      const v = String(values[k] ?? '').trim();
+      const secret = (meta.secret || []).includes(k);
+      if (/^•+$/.test(v)) continue;                 // 打码串不覆盖
+      if (secret && !v) continue;                   // 密钥留空 = 保留原值
+      setEnvVal(k, v);
+    }
+  }
+  if (req.body?.enabled !== undefined) {
+    const set = new Set(String(process.env.OAUTH_DEFAULT_DISABLED || '').split(',').map(x => x.trim()).filter(Boolean));
+    if (req.body.enabled) set.delete(req.params.platform); else set.add(req.params.platform);
+    setEnvVal('OAUTH_DEFAULT_DISABLED', [...set].join(','));
+  }
+  res.json({ success: true });
+});
+router.delete('/admin/oauth-defaults/:platform', requireAdmin(1), (req, res) => {
+  const meta = OAUTH_META[req.params.platform];
+  if (!meta) return res.status(404).json({ error: '未知平台' });
+  meta.fields.forEach(k => setEnvVal(k, ''));
+  const set = new Set(String(process.env.OAUTH_DEFAULT_DISABLED || '').split(',').map(x => x.trim()).filter(Boolean));
+  set.delete(req.params.platform);
+  setEnvVal('OAUTH_DEFAULT_DISABLED', [...set].join(','));
+  res.json({ success: true });
 });
 
 // ── 开放 API（第三方 API Key 调用）──

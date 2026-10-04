@@ -399,6 +399,42 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_links (
   updated_at TEXT DEFAULT (datetime('now')),
   PRIMARY KEY (subject_id, ext_id)
 )`); } catch(_) {}
+// v3.5.36：一个组织可以有多个通讯录同步源（多个企业微信 / 以后飞书、钉钉），像登录凭证一样逐个启停。
+// dir_sync_sources 一行 = 一个同步源；映射表按「同步源」隔离（不同企业的 UserId 可能重名）。
+try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_sources (
+  id         TEXT PRIMARY KEY,
+  subject_id TEXT NOT NULL,
+  type       TEXT NOT NULL DEFAULT 'wecom',
+  label      TEXT,
+  config     TEXT,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  state      TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
+  source_id  TEXT NOT NULL,
+  ext_id     TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  depts      TEXT,
+  updated_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (source_id, ext_id)
+)`); } catch(_) {}
+// 一次性迁移 v3.5.35 的「每组织单个配置」→ 同步源（迁完把 dir_sync 置空，所以重启不会重复迁）
+try {
+  const rows = db.prepare("SELECT id, dir_sync, dir_sync_state FROM oauth_subjects WHERE dir_sync IS NOT NULL AND dir_sync<>''").all();
+  for (const r of rows) {
+    let cfg = {}; try { cfg = JSON.parse(r.dir_sync); } catch (_) {}
+    const sid = require('crypto').randomUUID();
+    db.transaction(() => {
+      db.prepare('INSERT INTO dir_sync_sources (id,subject_id,type,label,config,enabled,state) VALUES (?,?,?,?,?,?,?)')
+        .run(sid, r.id, 'wecom', '企业微信', JSON.stringify(cfg), cfg.enabled === false ? 0 : 1, r.dir_sync_state || null);
+      db.prepare('INSERT OR IGNORE INTO dir_source_links (source_id,ext_id,user_id,depts,updated_at) SELECT ?, ext_id, user_id, depts, updated_at FROM dir_sync_links WHERE subject_id=?').run(sid, r.id);
+      db.prepare('DELETE FROM dir_sync_links WHERE subject_id=?').run(r.id);
+      db.prepare('UPDATE oauth_subjects SET dir_sync=NULL, dir_sync_state=NULL WHERE id=?').run(r.id);
+    })();
+  }
+} catch (e) { console.warn('[迁移] 通讯录同步配置迁移失败：', e.message); }
 // 应用按组织开放：一个应用可开放给若干组织；该应用在 app_orgs 里没有任何行 = 全局（通用）应用。
 try { db.exec(`CREATE TABLE IF NOT EXISTS app_orgs (
   app_id     TEXT NOT NULL,
@@ -932,9 +968,7 @@ const oauthSubjectStmts = {
   setMembersOpen: db.prepare('UPDATE oauth_subjects SET members_open=? WHERE id=?'),
   setIndependentSecurity: db.prepare('UPDATE oauth_subjects SET independent_security=? WHERE id=?'),
   setOrgControls: db.prepare('UPDATE oauth_subjects SET require_org_password=?, deny_code_login=? WHERE id=?'),
-  setDirSync:      db.prepare('UPDATE oauth_subjects SET dir_sync=? WHERE id=?'),        // v3.5.35
-  setDirSyncState: db.prepare('UPDATE oauth_subjects SET dir_sync_state=? WHERE id=?'),
-  withDirSync:     db.prepare("SELECT * FROM oauth_subjects WHERE dir_sync IS NOT NULL AND dir_sync<>'' AND enabled=1"),
+
   setDirectListed: db.prepare('UPDATE oauth_subjects SET direct_listed=? WHERE id=?'),
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),
@@ -1321,6 +1355,20 @@ const deviceStmts = {
   remove: db.prepare('DELETE FROM devices WHERE id=?'),
 };
 
+// 通讯录同步源（v3.5.36）
+const dirSourceStmts = {
+  bySubject: db.prepare('SELECT * FROM dir_sync_sources WHERE subject_id=? ORDER BY created_at'),
+  get:       db.prepare('SELECT * FROM dir_sync_sources WHERE id=?'),
+  insert:    db.prepare('INSERT INTO dir_sync_sources (id,subject_id,type,label,config,enabled) VALUES (?,?,?,?,?,?)'),
+  update:    db.prepare("UPDATE dir_sync_sources SET label=?, config=?, enabled=?, updated_at=datetime('now') WHERE id=?"),
+  setState:  db.prepare('UPDATE dir_sync_sources SET state=? WHERE id=?'),
+  remove:    db.prepare('DELETE FROM dir_sync_sources WHERE id=?'),
+  removeBySubject: db.prepare('DELETE FROM dir_sync_sources WHERE subject_id=?'),
+  dueList:   db.prepare(`SELECT d.* FROM dir_sync_sources d JOIN oauth_subjects s ON s.id=d.subject_id WHERE d.enabled=1 AND s.enabled=1`),
+  removeLinks: db.prepare('DELETE FROM dir_source_links WHERE source_id=?'),
+  removeLinksBySubject: db.prepare('DELETE FROM dir_source_links WHERE source_id IN (SELECT id FROM dir_sync_sources WHERE subject_id=?)'),
+};
+
 module.exports = {
   db,
   nextUidSeq,
@@ -1331,6 +1379,7 @@ module.exports = {
   oauthProviders: oauthProviderStmts,
   oauthSubjects: oauthSubjectStmts,
   orgMembers: orgMemberStmts,
+  dirSources: dirSourceStmts,
   appOrgs: appOrgStmts,
   appIcons: appIconStmts,
   appFolders: appFolderStmts,

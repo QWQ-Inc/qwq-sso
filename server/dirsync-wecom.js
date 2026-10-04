@@ -5,22 +5,26 @@
 //   user/list 被企业微信收紧权限时，回退 user/list_id（分页拿 userid）+ user/get（逐个取详情）
 //
 // 匹配同一自然人的顺序（越靠前越可靠）：
-//   ① dir_sync_links（本组织历次同步留下的 UserId → 用户映射）
+//   ① dir_source_links（本同步源历次同步留下的 UserId → 用户映射；按同步源隔离，不同企业的 UserId 可能重名）
 //   ② user_oauth（该企业微信的登录凭证下已绑定这个 UserId——用户以前用企业微信登录过）
 //   ③ 邮箱（email / biz_mail）④ 手机 ⑤ 都没有 → 新建账号
 // 同步后把 UserId 绑定到该企业微信的登录凭证（若本系统配了同一 corp 的企业微信登录），
 // 这样成员之后用企业微信登录会落到同一个账号，而不是再建一个。
 //
-// 离职 / 禁用（status 2、5）或已不在同步范围的成员：从组织里移出（只动 source='wecom' 的成员，手动加入的不动）。
+// 离职 / 禁用（status 2、5）或已不在同步范围的成员：从组织里移出——前提是他也不在本组织的其他同步源里，
+// 且只动同步进来的成员（source='wecom'），手动加入 / 批量导入的不动。（v3.5.36 起一个组织可有多个同步源）
 // ⚠️ 防误删：本次一个人都没拉到时不做任何移除（多半是权限/部门配置错了）。
 const crypto = require('crypto');
 const { db, users, oauth, orgMembers, oauthSubjects } = require('./db');
 
-const linkGet    = db.prepare('SELECT * FROM dir_sync_links WHERE subject_id=? AND ext_id=?');
-const linkUpsert = db.prepare(`INSERT INTO dir_sync_links (subject_id, ext_id, user_id, depts, updated_at) VALUES (?,?,?,?,datetime('now'))
-  ON CONFLICT(subject_id, ext_id) DO UPDATE SET user_id=excluded.user_id, depts=excluded.depts, updated_at=datetime('now')`);
-const linksOf    = db.prepare('SELECT * FROM dir_sync_links WHERE subject_id=?');
-const linkDelete = db.prepare('DELETE FROM dir_sync_links WHERE subject_id=? AND ext_id=?');
+const linkGet    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND ext_id=?');
+const linkUpsert = db.prepare(`INSERT INTO dir_source_links (source_id, ext_id, user_id, depts, updated_at) VALUES (?,?,?,?,datetime('now'))
+  ON CONFLICT(source_id, ext_id) DO UPDATE SET user_id=excluded.user_id, depts=excluded.depts, updated_at=datetime('now')`);
+const linksOf    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=?');
+const linkDelete = db.prepare('DELETE FROM dir_source_links WHERE source_id=? AND ext_id=?');
+// 该用户是否还被本组织的「任一」同步源同步着（多同步源时，离开 A 但还在 B 的人不能移出）
+const stillSynced = db.prepare(`SELECT 1 FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
+  WHERE d.subject_id=? AND l.user_id=? LIMIT 1`);
 const userOauthOf = db.prepare('SELECT open_id FROM user_oauth WHERE user_id=? AND provider=?');
 const wecomCredsOf = db.prepare("SELECT id, config FROM oauth_providers WHERE platform='wecom' AND subject_id=?");
 
@@ -88,7 +92,7 @@ const ACTIVE = new Set([1, 4]);   // 1 已激活 / 4 未激活（还没加入企
  * 执行一次同步。helpers：{ genOrgUid(subject), isEmail, isPhone }（复用 api.js 里的实现）。
  * 返回 { total, created, linked, added, removed, skipped, errors[], bind_provider }
  */
-async function syncWecom(subject, cfg, helpers, fetcher = fetchDirectory) {
+async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory) {
   const { members, deptName } = await fetcher(cfg);
   const bindProvider = loginProviderFor(subject, cfg.corp_id);
   const uidMode = cfg.uid_mode || 'userid';
@@ -107,7 +111,7 @@ async function syncWecom(subject, cfg, helpers, fetcher = fetchDirectory) {
     const depts = (Array.isArray(m.department) ? m.department : []).map(id => deptName.get(id) || String(id)).join(',');
     try {
       let user = null;
-      const link = linkGet.get(subject.id, extId);
+      const link = linkGet.get(source.id, extId);
       if (link) user = users.findById.get(link.user_id) || null;
       if (!user && bindProvider) user = oauth.findByProvider.get(bindProvider, extId) || null;
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
@@ -123,7 +127,7 @@ async function syncWecom(subject, cfg, helpers, fetcher = fetchDirectory) {
       } else if (!link) {
         out.linked++;
       }
-      linkUpsert.run(subject.id, extId, user.id, depts || null);
+      linkUpsert.run(source.id, extId, user.id, depts || null);
       // 绑定到企业微信登录凭证：该 UserId 没被别人占用、此人也还没绑这家企业微信时才绑
       if (bindProvider && !oauth.findByProvider.get(bindProvider, extId) && !userOauthOf.get(user.id, bindProvider)) {
         oauth.bind.run(crypto.randomUUID(), user.id, bindProvider, extId, null);
@@ -148,11 +152,16 @@ async function syncWecom(subject, cfg, helpers, fetcher = fetchDirectory) {
     if (out.total === 0) {
       out.errors.push({ error: '本次一个成员都没拉到，已跳过移除（请检查通讯录权限 / 部门 ID）' });
     } else {
+      // 先删本源里已不在范围的映射（人回来了会按 UserId 再连上同一账号：user_oauth 绑定还在）
+      const gone = new Set();
+      for (const l of linksOf.all(source.id)) if (!seenExt.has(l.ext_id)) { linkDelete.run(source.id, l.ext_id); gone.add(l.user_id); }
+      // 再移出：本源同步进来、这次没出现、也不在本组织其他同步源里的成员
       for (const mem of orgMembers.listBySubject.all(subject.id)) {
-        if (mem.source === 'wecom' && !seenUsers.has(mem.user_id)) { orgMembers.remove.run(subject.id, mem.user_id); out.removed++; }
+        if (mem.source !== 'wecom' || seenUsers.has(mem.user_id)) continue;
+        if (!gone.has(mem.user_id)) continue;                         // 只处理「本源刚丢掉」的人，别的源负责的人不碰
+        if (stillSynced.get(subject.id, mem.user_id)) continue;       // 还在其他同步源里
+        orgMembers.remove.run(subject.id, mem.user_id); out.removed++;
       }
-      // 不在范围内的映射也清掉（人回来了会按 UserId 再连上同一账号：user_oauth 绑定还在）
-      for (const l of linksOf.all(subject.id)) if (!seenExt.has(l.ext_id)) linkDelete.run(subject.id, l.ext_id);
     }
   }
   return out;

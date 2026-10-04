@@ -104,6 +104,8 @@ function getCred(platform, instanceId) {
     fields.forEach(k => { out[k] = cfg[k] != null && cfg[k] !== '' ? cfg[k] : undefined; });
     return out;
   }
+  // 本站默认凭证被停用（v3.5.36，OAUTH_DEFAULT_DISABLED）→ 入口关闭，挡住直接打 /auth/<平台>
+  if (String(process.env.OAUTH_DEFAULT_DISABLED || '').split(',').map(x => x.trim()).includes(platform)) return null;
   const out = { _instanceId: null, _providerKey: platform, _label: '' };
   fields.forEach(k => { out[k] = process.env[k]; });
   return out;
