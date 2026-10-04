@@ -16,6 +16,7 @@ const { AsyncLocalStorage } = require('async_hooks');
 const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, state: stateStore, logs } = require('./db');
 const userMerge = require('./user-merge');
+const dirsyncWecom = require('./dirsync-wecom');
 const { audit } = require('./audit');
 const { signToken, signShortToken, requireAuth } = require('./auth');
 const { subjectGateError } = require('./org-policy');
@@ -203,6 +204,18 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   // 1. 按本凭证的 OAuth 绑定精确查找（同一凭证 + openid）
   let user = oauth.findByProvider.get(provider, openId);
   if (user) return user;
+
+  // 1b. 企业微信（v3.5.50）：同一企业 + 同一 UserId = 同一个人。成员可能已被通讯录同步建过号，
+  //     或用同企业的另一个登录凭证登录过——认到那个账号并把本凭证也绑上去，不再另建一个
+  const wecomCorp = String(provider).split(':')[0] === 'wecom' ? dirsyncWecom.corpOfProvider(provider) : '';
+  if (wecomCorp && openId) {
+    const sc = dirsyncWecom.corpScope(wecomCorp);
+    for (const sid of sc.sources) {
+      if (db.prepare("SELECT 1 FROM identity_blocks WHERE kind='dir' AND conn_id IN (?, (SELECT parent_id FROM dir_sync_sources WHERE id=?)) AND ext_id=? COLLATE NOCASE").get(sid, sid, openId)) return blocked();
+    }
+    const same = dirsyncWecom.corpUsers(wecomCorp, openId, { scope: sc })[0];
+    if (same) { oauth.bind.run(uuidv4(), same.id, provider, openId, unionId); return same; }
+  }
 
   // 2. 「主体」内同人识别合并
   const keys = mergeScopeKeys(provider);

@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.49　　最后更新：2026-10
+> 版本：v3.5.50　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1540,6 +1540,8 @@ POST /api/v1/orgs/:sid/dir-sync/run      scope: org:sync    # 依次跑该组织
 - 组织内 UID 默认取企业微信 UserId（冲突则不设），也可改为按本组织 UID 规则生成或不设置。
 - 可设自动同步间隔（1/6/24 小时）；每次同步写审计存证 `org.dir_synced`。
 
+**两份 Secret**（v3.5.50）：`secret` 读通讯录（推荐自建应用 Secret）；`write_secret`（可选，「通讯录同步」Secret，开启 API 编辑通讯录）只用来在企业微信里禁用 / 启用 / 删除成员（停用同步、注销与删除的交接处理），不填则用 `secret` 去改——自建应用 Secret 没有写权限会报 48002。两者读取时都打码，打码串 / 留空不覆盖，`clear_write_secret: true` 清除；文件夹通讯录连接同样有这两个字段。
+
 **用哪个 Secret**（v3.5.39）：推荐**自建应用**的 Secret（应用可见范围设为要同步的部门，并把本服务器出口 IP 加进该应用的可信 IP）。「管理工具 → 通讯录同步」的 Secret 自 2022-08-15 起在新 IP 上被企业微信禁止读取通讯录详情（`48009 api forbidden for contact assistant`），只能读到 UserId 和部门 ID。用它时本系统自动降级到 `department/simplelist` + `user/list_id`：已关联过的成员照常同步、离开照常移出，**没关联过的人因为认不出是谁不会建号**（结果里 `limited: true`、`unmatched` 计数、`warning` 提示改用自建应用 Secret）。常见错误码（40001 / 40013 / 48009 / 60011 / 60020）的报错会带中文处理建议。
 
 **接收事件服务器**（v3.5.39，实时同步，可选）：同步源配置里填 `cb_token`（1~32 位字母数字）+ `cb_aes_key`（43 位 EncodingAESKey，读取时打码；`cb_clear: true` 关闭），回调地址为
@@ -1863,7 +1865,18 @@ GET  /api/admin/merges[?user=<保留账号 id>]   # 合并记录（系统管理�
 POST /api/admin/merges/:id/undo              # 撤销 { confirm:"撤销合并" }（超级管理员或做这次合并的人；期限 MERGE_UNDO_DAYS，默认 30 天）
 ```
 
+撤销顺序（v3.5.50）：只有之后未撤销的合并与这次改到了同一份数据（同一行被插入 / 删除，或同一行同一列；积分、updated_at 不算）才要求先撤那一次；积分按本次增量扣回。
+
 每条记录：`target{id,name,uid,exists}`、`sources[{id,name,uid,exists}]`、`via`/`via_label`、`actor_name`、`created_at`、`undo_until`、`can_undo`、`undo_blocker`、`undone_at`。撤销后返回 `stats{restored_rows, kept_fields, skipped}`（`kept_fields` = 合并后又被改过、保留现值的字段数）。同一批账号合并过多次要从最近一次往前撤。
+
+**企业微信重复账号**（v3.5.50）：同步与企业微信登录都按「企业 ID + UserId（不区分大小写）」认人——跨该企业的所有同步源（组织自己的、文件夹共用的）和所有企业微信登录凭证（本站默认、组织、文件夹）。以前遗留的重复账号：
+
+```
+GET  /api/admin/dir-duplicates          # Lv.3：[{ key, corp_id, ext_id, suggested, users:[{id,uid,name,email,phone,admin,has_pw,kyc,orgs}] }]
+POST /api/admin/dir-duplicates/merge    # Lv.1：{ groups:[{key, target?}] | all:true, confirm:"合并账号" } → { done, failed, results[] }
+```
+
+合并走账号合并（`via: "dir_duplicate"`），可在期限内撤销；同步结果 `state.duplicates` 是本次遇到的遗留重复人数。
 
 **注销 / 删除的交接项**（v3.5.49）：交接清单由系统核验，不能手动勾选（只有 `check:"app"` 的重要应用项由管理员 `POST /api/admin/deletions/:id/checklist {key, done}` 确认）。每项带 `check`（ext / bind / orgadmin / groupadmin / device / app）、`done`、`note`。
 

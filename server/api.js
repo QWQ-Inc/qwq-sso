@@ -2023,7 +2023,7 @@ function dirSourceView(src, subject) {
     // v3.5.47：套用的文件夹通讯录（连接字段只读，来自文件夹）
     parent_id: src.parent_id || null, parent_label: parent ? (parent.label || DIR_TYPES[parent.type]) : null,
     parent_enabled: parent ? !!parent.enabled : null, parent_missing: !!(src.parent_id && !parent),
-    config: { ...pub, secret: cfg.secret ? SECRET_MASK : '', dept_ids: dirsyncWecom.deptIdsOf(cfg),
+    config: { ...pub, secret: cfg.secret ? SECRET_MASK : '', write_secret: cfg.write_secret ? SECRET_MASK : '', dept_ids: dirsyncWecom.deptIdsOf(cfg),
       bind_mode: cfg.bind_mode || 'auto', has_default_pw: !!default_pw_hash,
       cb_token: cfg.cb_token || '', cb_aes_key: cb_aes_key ? SECRET_MASK : '' },
     // 接收事件服务器（v3.5.39）：企业微信后台「通讯录同步 → 设置接收事件服务器」填这个地址（前面拼上本站域名）
@@ -2039,7 +2039,7 @@ function dirConnView(conn) {
   const cfg = parseJ(conn.config) || {};
   return { id: conn.id, folder_id: conn.folder_id, type: conn.type, type_label: DIR_TYPES[conn.type] || conn.type,
     label: conn.label || DIR_TYPES[conn.type] || conn.type, enabled: !!conn.enabled,
-    config: { corp_id: cfg.corp_id || '', secret: cfg.secret ? SECRET_MASK : '', push_suspend: !!cfg.push_suspend,
+    config: { corp_id: cfg.corp_id || '', secret: cfg.secret ? SECRET_MASK : '', write_secret: cfg.write_secret ? SECRET_MASK : '', push_suspend: !!cfg.push_suspend,
       cb_token: cfg.cb_token || '', cb_aes_key: cfg.cb_aes_key ? SECRET_MASK : '' },
     callback_path: '/api/public/dirsync/wecom/' + conn.id,
     callback_ready: !!(cfg.cb_token && cfg.cb_aes_key),
@@ -2081,6 +2081,7 @@ function buildDirConnCfg(b, old) {
   const r = dirSourceCfgFromBody(b, old);
   if (r.error) return r;
   const cfg = { corp_id: r.cfg.corp_id, secret: r.cfg.secret };
+  if (r.cfg.write_secret) cfg.write_secret = r.cfg.write_secret;
   if (r.cfg.push_suspend) cfg.push_suspend = true;
   const e = applyCbFields(cfg, b, old);
   return e ? { error: e } : { cfg };
@@ -2124,9 +2125,13 @@ function dirSourceCfgFromBody(b, old) {
   if (!/^[A-Za-z0-9_-]{4,64}$/.test(corp_id)) return { error: '请填写正确的企业 ID（corpid）' };
   let secret = String(b.secret ?? '').trim();
   if (!secret || /^•+$/.test(secret)) secret = old.secret || '';   // 打码串 / 留空 = 不改
-  if (!secret) return { error: '请填写通讯录同步 Secret' };
+  if (!secret) return { error: '请填写读取通讯录用的 Secret（推荐自建应用 Secret）' };
+  // 管理用 Secret（v3.5.50，可选）：企业微信「通讯录同步」Secret，禁用 / 启用 / 删除成员时用；打码串 / 留空 = 不改，clear_write_secret = 清除
+  let write_secret = String(b.write_secret ?? '').trim();
+  if (b.clear_write_secret) write_secret = '';
+  else if (!write_secret || /^•+$/.test(write_secret)) write_secret = old.write_secret || '';
   return { cfg: {
-    corp_id, secret: secret.slice(0, 200),
+    corp_id, secret: secret.slice(0, 200), ...(write_secret ? { write_secret: write_secret.slice(0, 200) } : {}),
     uid_mode: ['userid', 'rule', 'none'].includes(b.uid_mode) ? b.uid_mode : (old.uid_mode || 'userid'),
     remove_missing: b.remove_missing !== undefined ? b.remove_missing !== false : old.remove_missing !== false,
     // 只拿到 UserId（通讯录 Secret 受限）的成员也建账号（姓名先用 UserId 占位，拿到真名后自动替换；一人多号可在成员列表合并）
@@ -2155,7 +2160,7 @@ async function runDirSource(src, actor, opts = {}) {
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
       removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, bind_providers: out.bind_providers,
       bound: out.bound, pw_set: out.pw_set, kept: out.kept, conflicts: out.conflicts, force: out.force,
-      limited: out.limited, unmatched: out.unmatched, created_idonly: out.created_idonly || 0, blocked: out.blocked || 0, warning: out.warning,
+      limited: out.limited, unmatched: out.unmatched, created_idonly: out.created_idonly || 0, blocked: out.blocked || 0, duplicates: out.duplicates || 0, warning: out.warning,
       errors: out.errors.slice(0, 20) };
     dirSources.setState.run(JSON.stringify(state), src.id);
     audit('org.dir_synced', { subject: subject.id, actor, detail: { source: src.type, source_id: src.id, label: src.label, force: out.force, total: out.total, created: out.created, added: out.added, removed: out.removed, bound: out.bound, pw_set: out.pw_set, kept: out.kept, errors: out.errors.length } });
@@ -2428,6 +2433,7 @@ router.post('/admin/org-folders/:id/migrate', requireAdmin(2), (req, res) => {
       const cc = parseJ(conn.config) || {};
       let changed = false;
       if (!(cc.cb_token && cc.cb_aes_key) && cfg.cb_token && cfg.cb_aes_key) { cc.cb_token = cfg.cb_token; cc.cb_aes_key = cfg.cb_aes_key; changed = true; }
+      if (!cc.write_secret && cfg.write_secret) { cc.write_secret = cfg.write_secret; changed = true; }
       if (changed) dirSources.update.run(conn.label, JSON.stringify(cc), conn.enabled, conn.id);
     }
     const useCfg = { ...cfg };
@@ -2928,9 +2934,56 @@ router.post('/admin/users/merge', requireAdmin(1), (req, res) => {
     res.json({ success: true, ...r });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
+// ── 企业微信重复账号（v3.5.50）──
+// 同一企业的同一个 UserId 挂在了两个以上账号上（以前同步 / 用另一个登录凭证登录时没认出来，多建了号）。
+// 列出来给系统管理员看；合并要超级管理员（跨组织合并），走 mergeUsers，可在期限内撤销。
+function dirDupView(g) {
+  const show = x => x.uid_code || '#' + String(x.uid_seq).padStart(5, '0');
+  const orgsOf = db.prepare('SELECT s.name, m.source FROM org_members m JOIN oauth_subjects s ON s.id=m.subject_id WHERE m.user_id=?');
+  return {
+    key: g.corp_id + '|' + g.ext_id, corp_id: g.corp_id, ext_id: g.ext_id, suggested: g.users[0].id,
+    users: g.users.map(u => ({ id: u.id, uid: show(u), name: u.name, email: u.email || null, phone: u.phone || null,
+      admin: u.role === 'admin', has_pw: !!u.password_hash, kyc: !!u.kyc_verified, created_at: u.created_at,
+      orgs: orgsOf.all(u.id).map(o => o.name) })),
+  };
+}
+router.get('/admin/dir-duplicates', requireAdmin(3), (req, res) => {
+  res.json({ groups: dirsyncWecom.findCorpDuplicates().map(dirDupView) });
+});
+router.post('/admin/dir-duplicates/merge', requireAdmin(1), (req, res) => {
+  if (String(req.body?.confirm || '').trim() !== '合并账号') return res.status(400).json({ error: '请输入「合并账号」确认' });
+  const want = new Map();   // key → 指定的保留账号 id（可空 = 用建议的）
+  if (req.body?.all) for (const g of dirsyncWecom.findCorpDuplicates()) want.set(g.corp_id + '|' + g.ext_id, null);
+  for (const it of (Array.isArray(req.body?.groups) ? req.body.groups : []).slice(0, 500)) {
+    if (it && it.key) want.set(String(it.key), it.target ? String(it.target) : null);
+  }
+  if (!want.size) return res.status(400).json({ error: '没有选中要合并的重复账号' });
+  const results = [];
+  let done = 0, failed = 0;
+  for (const g of dirsyncWecom.findCorpDuplicates()) {
+    const key = g.corp_id + '|' + g.ext_id;
+    if (!want.has(key)) continue;
+    const t = want.get(key);
+    const target = (t && g.users.find(u => u.id === t)) || g.users[0];
+    const sources = g.users.filter(u => u.id !== target.id);
+    try {
+      const r = userMerge.mergeUsers(target.id, sources.map(s => s.id), {
+        onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+        actor: actorOf(req), actorUid: req.user.uid, via: 'dir_duplicate',
+      });
+      audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: 'dir_duplicate', merge_id: r.merge_id, ext_id: g.ext_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+      results.push({ ext_id: g.ext_id, name: target.name, ok: true, merged: r.merged.length, merge_id: r.merge_id });
+      done++;
+    } catch (e) {
+      results.push({ ext_id: g.ext_id, name: target.name, ok: false, error: e.message });
+      failed++;
+    }
+  }
+  res.json({ success: true, done, failed, results });
+});
 // ── 合并记录与撤销合并（v3.5.48）──
 // 系统管理员看全部；其他人只看自己做的合并。撤销：超级管理员，或做这次合并的人本人。
-const MERGE_VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时自动并入空壳账号' };
+const MERGE_VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时自动并入空壳账号', dir_duplicate: '企业微信重复账号合并' };
 function mergeRecordView(req, r) {
   const t = users.findById.get(r.target_id);
   let target = {}, sources = [];
@@ -3450,7 +3503,7 @@ async function deletionItemAction(r, key, action, req, admin) {
       try {
         if (action === 'disable') await dirsyncWecom.setMemberEnabled(cfg, it.ext_id, false);
         else await dirsyncWecom.deleteMember(cfg, it.ext_id);
-      } catch (e) { bad((action === 'disable' ? '禁用' : '删除') + '失败：' + e.message + '（需要有通讯录写权限的「通讯录同步」Secret；也可以直接到企业微信后台处理后再点「重新核验」）'); }
+      } catch (e) { bad((action === 'disable' ? '禁用' : '删除') + '失败：' + e.message + '（要在同步源里填「通讯录同步 Secret（管理用）」；也可以直接到企业微信后台处理后再点「重新核验」）'); }
       audit(action === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(target?.uid_seq || ''), actor: actorOf(req), detail: { source: src.id, ext_id: it.ext_id, deletion: r.id } });
     }
     let v;

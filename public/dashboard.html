@@ -404,6 +404,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 .toggle-slider::before{content:'';position:absolute;height:14px;width:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:all .2s;}
 .toggle input:checked+.toggle-slider{background:var(--ac);}
 .toggle input:checked+.toggle-slider::before{transform:translateX(16px);}
+.ui-dlg-mask{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:5000;display:flex;align-items:flex-start;justify-content:center;padding:12vh 14px 24px;overflow-y:auto;animation:uiDlgIn .12s ease-out}
+.ui-dlg{background:var(--sf);color:var(--tx);border:1px solid var(--bd);border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.22);width:min(440px,100%);padding:18px 20px 16px;box-sizing:border-box}
+.ui-dlg-title{font-size:15px;font-weight:700;color:var(--txt);margin-bottom:8px}
+.ui-dlg-msg{font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word;color:var(--tx);max-height:50vh;overflow:auto}
+.ui-dlg-input{width:100%;box-sizing:border-box;margin-top:12px;padding:8px 10px;border:1px solid var(--bd);border-radius:6px;font-size:13px;background:var(--sf2);color:var(--txt);font-family:inherit;resize:vertical}
+.ui-dlg-input:focus{outline:none;border-color:var(--ac);background:var(--sf)}
+.ui-dlg-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.ui-dlg-btns .btn{min-width:72px;justify-content:center}
+.ui-dlg-ok.ui-dlg-danger{background:var(--err);border-color:var(--err);color:#fff}
+@keyframes uiDlgIn{from{opacity:0}to{opacity:1}}
 </style>
 <script>
 // ════════════════════════════════════════
@@ -2373,6 +2383,18 @@ async function loadMe() {
 
       <!-- ▸ 管理端：登录主体（三方登录多主体） -->
       <div class="page" id="page-adm-oauth">
+        <!-- v3.5.50：同一企业微信成员被建了两个以上账号 -->
+        <div class="card" id="dir-dup-card" style="display:none;border-color:var(--warn);">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <h3 id="dir-dup-title">⚠️ 企业微信重复账号</h3>
+            <button class="btn primary" id="dir-dup-all" style="font-size:11px;display:none;" onclick="mergeDirDuplicates(null)">全部合并…</button>
+          </div>
+          <div style="font-size:11px;color:var(--txd);padding:8px 16px 0;line-height:1.7;">
+            同一企业的同一个成员（UserId）对应了多个账号——通常是以前同步时没认出来、或成员用同企业的另一个登录凭证登录时多建了号。
+            现在同步与登录都会按「企业 + UserId」认人，不会再新增；已经重复的在这里合并（单选的是保留账号，其余并入后删除，可在「注销与删除 → 账号合并记录」里限期撤销）。
+          </div>
+          <div class="card-body"><div id="dir-dup-list" style="font-size:12px;"></div></div>
+        </div>
         <!-- 默认主体（本站）三方凭证：原「系统配置 → 三方登录」搬到这里统一管理 -->
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -3346,7 +3368,7 @@ const bindDescs = {};
 
 async function showBindModal(name, key, instId) {
   // 绑定三方账号：先把「绑到当前用户」的意图存进 session（/auth 挂根路径，不能用 api() 帮手），再跳授权页
-  if (!confirm(`跳转到 ${name} 授权页面进行绑定？`)) return;
+  if (!await uiConfirm(`跳转到 ${name} 授权页面进行绑定？`)) return;
   if (_IS_DEV) { showToast('演示模式不执行真实三方绑定'); return; }
   try {
     const r = await fetch('/auth/stash-bind', {
@@ -3362,7 +3384,7 @@ async function showBindModal(name, key, instId) {
 }
 
 async function unbindOauth(provider, name) {
-  if (!confirm(`确认解绑 ${name}？解绑后将无法用该账号登录。`)) return;
+  if (!await uiConfirm(`确认解绑 ${name}？解绑后将无法用该账号登录。`)) return;
   const { ok, data } = await api('DELETE', `/user/oauth/${encodeURIComponent(provider)}`);
   if (ok) { showToast(`✓ 已解绑 ${name}`); loadAccountBindings(); }
   else showToast('⚠️ ' + (data.error || '解绑失败'));
@@ -3614,14 +3636,14 @@ async function addPasskey() {
     showToast(`⚠️ 无法调起 Passkey：${e.name || ''} ${e.message || ''}`.trim());
     return;
   }
-  const name = prompt('给这个 Passkey 起个名字（如：我的手机、工作电脑）', '我的 Passkey') || '我的 Passkey';
+  const name = await uiPrompt('给这个 Passkey 起个名字（如：我的手机、工作电脑）', '我的 Passkey') || '我的 Passkey';
   const r = await api('POST', '/passkey/register-verify', { credential: cred, name });
   if (r.ok) { showToast('✓ Passkey 已添加'); loadPasskeyCard(); }
   else showToast('⚠️ 校验失败：' + (r.data.error||'添加失败'));
 }
 
 async function removePasskey(id, name) {
-  if (!confirm(`删除 Passkey「${name}」？删除后该设备将无法再用于登录。`)) return;
+  if (!await uiConfirm(`删除 Passkey「${name}」？删除后该设备将无法再用于登录。`)) return;
   const { ok } = await api('DELETE', `/passkey/${id}`);
   if (ok) { showToast('✓ 已删除'); loadPasskeyCard(); }
   else showToast('⚠️ 删除失败');
@@ -4004,6 +4026,58 @@ function copyText(text) {
 
 // ── 初始化 ──
 let toastTimer;
+// ── 系统内弹窗（v3.5.50）：替代浏览器原生 alert / confirm / prompt ──
+// uiAlert(msg, opts) → Promise<void>；uiConfirm(msg, opts) → Promise<boolean>；uiPrompt(msg, default, opts) → Promise<string|null>
+// opts: { title, okText, cancelText, danger, placeholder, password, multiline }。Enter 确定、Esc 取消。
+// 打开前记下当前焦点与选区（富文本编辑器里插入链接要用），关闭时还原，再把结果交回去。
+const _UI_DANGER = /删除|清除|停用|撤销|注销|驳回|移出|撤回|覆盖|重新生成|解绑|作废/;
+function _uiDialog(kind, msg, def, opts = {}) {
+  return new Promise(resolve => {
+    const sel = window.getSelection ? window.getSelection() : null;
+    const range = sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    const prevFocus = document.activeElement;
+    const text = String(msg == null ? '' : msg);
+    const danger = opts.danger != null ? opts.danger : (kind === 'confirm' && _UI_DANGER.test(text));
+    const password = opts.password != null ? opts.password : (kind === 'prompt' && /密码|口令/.test(text) && !/确认词|输入「/.test(text));
+    const multiline = opts.multiline != null ? opts.multiline : (kind === 'prompt' && String(def || '').includes('\n'));
+    const title = opts.title || (kind === 'alert' ? '提示' : kind === 'confirm' ? '请确认' : '请输入');
+    const ov = document.createElement('div');
+    ov.className = 'ui-dlg-mask';
+    ov.innerHTML = `<div class="ui-dlg" role="dialog" aria-modal="true">
+      <div class="ui-dlg-title">${esc(title)}</div>
+      <div class="ui-dlg-msg">${esc(text)}</div>
+      ${kind === 'prompt' ? (multiline ? `<textarea class="ui-dlg-input" rows="5"></textarea>` : `<input class="ui-dlg-input" type="${password ? 'password' : 'text'}" autocomplete="${password ? 'current-password' : 'off'}">`) : ''}
+      <div class="ui-dlg-btns">
+        ${kind === 'alert' ? '' : `<button class="btn ui-dlg-cancel">${esc(opts.cancelText || '取消')}</button>`}
+        <button class="btn primary ui-dlg-ok${danger ? ' ui-dlg-danger' : ''}">${esc(opts.okText || (kind === 'alert' ? '知道了' : '确定'))}</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const input = ov.querySelector('.ui-dlg-input');
+    if (input) { input.value = def == null ? '' : String(def); if (opts.placeholder) input.placeholder = opts.placeholder; }
+    const close = (val) => {
+      document.removeEventListener('keydown', onKey, true);
+      ov.remove();
+      try { if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus(); } catch (_) {}
+      try { if (range && sel) { sel.removeAllRanges(); sel.addRange(range); } } catch (_) {}
+      resolve(val);
+    };
+    const ok = () => close(kind === 'prompt' ? input.value : kind === 'confirm' ? true : undefined);
+    const cancel = () => close(kind === 'prompt' ? null : kind === 'confirm' ? false : undefined);
+    const onKey = e => {
+      if (!document.body.contains(ov) || ov !== document.querySelector('.ui-dlg-mask:last-of-type')) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+      else if (e.key === 'Enter' && !(e.target && e.target.tagName === 'TEXTAREA')) { e.preventDefault(); e.stopPropagation(); ok(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    ov.querySelector('.ui-dlg-ok').onclick = ok;
+    const c = ov.querySelector('.ui-dlg-cancel'); if (c) c.onclick = cancel;
+    ov.addEventListener('mousedown', e => { if (e.target === ov) (kind === 'alert' ? ok : cancel)(); });
+    setTimeout(() => { if (input) { input.focus(); input.select(); } else ov.querySelector('.ui-dlg-ok').focus(); }, 0);
+  });
+}
+const uiAlert = (msg, opts) => _uiDialog('alert', msg, null, opts);
+const uiConfirm = (msg, opts) => _uiDialog('confirm', msg, null, opts);
+const uiPrompt = (msg, def, opts) => _uiDialog('prompt', msg, def, opts);
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -4364,7 +4438,7 @@ async function renderMarket() {
 
 // ── 我的应用文件夹（v3.5.28）──
 async function newAppFolder(appId) {
-  const name = (prompt('文件夹名称') || '').trim();
+  const name = (await uiPrompt('文件夹名称') || '').trim();
   if (!name) return;
   const { ok, data } = await api('POST', '/user/app-folders', { name, app_ids: appId ? [appId] : [] });
   if (!ok) return showToast('⚠️ ' + (data?.error || '创建失败'));
@@ -4374,14 +4448,14 @@ async function newAppFolder(appId) {
 }
 async function renameAppFolder(id) {
   const f = _marketFolders.find(x => x.id === id); if (!f) return;
-  const name = (prompt('新名称', f.name) || '').trim();
+  const name = (await uiPrompt('新名称', f.name) || '').trim();
   if (!name || name === f.name) return;
   const { ok, data } = await api('PATCH', '/user/app-folders/' + id, { name });
   ok ? renderMarket() : showToast('⚠️ ' + (data?.error || '失败'));
 }
 async function deleteAppFolder(id) {
   const f = _marketFolders.find(x => x.id === id); if (!f) return;
-  if (!confirm(`删除文件夹「${f.name}」？里面的应用会回到「全部应用」，不会被删除或取消授权。`)) return;
+  if (!await uiConfirm(`删除文件夹「${f.name}」？里面的应用会回到「全部应用」，不会被删除或取消授权。`)) return;
   await api('DELETE', '/user/app-folders/' + id);
   _marketFolder = ''; renderMarket();
 }
@@ -4522,7 +4596,7 @@ async function renderKycCard() {
 }
 
 async function deleteKyc() {
-  if (!confirm('确认删除实名信息？删除后需重新认证。')) return;
+  if (!await uiConfirm('确认删除实名信息？删除后需重新认证。')) return;
   const { ok, data } = await api('DELETE', '/user/kyc');
   if (ok) { renderKycCard(); showToast('⚠️ 实名信息已删除'); }
   else showToast('⚠️ ' + (data.error||'删除失败'));
@@ -4808,7 +4882,7 @@ async function admEnableUser(uid) {
   if (ok) { showToast('✓ 账号已恢复'); loadAdmUsers(); }
 }
 async function admDeleteKyc(uid) {
-  if (!confirm('确认清除该用户的实名信息？清除后需重新认证。')) return;
+  if (!await uiConfirm('确认清除该用户的实名信息？清除后需重新认证。')) return;
   const { ok, data } = await api('DELETE', `/admin/users/${uid}/kyc`);
   if (ok) { showToast('⚠️ 实名信息已清除'); loadAdmUserDetail(uid); }
   else showToast('清除失败：' + (data?.error || '未知错误'));
@@ -4872,7 +4946,7 @@ async function toggleBackup(id, enabled) {
   if (ok) loadBackups(); else showToast('操作失败：' + (data?.error || '未知错误'));
 }
 async function delBackup(id) {
-  if (!confirm('删除这个备份目标？已经存好的备份文件不会被删除。')) return;
+  if (!await uiConfirm('删除这个备份目标？已经存好的备份文件不会被删除。')) return;
   const { ok, data } = await api('DELETE', '/admin/backups/' + id);
   if (ok) loadBackups(); else showToast('删除失败：' + (data?.error || '未知错误'));
 }
@@ -4947,16 +5021,16 @@ async function loadKycSiblings() {
 async function mergeKycSiblings() {
   const sources = [...document.querySelectorAll('.kyc-sib:checked')].map(c => c.value);
   if (!sources.length) { showToast('请勾选要合并的账号'); return; }
-  const c = prompt(`把选中的 ${sources.length} 个账号合并到当前账号？此操作不能撤销。请输入「合并账号」确认`);
+  const c = await uiPrompt(`把选中的 ${sources.length} 个账号合并到当前账号？被合并的账号会被删除（可在期限内到「注销与删除 → 账号合并记录」撤销）。请输入「合并账号」确认`);
   if (c == null) return;
   const { ok, data } = await api('POST', '/user/kyc/merge', { sources, confirm: c.trim() });
   if (ok) { showToast(`已合并 ${data.merged.length} 个账号`); loadKycSiblings(); } else showToast('合并失败：' + (data?.error || '未知错误'));
 }
 async function admMergeInto(uid, uidText) {
-  const list = prompt(`把哪些账号合并到 ${uidText}？填 UID / 邮箱 / 手机，多个用逗号隔开`);
+  const list = await uiPrompt(`把哪些账号合并到 ${uidText}？填 UID / 邮箱 / 手机，多个用逗号隔开`);
   if (!list) return;
   const sources = list.split(/[,，\s]+/).map(x => x.trim()).filter(Boolean);
-  const c = prompt(`把 ${sources.join('、')} 合并到 ${uidText}？此操作不能撤销。请输入「合并账号」确认`);
+  const c = await uiPrompt(`把 ${sources.join('、')} 合并到 ${uidText}？被合并的账号会被删除（可在期限内到「注销与删除 → 账号合并记录」撤销）。请输入「合并账号」确认`);
   if (c == null) return;
   const { ok, data } = await api('POST', '/admin/users/merge', { target: uidText, sources, confirm: c.trim() });
   if (ok) { showToast(`已合并 ${data.merged.length} 个账号`); loadAdmUserDetail(uid); } else showToast('合并失败：' + (data?.error || '未知错误'));
@@ -4995,7 +5069,7 @@ function _delChecklistHtml(list, opts = {}) {
   }).join('');
 }
 async function _delItemAction(url, key, action, after) {
-  if (action === 'remove_member' && !confirm('在企业微信里删除这个成员？这是企业微信里的操作，删除后在企业微信那边无法恢复。')) return;
+  if (action === 'remove_member' && !await uiConfirm('在企业微信里删除这个成员？这是企业微信里的操作，删除后在企业微信那边无法恢复。')) return;
   showToast(action === 'recheck' ? '正在核验…' : '处理中…');
   const { ok, data } = await api('POST', url, { key, action });
   if (!ok) showToast(data?.error || '操作失败'); else showToast('已更新');
@@ -5026,15 +5100,15 @@ async function loadAcctDeletion(u) {
     <div style="margin-top:10px;"><button class="btn" style="font-size:12px;color:var(--err);border-color:var(--err);" onclick="openMyDeletion()">注销账号…</button></div>`;
 }
 async function openMyDeletion() {
-  const confirmTxt = prompt('注销账号：请输入「注销账号」四个字确认');
+  const confirmTxt = await uiPrompt('注销账号：请输入「注销账号」四个字确认');
   if (confirmTxt == null) return;
   if (confirmTxt.trim() !== '注销账号') { showToast('输入不正确，已取消'); return; }
-  const password = ME && ME.has_password === false ? '' : (prompt('请输入登录密码（没有设置密码直接确定）：') || '');
+  const password = ME && ME.has_password === false ? '' : (await uiPrompt('请输入登录密码（没有设置密码直接确定）：') || '');
   const { ok, data } = await api('POST', '/user/account/deletion', { confirm: '注销账号', password });
   if (ok) { showToast('已申请注销，冷静期内可撤销'); loadProfile(); } else showToast('申请失败：' + (data?.error || '未知错误'));
 }
 async function cancelMyDeletion() {
-  if (!confirm('撤销注销申请？')) return;
+  if (!await uiConfirm('撤销注销申请？')) return;
   const { ok, data } = await api('DELETE', '/user/account/deletion');
   if (ok) { showToast('已撤销注销'); loadProfile(); } else showToast('撤销失败：' + (data?.error || '未知错误'));
 }
@@ -5074,20 +5148,20 @@ async function renderUserDeletionSection(u) {
   box.innerHTML = html;
 }
 async function admDeleteUser(uid, uidText, direct) {
-  const c = prompt(`删除账号：请原样输入对方 UID「${uidText}」确认${direct ? '' : '（你的权限需要上级审批，或等待期满后执行）'}`);
+  const c = await uiPrompt(`删除账号：请原样输入对方 UID「${uidText}」确认${direct ? '' : '（你的权限需要上级审批，或等待期满后执行）'}`);
   if (c == null) return;
-  const reason = prompt('删除原因（可选）：') || '';
+  const reason = await uiPrompt('删除原因（可选）：') || '';
   const { ok, data } = await api('POST', `/admin/users/${uid}/delete`, { confirm: c.trim(), reason });
   if (ok) { showToast(data.state === 'deleted' ? '账号已删除' : '已发起删除，等待交接 / 审批'); loadAdmUserDetail(uid); }
   else showToast('删除失败：' + (data?.error || '未知错误'));
 }
 async function admRestoreUser(uid) {
-  if (!confirm('恢复这个账号？恢复后账号重新启用。')) return;
+  if (!await uiConfirm('恢复这个账号？恢复后账号重新启用。')) return;
   const { ok, data } = await api('POST', `/admin/users/${uid}/restore`);
   if (ok) { showToast('账号已恢复'); loadAdmUserDetail(uid); } else showToast('恢复失败：' + (data?.error || '未知错误'));
 }
 async function admPurgeUser(uid) {
-  const c = prompt('立即彻底清除：账号和个人数据将被永久删除、无法恢复。请输入「彻底清除」确认');
+  const c = await uiPrompt('立即彻底清除：账号和个人数据将被永久删除、无法恢复。请输入「彻底清除」确认');
   if (c == null) return;
   const { ok, data } = await api('POST', `/admin/users/${uid}/purge`, { confirm: c.trim() });
   if (ok) { showToast('已彻底清除'); loadAdmUsers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
@@ -5157,10 +5231,10 @@ async function bulkDeletion(act) {
   const sel = _delPicked().filter(r => r.status === want);
   if (!sel.length) { showToast('勾选的记录里没有可以「' + c.label + '」的'); return; }
   const names = sel.slice(0, 15).map(r => '· ' + (r.user ? r.user.name + ' ' + r.user.uid : r.id)).join('\n') + (sel.length > 15 ? `\n…等 ${sel.length} 个` : '');
-  if (!confirm(`对下面 ${sel.length} 个账号执行「${c.label}」？${c.tip ? '\n' + c.tip + '。' : ''}\n\n${names}`)) return;
+  if (!await uiConfirm(`对下面 ${sel.length} 个账号执行「${c.label}」？${c.tip ? '\n' + c.tip + '。' : ''}\n\n${names}`)) return;
   let confirmWord;
   if (c.phrase) {
-    const v = prompt(`再次确认：请输入「${c.phrase}」`);
+    const v = await uiPrompt(`再次确认：请输入「${c.phrase}」`);
     if (v == null) return;
     if (v.trim() !== c.phrase) { showToast('确认词不正确，已取消'); return; }
     confirmWord = v.trim();
@@ -5169,7 +5243,7 @@ async function bulkDeletion(act) {
   if (!ok && !data?.results) { showToast('操作失败：' + (data?.error || '未知错误')); return; }
   const fails = (data.results || []).filter(x => !x.ok);
   showToast(`已${c.label} ${data.done} 个` + (fails.length ? `，${fails.length} 个失败` : ''));
-  if (fails.length) alert('以下没有成功：\n' + fails.map(x => `· ${x.name}：${x.error}`).join('\n'));
+  if (fails.length) await uiAlert('以下没有成功：\n' + fails.map(x => `· ${x.name}：${x.error}`).join('\n'));
   loadDeletions();
 }
 
@@ -5202,8 +5276,8 @@ let _mergeList = [];
 async function undoMerge(id) {
   const m = _mergeList.find(x => x.id === id);
   const names = m ? m.sources.map(x => x.name + ' ' + x.uid).join('、') : '';
-  if (!confirm(`撤销这次合并？\n\n${names} 会恢复成独立账号，原来的登录绑定、组织成员关系、积分、历史记录都还给它们。\n合并之后保留账号上又改过的内容不会被覆盖。\n（合并时推送给第三方应用的「账号已合并」通知无法收回。）`)) return;
-  const v = prompt('再次确认：请输入「撤销合并」');
+  if (!await uiConfirm(`撤销这次合并？\n\n${names} 会恢复成独立账号，原来的登录绑定、组织成员关系、积分、历史记录都还给它们。\n合并之后保留账号上又改过的内容不会被覆盖。\n（合并时推送给第三方应用的「账号已合并」通知无法收回。）`)) return;
+  const v = await uiPrompt('再次确认：请输入「撤销合并」');
   if (v == null) return;
   if (v.trim() !== '撤销合并') { showToast('确认词不正确，已取消'); return; }
   const { ok, data } = await api('POST', `/admin/merges/${id}/undo`, { confirm: '撤销合并' });
@@ -5216,7 +5290,7 @@ async function undoMerge(id) {
 
 async function decideDeletion(id, act) {
   const label = { approve: '批准（交接完成后立即删除）', reject: '驳回', cancel: '撤回' }[act];
-  if (!confirm(label + '这条申请？')) return;
+  if (!await uiConfirm(label + '这条申请？')) return;
   const { ok, data } = await api('POST', `/admin/deletions/${id}/${act}`);
   if (ok) { showToast('已' + label.slice(0, 2)); loadDeletions(); } else showToast('操作失败：' + (data?.error || '未知错误'));
 }
@@ -5234,7 +5308,7 @@ async function loadGrants() {
     : '<div style="padding:8px 0;">还没有授权。除超级管理员外，没有人能清除实名或删除账号。</div>';
 }
 async function delGrant(id) {
-  if (!confirm('撤销这条授权？')) return;
+  if (!await uiConfirm('撤销这条授权？')) return;
   const { ok, data } = await api('DELETE', '/admin/grants/' + id);
   if (ok) { showToast('已撤销'); loadGrants(); } else showToast('撤销失败：' + (data?.error || '未知错误'));
 }
@@ -5286,7 +5360,7 @@ async function saveGrant() {
 }
 
 async function sendKycLinkToUser(uid) {
-  if (!confirm('确认向该用户发送实名认证链接？将优先同时通过短信和邮箱双通道发送。')) return;
+  if (!await uiConfirm('确认向该用户发送实名认证链接？将优先同时通过短信和邮箱双通道发送。')) return;
   showToast('→ 正在生成并发送认证链接…');
   const { ok, data } = await api('POST', `/admin/users/${uid}/send-kyc-link`);
   if (!ok) { showToast('⚠️ ' + (data.error || '发送失败')); return; }
@@ -5298,7 +5372,7 @@ async function sendKycLinkToUser(uid) {
 }
 
 async function admResetPassword(uid) {
-  const newPw = prompt('请输入新密码（至少 8 位）：');
+  const newPw = await uiPrompt('请输入新密码（至少 8 位）：');
   if (!newPw) return;
   if (newPw.length < 8) { showToast('⚠️ 密码至少 8 位'); return; }
   const { ok } = await api('POST', `/admin/users/${uid}/reset-password`, { password: newPw });
@@ -5306,12 +5380,12 @@ async function admResetPassword(uid) {
   else showToast('⚠️ 重置失败');
 }
 
-function admTransferPoints(uid, name, currentPoints) {
-  const delta = prompt(`用户「${name}」当前积分 ${currentPoints}。\n输入正数增加积分，负数扣减积分（如 +100 或 -50）：`);
+async function admTransferPoints(uid, name, currentPoints) {
+  const delta = await uiPrompt(`用户「${name}」当前积分 ${currentPoints}。\n输入正数增加积分，负数扣减积分（如 +100 或 -50）：`);
   if (delta === null) return;
   const pts = parseInt(delta);
   if (!pts || pts === 0) { showToast('⚠️ 请输入有效积分数'); return; }
-  const reason = prompt('备注原因（选填）：') || (pts > 0 ? '管理员增加积分' : '管理员扣减积分');
+  const reason = await uiPrompt('备注原因（选填）：') || (pts > 0 ? '管理员增加积分' : '管理员扣减积分');
   api('POST', `/admin/users/${uid}/points`, { delta: pts, reason }).then(({ ok, data }) => {
     if (ok) { showToast(`✓ 操作成功，当前积分：${data.points}`); loadAdmUsers(); }
     else showToast('⚠️ ' + (data.error||'操作失败'));
@@ -5320,9 +5394,9 @@ function admTransferPoints(uid, name, currentPoints) {
 
 async function admRevokeCode(id, code, hasRecords) {
   const recallOption = hasRecords
-    ? confirm(`确认作废兑换码「${code}」？\n\n点击「确定」同时撤销已兑换的积分\n点击「取消」仅作废兑换码不撤销积分`)
+    ? await uiConfirm(`确认作废兑换码「${code}」？\n\n点击「确定」同时撤销已兑换的积分\n点击「取消」仅作废兑换码不撤销积分`)
     : false;
-  if (!confirm(`确认作废兑换码「${code}」？${recallOption ? '（将撤销已兑换积分）' : ''}`)) return;
+  if (!await uiConfirm(`确认作废兑换码「${code}」？${recallOption ? '（将撤销已兑换积分）' : ''}`)) return;
   const { ok, data } = await api('POST', `/admin/shop/codes/${id}/revoke`, { recall_points: recallOption });
   if (ok) {
     showToast(recallOption ? '✓ 兑换码已作废，积分已撤销' : '✓ 兑换码已作废');
@@ -5367,22 +5441,22 @@ function renderDocEditor(key) {
 function docCmd(cmd, val) { document.execCommand(cmd, false, val || null); document.getElementById('doc-editor').focus(); }
 // 通用富文本命令（作用于当前聚焦的 contenteditable，文档编辑器与公告编辑器共用）
 function rtExec(cmd, val) { document.execCommand(cmd, false, val || null); }
-function rtLink() { const u = prompt('链接地址（http/https）：', 'https://'); if (!u) return; if (!/^https?:\/\//i.test(u)) { showToast('⚠️ 仅支持 http/https'); return; } document.execCommand('createLink', false, u); }
-function rtImage() { const u = prompt('图片地址（http/https）：', 'https://'); if (!u) return; if (!/^https?:\/\//i.test(u)) { showToast('⚠️ 仅支持 http/https'); return; } document.execCommand('insertHTML', false, `<img src="${esc(u)}" style="max-width:100%;"/>`); }
-function docInsertLink() {
-  const url = prompt('链接地址（http/https）：', 'https://');
+async function rtLink() { const u = await uiPrompt('链接地址（http/https）：', 'https://'); if (!u) return; if (!/^https?:\/\//i.test(u)) { showToast('⚠️ 仅支持 http/https'); return; } document.execCommand('createLink', false, u); }
+async function rtImage() { const u = await uiPrompt('图片地址（http/https）：', 'https://'); if (!u) return; if (!/^https?:\/\//i.test(u)) { showToast('⚠️ 仅支持 http/https'); return; } document.execCommand('insertHTML', false, `<img src="${esc(u)}" style="max-width:100%;"/>`); }
+async function docInsertLink() {
+  const url = await uiPrompt('链接地址（http/https）：', 'https://');
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) { showToast('⚠️ 仅支持 http/https 链接'); return; }
   document.execCommand('createLink', false, url);
 }
-function docInsertImage() {
-  const url = prompt('图片地址（http/https）：', 'https://');
+async function docInsertImage() {
+  const url = await uiPrompt('图片地址（http/https）：', 'https://');
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) { showToast('⚠️ 仅支持 http/https 图片地址'); return; }
   document.execCommand('insertHTML', false, `<img src="${esc(url)}" style="max-width:100%;"/>`);
 }
-function docInsertVideo() {
-  const url = prompt('视频文件地址（http/https，mp4 等）：', 'https://');
+async function docInsertVideo() {
+  const url = await uiPrompt('视频文件地址（http/https，mp4 等）：', 'https://');
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) { showToast('⚠️ 仅支持 http/https 视频地址'); return; }
   document.execCommand('insertHTML', false, `<video src="${esc(url)}" controls style="max-width:100%;"></video><p></p>`);
@@ -5497,7 +5571,7 @@ const _INAPP_PLATFORMS = ['wecom', 'wechat', 'feishu', 'dingtalk'];
 async function copyInappLoginUrl(instId) {
   const url = location.origin + '/login.html' + (instId ? '?inst=' + encodeURIComponent(instId) : '');
   try { await navigator.clipboard.writeText(url); showToast('已复制：' + url + '（填到自建应用的主页 / 工作台地址）'); }
-  catch (_) { prompt('应用内登录地址（填到自建应用的主页 / 工作台地址）：', url); }
+  catch (_) { await uiPrompt('应用内登录地址（填到自建应用的主页 / 工作台地址）：', url); }
 }
 async function renderDefaultSubjectCreds() {
   const box = document.getElementById('default-subject-creds');
@@ -5567,7 +5641,7 @@ async function toggleDefaultCred(platform, enabled) {
 }
 async function delDefaultCred(platform) {
   const p = _defaultCreds.find(x => x.platform === platform);
-  if (!confirm(`删除本站的「${p ? p.label : platform}」登录凭证？会清空它的全部配置，登录入口随之消失（已绑定用户的历史记录保留）。`)) return;
+  if (!await uiConfirm(`删除本站的「${p ? p.label : platform}」登录凭证？会清空它的全部配置，登录入口随之消失（已绑定用户的历史记录保留）。`)) return;
   const { ok, data } = await api('DELETE', '/admin/oauth-defaults/' + platform);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); renderDefaultSubjectCreds();
@@ -5579,7 +5653,7 @@ function _dirStateText(st) {
   if (!st) return '<span style="color:var(--txd);">未同步</span>';
   const at = esc(String(st.at || '').replace('T', ' ').slice(5, 16));
   if (!st.ok) return `<span style="color:var(--err);" title="${esc(st.error || '')}">✗ ${at} 失败</span>`;
-  const extra = (st.created_idonly ? ' · 其中 ' + st.created_idonly + ' 人只拿到 UserId（姓名暂用 UserId）' : '') + (st.unmatched ? ' · 只有 UserId 未建号 ' + st.unmatched : '') + (st.bound ? ' · 绑定 ' + st.bound : '') + (st.pw_set ? ' · 设密码 ' + st.pw_set : '') + (st.kept ? ' · 保留单独修改 ' + st.kept : '') + (st.conflicts ? ' · UserId 冲突 ' + st.conflicts : '');
+  const extra = (st.created_idonly ? ' · 其中 ' + st.created_idonly + ' 人只拿到 UserId（姓名暂用 UserId）' : '') + (st.unmatched ? ' · 只有 UserId 未建号 ' + st.unmatched : '') + (st.bound ? ' · 绑定 ' + st.bound : '') + (st.pw_set ? ' · 设密码 ' + st.pw_set : '') + (st.kept ? ' · 保留单独修改 ' + st.kept : '') + (st.conflicts ? ' · UserId 冲突 ' + st.conflicts : '') + (st.duplicates ? ' · ⚠️ 重复账号 ' + st.duplicates + '（到「组织管理」页顶部合并）' : '');
   return `<span style="color:#1F7A3A;" title="${st.force ? '【全部覆盖同步】' : ''}新建 ${st.created} · 关联 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${extra}${(st.errors||[]).length ? ' · 异常 ' + st.errors.length : ''}">✓ ${at}${st.force ? ' · 全部覆盖' : ''} · 在册 ${st.total}${st.removed ? ' · 移出 ' + st.removed : ''}${st.kept ? ' · 保留 ' + st.kept : ''}${(st.errors||[]).length ? ' · ⚠' + st.errors.length : ''}${st.limited ? ' · <span style="color:var(--warn);">⚠ 受限 Secret</span>' : ''}</span>`;
 }
 // 同步范围展示：部门名（没有名字就显示 ID）
@@ -5643,7 +5717,8 @@ async function openDirSourceModal(sid, srcId) {
     <div id="dsm-conn">
     ${lab('企业 ID（corpid）')}<input id="dsm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
     ${lab('读取通讯录用的 Secret（推荐填<b>自建应用</b>的 Secret：应用管理 → 自建应用 → Secret，应用可见范围设为要同步的部门，并把本服务器出口 IP 加进该应用的可信 IP）')}
-    <div style="font-size:11px;color:var(--warn);margin:-2px 0 4px;line-height:1.6;">⚠️「管理工具 → 通讯录同步」的 Secret 已被企业微信限制（报 48009）：只能读到 UserId 和部门 ID，读不到姓名 / 部门名 / 联系方式。用它也能跑，但只会同步已关联过的人，新的人不会建号。</div><input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
+    <div style="font-size:11px;color:var(--warn);margin:-2px 0 4px;line-height:1.6;">⚠️「管理工具 → 通讯录同步」的 Secret 已被企业微信限制（报 48009）：只能读到 UserId 和部门 ID，读不到姓名 / 部门名 / 联系方式。它要填到下面的「通讯录同步 Secret（管理用）」，只用来停用 / 删除成员。</div><input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
+    ${lab('通讯录同步 Secret（管理用，可选）：企业微信后台 管理工具 → 通讯录同步 的 Secret，开启「API 编辑通讯录」并把本服务器出口 IP 加进它的可信 IP。只用来<b>停用 / 启用 / 删除成员</b>（注销与删除、停用同步）；不填则用上面那个 Secret 去改，自建应用 Secret 没有改通讯录的权限会报 48002')}<input id="dsm-wsecret" type="password" autocomplete="new-password" placeholder="${c.write_secret ? '已配置，留空不修改' : '不填 = 只读，不能在企业微信里停用 / 删除成员'}" style="${inp}">${c.write_secret ? '<label style="display:block;margin-top:4px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dsm-wsecret-clear"> 清除管理用 Secret</label>' : ''}
     </div>
 
     ${lab('同步范围（部门，可多选；用总公司账号但只开了某几个部门权限时，只勾那几个）')}
@@ -5690,7 +5765,7 @@ async function openDirSourceModal(sid, srcId) {
     </div>
     <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-idonly" ${c.idonly_create !== false ? 'checked' : ''}> 只拿到 UserId 的成员也建账号（Secret 受限时；姓名先用 UserId，拿到真名后自动替换）</label>
-    <label id="dsm-suspend-row" style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（恢复时再启用；需要能修改通讯录的「通讯录同步」Secret）</label>
+    <label id="dsm-suspend-row" style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（恢复时再启用；需要填上面的「通讯录同步 Secret（管理用）」）</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
     ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? '🔐 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : 'ℹ️ 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
       <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>
@@ -5747,14 +5822,14 @@ async function openDirSourceModal(sid, srcId) {
     const dept_names = {}; picked.forEach((n, id) => { if (n) dept_names[id] = n; });
     const body = {
       type: $('#dsm-type').value, label: $('#dsm-label').value.trim(),
-      corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim(),
+      corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim(), write_secret: $('#dsm-wsecret').value.trim(), clear_write_secret: !!$('#dsm-wsecret-clear')?.checked,
       dept_ids: dept_ids.length ? dept_ids : [1], dept_names, interval_hours: parseInt($('#dsm-interval').value, 10) || 0,
       uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, idonly_create: $('#dsm-idonly').checked, push_suspend: $('#dsm-suspend').checked, enabled: $('#dsm-enabled').checked,
       bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
     if (curParent()) {
       if (!src) body.parent_id = curParent();
-      delete body.corp_id; delete body.secret; delete body.push_suspend;
+      delete body.corp_id; delete body.secret; delete body.write_secret; delete body.clear_write_secret; delete body.push_suspend;
     } else {
     body.cb_token = $('#dsm-cb-token').value.trim();
     const cbAes = $('#dsm-cb-aes').value.trim();
@@ -5812,20 +5887,62 @@ async function runDirSource(id, sid, force) {
 async function forceRunDirSource(id, sid) {
   const x = (_dirSourcesBySid[sid] || []).find(s => s.id === id);
   const phrase = '全部覆盖';
-  const v = prompt(`【全部覆盖同步】「${x ? x.label : ''}」\n\n成员被单独改过的登录凭证绑定、组织密码，都会被改回本同步源的默认值（普通同步不会动它们）。\n此操作会写入审计存证。\n\n确认请输入：${phrase}`);
+  const v = await uiPrompt(`【全部覆盖同步】「${x ? x.label : ''}」\n\n成员被单独改过的登录凭证绑定、组织密码，都会被改回本同步源的默认值（普通同步不会动它们）。\n此操作会写入审计存证。\n\n确认请输入：${phrase}`);
   if (v === null) return;
   if (v.trim() !== phrase) { showToast('口令不正确，已取消'); return; }
   runDirSource(id, sid, v.trim());
 }
 async function delDirSource(id, sid) {
   const x = (_dirSourcesBySid[sid] || []).find(s => s.id === id);
-  if (!confirm(`删除同步源「${x ? x.label : ''}」？已同步进来的成员不会被移出。`)) return;
+  if (!await uiConfirm(`删除同步源「${x ? x.label : ''}」？已同步进来的成员不会被移出。`)) return;
   const { ok, data } = await api('DELETE', '/admin/dir-sources/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); refreshDirSourceViews(sid);
 }
 
+// ── 企业微信重复账号（v3.5.50）──
+let _dirDups = [];
+async function loadDirDuplicates() {
+  const card = document.getElementById('dir-dup-card');
+  if (!card) return;
+  const { ok, data } = await api('GET', '/admin/dir-duplicates');
+  _dirDups = ok ? (data.groups || []) : [];
+  card.style.display = _dirDups.length ? '' : 'none';
+  if (!_dirDups.length) return;
+  const su = adminRole === 'superadmin';
+  document.getElementById('dir-dup-title').textContent = `⚠️ 企业微信重复账号（${_dirDups.length} 人）`;
+  document.getElementById('dir-dup-all').style.display = su && _dirDups.length > 1 ? '' : 'none';
+  document.getElementById('dir-dup-list').innerHTML = _dirDups.map((g, i) => `
+    <div style="padding:8px 0;border-bottom:1px solid var(--bd);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <b style="flex:1;">UserId ${esc(g.ext_id)} <span style="font-weight:400;color:var(--txd);">· 企业 ${esc(g.corp_id)}</span></b>
+        ${su ? `<button class="btn" style="font-size:11px;" onclick="mergeDirDuplicates(${i})">合并为一个…</button>` : ''}
+      </div>
+      ${g.users.map(u => `<label style="display:flex;align-items:center;gap:6px;padding:2px 0 2px 4px;cursor:${su ? 'pointer' : 'default'};">
+        ${su ? `<input type="radio" name="dd-${i}" value="${esc(u.id)}" ${u.id === g.suggested ? 'checked' : ''}/>` : '•'}
+        <a href="javascript:void(0)" onclick="event.preventDefault();goto('adm-users');setTimeout(()=>loadAdmUserDetail('${esc(u.id)}'),300)">${esc(u.name || '—')} ${esc(u.uid)}</a>
+        <span style="color:var(--txd);font-size:11px;">${[u.admin ? '管理员' : '', u.has_pw ? '有密码' : '', u.kyc ? '已实名' : '', u.email || u.phone || '', (u.orgs || []).join('、')].filter(Boolean).map(esc).join(' · ')}</span>
+      </label>`).join('')}
+    </div>`).join('');
+}
+async function mergeDirDuplicates(i) {
+  const picks = (i == null ? _dirDups.map((g, k) => k) : [i]).map(k => {
+    const g = _dirDups[k];
+    const t = document.querySelector(`input[name="dd-${k}"]:checked`)?.value || g.suggested;
+    return { key: g.key, target: t, g };
+  });
+  const lines = picks.map(p => { const t = p.g.users.find(u => u.id === p.target); return `· ${t.name} ${t.uid} ← ${p.g.users.filter(u => u.id !== p.target).map(u => u.uid).join('、')}`; });
+  if (!await uiConfirm(`把下面的重复账号合并（箭头右边的并入左边后删除）：\n${lines.slice(0, 30).join('\n')}${lines.length > 30 ? `\n…共 ${lines.length} 人` : ''}`, { title: '合并重复账号' })) return;
+  const c = await uiPrompt('请输入「合并账号」确认', '', { title: '合并重复账号' });
+  if (c == null) return;
+  const { ok, data } = await api('POST', '/admin/dir-duplicates/merge', { groups: picks.map(p => ({ key: p.key, target: p.target })), confirm: c.trim() });
+  if (!ok) { showToast('合并失败：' + (data?.error || '未知错误')); return; }
+  showToast(`已合并 ${data.done} 人` + (data.failed ? `，${data.failed} 人失败` : ''));
+  if (data.failed) await uiAlert('这些没有合并：\n' + data.results.filter(r => !r.ok).map(r => `· ${r.name}（${r.ext_id}）：${r.error}`).join('\n'), { title: '部分失败' });
+  loadDirDuplicates();
+}
 async function loadOauthSubjects() {
+  loadDirDuplicates();
   renderDefaultSubjectCreds();   // 默认主体（本站）三方凭证（原系统配置→三方登录）
   const box = document.getElementById('oauth-subjects-list');
   if (box) box.innerHTML = '加载中…';
@@ -5916,7 +6033,7 @@ async function loadVerifyFiles() {
     </div>`;
   }).join('');
 }
-function _vfCopy(v) { (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => showToast('已复制'), () => prompt('复制这个地址', v)); }
+function _vfCopy(v) { (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => showToast('已复制'), async () => await uiPrompt('复制这个地址', v)); }
 function openVerifyFileModal() {
   const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
   const lab = (t) => `<label style="display:block;font-size:12px;color:var(--txd);margin:10px 0 4px;">${t}</label>`;
@@ -5958,7 +6075,7 @@ function openVerifyFileModal() {
   };
 }
 async function extendVerifyFile(name) {
-  const v = prompt(`「${name}」从现在起再保留多少小时？（0 = 永久）`, '72');
+  const v = await uiPrompt(`「${name}」从现在起再保留多少小时？（0 = 永久）`, '72');
   if (v === null) return;
   const h = Number(v);
   if (!Number.isFinite(h) || h < 0 || h > 8760) { showToast('请输入 0~8760 之间的小时数'); return; }
@@ -5968,7 +6085,7 @@ async function extendVerifyFile(name) {
   showToast(h ? `已延期 ${h} 小时` : '已改为永久'); loadVerifyFiles();
 }
 async function delVerifyFile(name) {
-  if (!confirm(`删除验证文件「${name}」？删除后这个地址就访问不到了。`)) return;
+  if (!await uiConfirm(`删除验证文件「${name}」？删除后这个地址就访问不到了。`)) return;
   if (_IS_DEV) { window._devVF = (window._devVF || []).filter(x => x.name !== name); loadVerifyFiles(); return; }
   const { ok, data } = await api('DELETE', '/admin/verify-files/' + encodeURIComponent(name));
   if (!ok) { showToast(data.error || '删除失败'); return; }
@@ -6082,7 +6199,7 @@ async function migrateToFolder(fid, kind, id) {
   const desc = kind === 'dir_source'
     ? `把「${m.org_name}」的通讯录「${m.label}」（${m.corp_id}）迁到文件夹「${f.name}」：\n· ${m.attach_to ? '并入文件夹已有的「' + m.attach_to.label + '」' + (m.secret_differs ? '（两边 Secret 不同，之后用文件夹的）' : '') : '在文件夹上新建一份，企业 ID / Secret / 接收事件服务器搬过去'}\n· 本组织改为「套用」它，所选部门、绑定、默认密码等照旧\n· 已同步的成员、旧的回调地址都继续有效`
     : `把「${m.org_name}」的登录凭证「${m.label || m.platform_name}」挪到文件夹「${f.name}」共用：\n· 文件夹里的组织都能用它登录，同一人会在整个文件夹范围内认作同一账号\n· 已绑定的用户照旧能登录${m.has_policy ? '\n· ⚠️ 该组织的登录 IP 白名单 / 登录时段 / 强制两步验证，不再作用于经这套凭证的登录' : ''}`;
-  const v = prompt(desc + '\n\n确认请输入：迁移');
+  const v = await uiPrompt(desc + '\n\n确认请输入：迁移');
   if (v === null) return;
   if (v.trim() !== '迁移') { showToast('确认词不正确，已取消'); return; }
   const { ok, data } = await api('POST', '/admin/org-folders/' + fid + '/migrate', { kind, id, confirm: '迁移' });
@@ -6096,7 +6213,7 @@ async function toggleFolderConn(id, enabled) {
   showToast(enabled ? '已启用' : '已停用（套用它的组织都暂停同步）'); loadOauthSubjects();
 }
 async function delFolderConn(id) {
-  if (!confirm('删除这份文件夹通讯录？（还有组织套用时不能删）')) return;
+  if (!await uiConfirm('删除这份文件夹通讯录？（还有组织套用时不能删）')) return;
   const { ok, data } = await api('DELETE', '/admin/folder-dir-sources/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); loadOauthSubjects();
@@ -6121,6 +6238,7 @@ function openDirConnModal(fid, connId) {
     ${lab('名称')}<input id="dcm-label" value="${esc(x ? x.label : '')}" placeholder="企业微信" style="${inp}">
     ${lab('企业 ID（corpid）')}<input id="dcm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
     ${lab('读取通讯录用的 Secret（推荐自建应用的 Secret，可见范围要覆盖各组织要同步的部门）')}<input id="dcm-secret" type="password" autocomplete="new-password" placeholder="${x ? '已配置，留空不修改' : ''}" style="${inp}">
+    ${lab('通讯录同步 Secret（管理用，可选）：企业微信后台 管理工具 → 通讯录同步 的 Secret，开启「API 编辑通讯录」并把本服务器出口 IP 加进它的可信 IP。只用来<b>停用 / 启用 / 删除成员</b>（注销与删除、停用同步）；不填则用上面那个 Secret 去改，自建应用 Secret 没有改通讯录的权限会报 48002')}<input id="dcm-wsecret" type="password" autocomplete="new-password" placeholder="${c.write_secret ? '已配置，留空不修改' : '不填 = 只读，不能在企业微信里停用 / 删除成员'}" style="${inp}">${c.write_secret ? '<label style="display:block;margin-top:4px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dcm-wsecret-clear"> 清除管理用 Secret</label>' : ''}
     <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
       <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 接收事件服务器（可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">一份通讯录只能在企业微信后台填一个地址：变动推过来后，套用它的各组织都会自动同步一次。</div>
@@ -6133,7 +6251,7 @@ function openDirConnModal(fid, connId) {
       ${c.cb_token ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dcm-cb-clear"> 关闭接收事件服务器</label>' : ''}
       ${x ? `<div style="font-size:11px;color:var(--txd);margin-top:6px;">${_dirEventText(x)}</div>` : ''}
     </div>
-    <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dcm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（需能修改通讯录的 Secret）</label>
+    <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dcm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（需要填上面的「通讯录同步 Secret（管理用）」）</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dcm-enabled" ${!x || x.enabled ? 'checked' : ''}> 启用</label>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;"><button class="btn" id="dcm-cancel">取消</button><button class="btn primary" id="dcm-save">保存</button></div>
   </div>`;
@@ -6141,7 +6259,7 @@ function openDirConnModal(fid, connId) {
   const $ = (q) => ov.querySelector(q);
   $('#dcm-cancel').onclick = () => ov.remove();
   $('#dcm-save').onclick = async () => {
-    const body = { type: 'wecom', label: $('#dcm-label').value.trim(), corp_id: $('#dcm-corp').value.trim(), secret: $('#dcm-secret').value.trim(),
+    const body = { type: 'wecom', label: $('#dcm-label').value.trim(), corp_id: $('#dcm-corp').value.trim(), secret: $('#dcm-secret').value.trim(), write_secret: $('#dcm-wsecret').value.trim(), clear_write_secret: !!$('#dcm-wsecret-clear')?.checked,
       push_suspend: $('#dcm-suspend').checked, enabled: $('#dcm-enabled').checked, cb_token: $('#dcm-cb-token').value.trim() };
     const aes = $('#dcm-cb-aes').value.trim();
     if (aes) body.cb_aes_key = aes;
@@ -6154,7 +6272,7 @@ function openDirConnModal(fid, connId) {
 }
 
 async function newOrgFolder(thenMoveSid) {
-  const name = (prompt('新文件夹名称（如「华东区域」「子公司」）') || '').trim();
+  const name = (await uiPrompt('新文件夹名称（如「华东区域」「子公司」）') || '').trim();
   if (!name) return;
   const { ok, data } = await api('POST', '/admin/org-folders', { name });
   if (!ok) { showToast(data.error || '新建失败'); return; }
@@ -6163,7 +6281,7 @@ async function newOrgFolder(thenMoveSid) {
 }
 async function renameOrgFolder(id) {
   const f = _orgFolders.find(x => x.id === id); if (!f) return;
-  const name = (prompt('文件夹新名称', f.name) || '').trim();
+  const name = (await uiPrompt('文件夹新名称', f.name) || '').trim();
   if (!name || name === f.name) return;
   const { ok, data } = await api('PATCH', '/admin/org-folders/' + id, { name });
   if (!ok) { showToast(data.error || '重命名失败'); return; }
@@ -6171,7 +6289,7 @@ async function renameOrgFolder(id) {
 }
 async function delOrgFolder(id) {
   const f = _orgFolders.find(x => x.id === id); if (!f) return;
-  if (!confirm(`删除文件夹「${f.name}」？里面的 ${f.org_count || 0} 个组织会回到「未归类」，组织本身不受影响。（文件夹上有共用的通讯录 / 登录凭证时要先删掉）`)) return;
+  if (!await uiConfirm(`删除文件夹「${f.name}」？里面的 ${f.org_count || 0} 个组织会回到「未归类」，组织本身不受影响。（文件夹上有共用的通讯录 / 登录凭证时要先删掉）`)) return;
   const { ok, data } = await api('DELETE', '/admin/org-folders/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   try { localStorage.setItem('sso_org_folder', 'all'); } catch (_) {}
@@ -6363,7 +6481,7 @@ async function uploadFace(input) {
   input.value = '';
 }
 async function deleteFace() {
-  if (!confirm('删除已录入的人脸？')) return;
+  if (!await uiConfirm('删除已录入的人脸？')) return;
   const { ok, data } = await api('DELETE', '/user/access/face');
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); loadFaceStatus();
@@ -6512,7 +6630,7 @@ async function saveDevice() {
 }
 async function delDevice(id, name, ctx) {
   if (ctx) _devCtx = ctx;
-  if (!confirm(`删除设备「${name||id}」？`)) return;
+  if (!await uiConfirm(`删除设备「${name||id}」？`)) return;
   const { ok, data } = await api('DELETE', '/admin/devices/' + id);
   if (ok) { showToast('已删除'); loadDevices(_devCtx); } else showToast('删除失败：' + (data?.error || '未知错误'));
 }
@@ -6590,7 +6708,7 @@ async function saveFedApp() {
   showToast('已登记'); loadFedApps();
 }
 async function delFedApp(id) {
-  if (!confirm('删除该伙伴应用登记？')) return;
+  if (!await uiConfirm('删除该伙伴应用登记？')) return;
   const { ok, data } = await api('DELETE', '/admin/fed-apps/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   loadFedApps();
@@ -6729,7 +6847,7 @@ async function doFedIssue(id) {
   document.body.appendChild(ov);
 }
 async function delPeer(id) {
-  if (!confirm('删除该联邦伙伴？删除后其跨域码立即失效。')) return;
+  if (!await uiConfirm('删除该联邦伙伴？删除后其跨域码立即失效。')) return;
   const { ok, data } = await api('DELETE', '/admin/access/peers/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); loadAccessPeers();
@@ -6815,7 +6933,7 @@ async function doPairRedeem() {
 }
 // 对已有 peer 推送到伙伴域
 async function pushPeer(id, name, baseUrl) {
-  const b = prompt('把该伙伴的配对推送到对方域地址（对方需已把本系统的域加入其「可用域」白名单）：', baseUrl || 'https://');
+  const b = await uiPrompt('把该伙伴的配对推送到对方域地址（对方需已把本系统的域加入其「可用域」白名单）：', baseUrl || 'https://');
   if (!b) return;
   showToast('推送中…');
   const { ok, data } = await api('POST', '/admin/access/peers/' + id + '/push', { b_domain: b.trim() });
@@ -6949,7 +7067,7 @@ function showPassQr(code, name) {
   document.body.appendChild(ov);
 }
 async function revokePass(id) {
-  if (!confirm('撤销该访客码？撤销后立即失效。')) return;
+  if (!await uiConfirm('撤销该访客码？撤销后立即失效。')) return;
   const { ok, data } = await api('DELETE', '/access/passes/' + id);
   if (!ok) { showToast(data.error || '撤销失败'); return; }
   showToast('已撤销'); loadAccessPasses();
@@ -6993,7 +7111,7 @@ async function toggleFace(uid, status) {
   loadAccessFaces();
 }
 async function delFace(uid) {
-  if (!confirm('删除该用户的人脸？')) return;
+  if (!await uiConfirm('删除该用户的人脸？')) return;
   const { ok, data } = await api('DELETE', '/admin/access/faces/' + encodeURIComponent(uid));
   if (!ok) { showToast(data.error || '删除失败'); return; }
   loadAccessFaces();
@@ -7066,7 +7184,7 @@ async function toggleCard(id, status) {
   loadAccessCards();
 }
 async function delCard(id) {
-  if (!confirm('删除该卡绑定？')) return;
+  if (!await uiConfirm('删除该卡绑定？')) return;
   const { ok, data } = await api('DELETE', '/admin/access/cards/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   loadAccessCards();
@@ -7149,7 +7267,7 @@ async function saveDoor(id) {
   showToast('已保存'); loadAccessAdmin();
 }
 async function delDoor(id) {
-  if (!confirm('删除该门将同时删除其授权规则，确定？')) return;
+  if (!await uiConfirm('删除该门将同时删除其授权规则，确定？')) return;
   const { ok, data } = await api('DELETE', '/admin/access/doors/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); loadAccessAdmin();
@@ -7403,7 +7521,7 @@ async function saveVerifyField(id) {
   document.querySelector('.modal-mask')?.remove(); showToast('已保存'); loadVerifyFields();
 }
 async function delVerifyField(id) {
-  if (!confirm('删除该字段？所有用户在该字段的值一并清除。')) return;
+  if (!await uiConfirm('删除该字段？所有用户在该字段的值一并清除。')) return;
   const { ok, data } = await api('DELETE', '/admin/verify/fields/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   showToast('已删除'); loadVerifyFields();
@@ -7459,13 +7577,13 @@ async function saveVerifier() {
   document.querySelector('.modal-mask')?.remove(); showToast('已授权'); loadVerifiers();
 }
 async function delVerifier(id) {
-  if (!confirm('撤销该核验员权限？')) return;
+  if (!await uiConfirm('撤销该核验员权限？')) return;
   const { ok, data } = await api('DELETE', '/admin/verify/verifiers/' + id);
   if (!ok) { showToast(data.error || '撤销失败'); return; }
   showToast('已撤销'); loadVerifiers();
 }
 async function openVerifyValues() {
-  const uid = prompt('填写哪个用户的核验字段值？输入 UID / 邮箱 / 手机 / 用户名：', '');
+  const uid = await uiPrompt('填写哪个用户的核验字段值？输入 UID / 邮箱 / 手机 / 用户名：', '');
   if (!uid) return;
   const { ok, data } = await api('GET', '/admin/verify/values/' + encodeURIComponent(uid.trim()));
   if (!ok) { showToast(data.error || '用户不存在'); return; }
@@ -7573,7 +7691,7 @@ async function loadVersionInfo(force) {
   }
 }
 async function applyUpdate() {
-  if (!confirm('确定一键拉取更新？将先备份数据库，再执行 git pull + npm ci。更新期间请勿操作。')) return;
+  if (!await uiConfirm('确定一键拉取更新？将先备份数据库，再执行 git pull + npm ci。更新期间请勿操作。')) return;
   const log = document.getElementById('about-applylog');
   if (log) log.textContent = '更新中，请稍候…';
   const { ok, data } = await api('POST', '/admin/version/apply');
@@ -7693,7 +7811,7 @@ async function saveMemo() {
   else showToast('保存失败：' + (res.data?.error || ''));
 }
 async function delMemo() {
-  if (!_memoCur || !confirm('删除这条备忘录及其附件？')) return;
+  if (!_memoCur || !await uiConfirm('删除这条备忘录及其附件？')) return;
   const { ok } = await api('DELETE', '/memos/' + _memoCur);
   if (ok) { showToast('已删除'); closeMemo(); _memoAdmin ? loadAdmMemos() : loadMemos(); }
 }
@@ -7701,7 +7819,7 @@ async function transferMemo() {
   const account = document.getElementById('memo-transfer').value.trim();
   if (!account) { showToast('请填写要转交给谁'); return; }
   const id = await ensureMemo(); if (!id) return;
-  if (!confirm('转交后这条备忘录将移交给对方，你不再拥有。确定？')) return;
+  if (!await uiConfirm('转交后这条备忘录将移交给对方，你不再拥有。确定？')) return;
   const { ok, data } = await api('POST', '/memos/' + id + '/transfer', { account });
   if (ok) { showToast('已转交'); closeMemo(); _memoAdmin ? loadAdmMemos() : loadMemos(); }
   else showToast('转交失败：' + (data?.error || ''));
@@ -7743,9 +7861,9 @@ async function uploadMemoFile(input) {
   if (res.ok) { showToast('已上传'); refreshMemoAtts(id); } else showToast('上传失败：' + (data.error || res.status));
 }
 async function addMemoLink() {
-  const url = prompt('链接地址（默认仅允许白名单内网域；站内相对链接如 /xxx 也可）：');
+  const url = await uiPrompt('链接地址（默认仅允许白名单内网域；站内相对链接如 /xxx 也可）：');
   if (!url) return;
-  const label = prompt('链接显示名（可留空）：') || '';
+  const label = await uiPrompt('链接显示名（可留空）：') || '';
   const id = await ensureMemo(); if (!id) return;
   const { ok, data } = await api('POST', '/memos/' + id + '/links', { url: url.trim(), label: label.trim() });
   if (ok) { showToast('已添加链接'); refreshMemoAtts(id); } else showToast(data?.error || '添加失败');
@@ -7867,7 +7985,7 @@ async function saveSubject() {
   else showToast('保存失败：' + (res.data?.error || '未知错误'));
 }
 async function delSubject(id, name) {
-  if (!confirm(`确定删除主体「${name}」？其下所有登录凭证会一并删除、登录入口消失（已绑定用户历史保留）。`)) return;
+  if (!await uiConfirm(`确定删除主体「${name}」？其下所有登录凭证会一并删除、登录入口消失（已绑定用户历史保留）。`)) return;
   const { ok, data } = await api('DELETE', '/admin/oauth-subjects/' + id);
   if (ok) { showToast('已删除'); loadOauthSubjects(); }
   else showToast('删除失败：' + (data?.error || '未知错误'));
@@ -7980,7 +8098,7 @@ async function doOrgMerge() {
   if (!target) { showToast('请选择保留账号'); return; }
   const sources = [..._orgMemSel].filter(id => id !== target);
   const t = _orgMemRows.find(m => m.user_id === target);
-  if (!confirm(`把其余 ${sources.length} 个账号合并到「${t?.name || ''} ${t ? _orgMemUid(t) : ''}」？此操作不能撤销。`)) return;
+  if (!await uiConfirm(`把其余 ${sources.length} 个账号合并到「${t?.name || ''} ${t ? _orgMemUid(t) : ''}」？可在期限内到「注销与删除 → 账号合并记录」撤销。`)) return;
   const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members/merge', { target, sources });
   if (ok) {
     showToast(`已合并 ${data.merged?.length || sources.length} 个账号`);
@@ -8020,19 +8138,19 @@ async function setOrgMemUid(uidSeq, userId) {
   if (ok) showToast('已保存'); else showToast('保存失败：' + (data?.error || '未知错误'));
 }
 async function setOrgMemPw(uidSeq, name) {
-  const pw = prompt(`为「${name}」设置组织登录密码（至少 6 位，独立于平台密码）：`);
+  const pw = await uiPrompt(`为「${name}」设置组织登录密码（至少 6 位，独立于平台密码）：`);
   if (pw == null) return;
   if (pw.length < 6) { showToast('组织密码至少 6 位'); return; }
   const { ok, data } = await api('PUT', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/password', { password: pw });
   if (ok) { showToast('组织密码已设置'); loadOrgMembers(); } else showToast('设置失败：' + (data?.error || '未知错误'));
 }
 async function clearOrgMemPw(uidSeq, name) {
-  if (!confirm(`清除「${name}」的组织密码？清除后若组织非「独立安全」，可用平台密码登录到组织；独立安全组织将无法登录直到重设。`)) return;
+  if (!await uiConfirm(`清除「${name}」的组织密码？清除后若组织非「独立安全」，可用平台密码登录到组织；独立安全组织将无法登录直到重设。`)) return;
   const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/password');
   if (ok) { showToast('已清除组织密码'); loadOrgMembers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
 }
 async function delOrgMember(uidSeq, name) {
-  if (!confirm(`把「${name}」移出该组织？`)) return;
+  if (!await uiConfirm(`把「${name}」移出该组织？`)) return;
   const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq);
   if (ok) { showToast('已移出'); loadOrgMembers(); } else showToast('移出失败：' + (data?.error || '未知错误'));
 }
@@ -8142,7 +8260,7 @@ async function toggleOauthProvider(id, enabled) {
   else showToast('操作失败：' + (data?.error || '未知错误'));
 }
 async function delOauthProvider(id, name) {
-  if (!confirm(`确定删除登录凭证「${name}」？该凭证的登录入口会消失（已绑定用户的历史记录保留）。`)) return;
+  if (!await uiConfirm(`确定删除登录凭证「${name}」？该凭证的登录入口会消失（已绑定用户的历史记录保留）。`)) return;
   const { ok, data } = await api('DELETE', '/admin/oauth-providers/' + id);
   if (ok) { showToast('已删除'); loadOauthSubjects(); }
   else showToast('删除失败：' + (data?.error || '未知错误'));
@@ -8193,7 +8311,7 @@ async function saveGt(kind, id) {
   else showToast('⚠️ ' + (data.error||'保存失败'));
 }
 async function delGt(kind, id, name) {
-  if (!confirm(`确认删除${kind==='group'?'分组':'标签'}「${name}」？\n已分配给用户的会一并解除。`)) return;
+  if (!await uiConfirm(`确认删除${kind==='group'?'分组':'标签'}「${name}」？\n已分配给用户的会一并解除。`)) return;
   const base = kind==='group' ? '/admin/groups' : '/admin/tags';
   const { ok, data } = await api('DELETE', `${base}/${id}`);
   if (ok) { showToast('✓ 已删除'); loadGroupsTags(); }
@@ -8249,7 +8367,7 @@ async function createPubAccount() {
   else showToast('⚠️ ' + (data.error||'创建失败'));
 }
 async function delPubAccount(id, name) {
-  if (!confirm(`确认删除公共账号「${name}」？\n其授权、已发出的令牌会一并清除。`)) return;
+  if (!await uiConfirm(`确认删除公共账号「${name}」？\n其授权、已发出的令牌会一并清除。`)) return;
   const { ok, data } = await api('DELETE', `/admin/public-accounts/${id}`);
   if (ok) { showToast('✓ 已删除'); renderPubList(); }
   else showToast('⚠️ ' + (data.error||'删除失败'));
@@ -8434,7 +8552,7 @@ async function toggleAnnounceActive(id, active) {
 }
 
 async function deleteAnnounce(id, title) {
-  if (!confirm(`删除公告「${title}」？无法恢复。`)) return;
+  if (!await uiConfirm(`删除公告「${title}」？无法恢复。`)) return;
   const { ok } = await api('DELETE', `/admin/announcements/${id}`);
   if (ok) { loadAdmAnnouncements(); showToast('✓ 已删除'); }
 }
@@ -8471,7 +8589,7 @@ async function admApproveApp(id) {
 }
 
 async function admRejectApp(id, name) {
-  const reason = prompt(`拒绝应用「${name}」，请输入拒绝原因（选填）：`) ?? null;
+  const reason = await uiPrompt(`拒绝应用「${name}」，请输入拒绝原因（选填）：`) ?? null;
   if (reason === null) return; // 点取消
   const { ok } = await api('POST', `/admin/apps/${id}/reject`, { reason });
   if (ok) { renderAdmApps(); showToast(`✓ 已拒绝「${name}」的接入申请`); }
@@ -8479,7 +8597,7 @@ async function admRejectApp(id, name) {
 }
 
 async function admDeleteApp(id, name) {
-  if (!confirm(`确认删除应用「${name}」？\n删除后所有用户的授权记录将同步清除，无法恢复。`)) return;
+  if (!await uiConfirm(`确认删除应用「${name}」？\n删除后所有用户的授权记录将同步清除，无法恢复。`)) return;
   const { ok } = await api('DELETE', `/admin/apps/${id}`);
   if (ok) { renderAdmApps(); renderMarket(); showToast(`✓ 已删除「${name}」`); }
   else showToast('⚠️ 删除失败');
@@ -8598,7 +8716,7 @@ function toggleAppSecret(btn) {
 }
 
 async function regenerateAppSecret(id) {
-  if (!confirm('重新生成后，旧的 Client Secret 立即失效，已接入的第三方需要更新配置。确定继续？')) return;
+  if (!await uiConfirm('重新生成后，旧的 Client Secret 立即失效，已接入的第三方需要更新配置。确定继续？')) return;
   const { ok, data } = await api('POST', `/admin/apps/${id}/regenerate-secret`);
   if (ok) { showToast('✓ 已生成新密钥'); openAppEdit(id); }
   else showToast('⚠️ ' + (data?.error || '操作失败'));
@@ -8738,7 +8856,7 @@ function toggleShowRevoked() {
 }
 
 async function editTrustedIps(id, current) {
-  const ips = prompt('输入可信 IP（多个用英文逗号分隔，如：1.2.3.4,5.6.7.8）：\n留空则禁止所有 IP 调用（测试密钥留空=不限）', current === '*' ? '' : current);
+  const ips = await uiPrompt('输入可信 IP（多个用英文逗号分隔，如：1.2.3.4,5.6.7.8）：\n留空则禁止所有 IP 调用（测试密钥留空=不限）', current === '*' ? '' : current);
   if (ips === null) return;
   const { ok } = await api('PATCH', `/admin/api-keys/${id}/trusted-ips`, { trusted_ips: ips });
   if (ok) { showToast('✓ 可信 IP 已更新'); renderApiKeys(); }
@@ -8746,7 +8864,7 @@ async function editTrustedIps(id, current) {
 }
 
 async function revokeKey(id) {
-  if (!confirm('确认撤销该密钥？撤销后立即失效，但历史记录永久保留可查。')) return;
+  if (!await uiConfirm('确认撤销该密钥？撤销后立即失效，但历史记录永久保留可查。')) return;
   const { ok } = await api('DELETE', `/admin/api-keys/${id}`);
   if (ok) { renderApiKeys(); showToast('⚠️ 密钥已撤销'); }
 }
@@ -9132,7 +9250,7 @@ async function saveLvlModal() {
 }
 
 async function deleteLevelById(id, tag) {
-  if (!confirm(`确认删除等级 ${tag}？该等级下有用户时无法删除。`)) return;
+  if (!await uiConfirm(`确认删除等级 ${tag}？该等级下有用户时无法删除。`)) return;
   const { ok, data } = await api('DELETE', `/admin/levels/${id}`);
   if (ok) { showToast('✓ 已删除'); loadLevels(); }
   else showToast('⚠️ ' + (data.error || '删除失败'));
@@ -9911,7 +10029,7 @@ function copyCodes() {
 }
 
 async function disableCode(id) {
-  if (!confirm('确认停用该兑换码？停用后不可恢复。')) return;
+  if (!await uiConfirm('确认停用该兑换码？停用后不可恢复。')) return;
   const { ok } = await api('PATCH', `/admin/shop/codes/${id}`, { status: 'disabled' });
   if (ok) { loadAdmCodes(); showToast('✓ 兑换码已停用'); }
 }
@@ -10259,7 +10377,7 @@ async function loadUserCoupons() {
 }
 
 async function useCoupon(code, name, hasRedirect) {
-  if (!confirm(`确认使用兑换券「${name}」？`)) return;
+  if (!await uiConfirm(`确认使用兑换券「${name}」？`)) return;
   const { ok, data } = await api('POST', `/user/coupons/${code}/use`);
   if (!ok) { showToast('⚠️ ' + (data.error||'使用失败')); return; }
   if (data.redirect_url) {
@@ -10316,7 +10434,7 @@ async function transferCoupon(code) {
 }
 
 async function discardCoupon(code) {
-  if (!confirm('确认丢弃此兑换券？丢弃后无法恢复。')) return;
+  if (!await uiConfirm('确认丢弃此兑换券？丢弃后无法恢复。')) return;
   const { ok, data } = await api('POST', `/user/coupons/${code}/discard`);
   closeCouponActionModal();
   if (ok) { showToast('✓ 已丢弃'); loadUserCoupons(); }
@@ -10484,7 +10602,7 @@ async function saveFooterItem() {
 }
 
 async function deleteFooterItem(suffix) {
-  if (!confirm(`确认删除 FOOTER_${suffix}？`)) return;
+  if (!await uiConfirm(`确认删除 FOOTER_${suffix}？`)) return;
   const { ok } = await api('POST', '/admin/env', {
     vars: { [`FOOTER_${suffix}`]: '', [`FOOTER_${suffix}_URL`]: '' }
   });
@@ -10606,7 +10724,7 @@ async function switchToPublic(publicId) {
   if (_IS_PUBLIC_SESSION) { showToast('⚠️ 请先返回本人账号再切换'); return; }
   const { ok, data } = await api('POST', '/account/public/switch', { public_id: publicId });
   if (!ok || !data.token) { showToast('⚠️ ' + (data.error || '切换失败')); return; }
-  if (!confirm(`切换到公共账号「${data.account?.name||''}」？\n切换后你当前账号将退出登录态，可随时点「返回我的账号」切回。`)) return;
+  if (!await uiConfirm(`切换到公共账号「${data.account?.name||''}」？\n切换后你当前账号将退出登录态，可随时点「返回我的账号」切回。`)) return;
   localStorage.setItem('sso_parent_token', getToken());   // 暂存本人令牌
   localStorage.setItem('sso_pub_tz', userTz());            // 记住本人时区，供公共会话沿用
   localStorage.setItem('sso_token', data.token);
@@ -10617,7 +10735,7 @@ async function switchToPublic(publicId) {
 async function logout() {
   // 公共账号会话：退出 = 结束这个临时会话，不动本人的 localStorage 登录
   if (_IS_PUBLIC_SESSION) { returnToSelf(); return; }
-  if (!confirm('确认退出登录？')) return;
+  if (!await uiConfirm('确认退出登录？')) return;
   await api('POST', '/user/logout').catch(()=>{});
   localStorage.removeItem('sso_token');
   localStorage.removeItem('sso_user');
@@ -10732,7 +10850,7 @@ async function openMyAppDetail(id, name) {
 }
 
 async function confirmRevokeApp(id, name) {
-  if (!confirm(`确认撤销「${name}」的授权？\n\n该应用已持有的访问令牌会立即失效，无法再读取你的任何数据；\n下次登录该应用时需要重新授权。`)) return;
+  if (!await uiConfirm(`确认撤销「${name}」的授权？\n\n该应用已持有的访问令牌会立即失效，无法再读取你的任何数据；\n下次登录该应用时需要重新授权。`)) return;
   const { ok } = await api('DELETE', `/apps/${id}/auth`);
   if (ok) { showToast(`✓ 已撤销「${name}」的授权`); loadAuthedApps(); renderMarket(); }
   else showToast('⚠️ 撤销失败');
@@ -10795,7 +10913,7 @@ async function doTransfer() {
   const password = document.getElementById('transfer-password')?.value;
   if (!amount || amount < 1) { showToast('⚠️ 请输入有效积分数'); return; }
   if (!password) { showToast('⚠️ 请输入登录密码'); return; }
-  if (!confirm(`确认向「${transferTarget.name}」转账 ${amount} 积分？此操作需要验证您的登录密码。`)) return;
+  if (!await uiConfirm(`确认向「${transferTarget.name}」转账 ${amount} 积分？此操作需要验证您的登录密码。`)) return;
 
   const btn = document.getElementById('transfer-btn');
   if (btn) { btn.disabled=true; btn.textContent='转账中…'; }

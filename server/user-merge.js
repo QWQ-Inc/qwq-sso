@@ -223,14 +223,50 @@ const sameVal = (a, b) => (Buffer.isBuffer(a) || Buffer.isBuffer(b)) ? (Buffer.i
 function getMerge(id) { return db.prepare('SELECT rowid AS _rid, * FROM merge_records WHERE id=?').get(id); }
 function mergeIds(rec) { let src = []; try { src = JSON.parse(rec.sources || '[]'); } catch (_) {} return new Set([rec.target_id, ...src.map(x => x.id)]); }
 // 能否撤销；返回错误文案或 null
+// v3.5.50：撤销不再要求「同一批账号的后一次合并先撤」——只看两次合并有没有真的改到同一份数据：
+//   · 同一行被一方插入 / 删除，或两次合并改了同一行的同一列 → 冲突，要先撤后一次
+//   · updated_at 这类时间戳不算；积分（ADDITIVE）是累加的，撤销时按本次的增量扣回，不算冲突
+// 典型情况：两次分别把 A、B 并进同一个保留账号——只是都给保留账号加了积分，现在可以任意顺序撤销。
+const IGNORE_COLS = new Set(['updated_at']);
+const ADDITIVE = new Set(['points']);
+function journalTouches(mergeId) {
+  const m = new Map();   // tbl|rid → { row: bool, cols: Set }
+  for (const j of db.prepare('SELECT tbl, op, rid, old_row, new_row FROM merge_journal WHERE merge_id=?').all(mergeId)) {
+    const k = j.tbl + '|' + j.rid;
+    if (!m.has(k)) m.set(k, { row: false, cols: new Set() });
+    const e = m.get(k);
+    if (j.op !== 'U') { e.row = true; continue; }
+    let o = {}, n = {}; try { o = JSON.parse(j.old_row || '{}'); n = JSON.parse(j.new_row || '{}'); } catch (_) {}
+    for (const c of Object.keys(o)) {
+      if (IGNORE_COLS.has(c) || ADDITIVE.has(c) || !n[c]) continue;
+      if (!sameVal(decodeVal(o[c]), decodeVal(n[c]))) e.cols.add(c);
+    }
+  }
+  return m;
+}
+const COL_LABEL = { email: '邮箱', phone: '手机号', merged_into: '合并去向', status: '状态', password_hash: '密码' };
+// 能否撤销；返回错误文案或 null
 function undoBlocker(rec) {
   if (!rec) return '合并记录不存在';
   if (rec.undone_at) return '这次合并已经撤销过了';
   if (!rec.journal) return '这次合并没有可用的改动日志（超过撤销期限，或发生在可撤销功能上线之前），不能撤销；只能从数据备份恢复';
   const ids = mergeIds(rec);
+  let mine = null;
   for (const later of db.prepare('SELECT rowid AS _rid, * FROM merge_records WHERE rowid>? AND undone_at IS NULL').all(rec._rid)) {
     const lids = mergeIds(later);
-    if ([...ids].some(x => lids.has(x))) return `这些账号之后又参与了一次合并（${String(later.created_at).slice(0, 16)}），请先撤销那一次`;
+    if (![...ids].some(x => lids.has(x))) continue;
+    const when = String(later.created_at).slice(0, 16);
+    if (!later.journal) return `这些账号之后又参与了一次合并（${when}），那次已没有改动日志，无法判断是否冲突，不能撤销`;
+    mine = mine || journalTouches(rec.id);
+    for (const [k, e] of journalTouches(later.id)) {
+      const me = mine.get(k);
+      if (!me) continue;
+      const col = [...e.cols].find(c => me.cols.has(c));
+      if (e.row || me.row || col) {
+        const what = col ? `「${COL_LABEL[col] || col}」` : '同一条数据';
+        return `之后的一次合并（${when}）又改了${what}，请先撤销那一次`;
+      }
+    }
   }
   return null;
 }
@@ -266,6 +302,9 @@ function undoMerge(mergeId, { by = null } = {}) {
           const o = decodeVal(old[c]), n = decodeVal(neu[c]);
           if (sameVal(o, n)) continue;
           if (sameVal(cur[c], n)) { sets.push(`${qi(c)}=?`); vals.push(o); }
+          else if (ADDITIVE.has(c) && typeof o === 'number' && typeof n === 'number' && typeof cur[c] === 'number') {
+            sets.push(`${qi(c)}=?`); vals.push(cur[c] - (n - o));   // 累加字段（积分）：之后又变过，按本次增量扣回
+          }
           else stats.kept_fields++;      // 合并后又被改过：保留现值
         }
         if (sets.length) { db.prepare(`UPDATE ${T} SET ${sets.join(',')} WHERE rowid=?`).run(...vals, j.rid); stats.restored_rows++; }

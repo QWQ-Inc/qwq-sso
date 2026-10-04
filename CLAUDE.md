@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.49**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.50**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.49，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.50，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -202,7 +202,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.49）
+## 数据库表清单（截至 v3.5.50）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）、`deletion_state`/`deleted_at`/`purge_at`（注销删除，v3.5.44）
@@ -435,6 +435,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.50 企业微信「同企业 + 同 UserId = 同一人」+ 读写两份 Secret + 系统内弹窗（用户反馈）
+
+三级版本。用户：「从企业微信回来，有的成员数据被拉了两遍回来」「企业微信的通讯录 secret 其实应该要有两份，自建应用用来读取，通讯录的用来增删停」「这种弹出框全部做成系统内部的吧」。
+- 🐛 **重复建号根因**：同步认人只看本源映射 → 同文件夹兄弟套用 → **本源要绑定的那几个登录凭证**（bindProviders）→ 邮箱 / 手机；企业微信不给邮箱手机，所以成员用同企业的**另一个**登录凭证（本站默认 `wecom` / 文件夹凭证 / 别的组织凭证）登录过、或同一企业被两个不在同一文件夹的组织各自同步（尤其 `bind_mode: none` 或没配登录凭证）时认不出 → 再建一个。登录侧 `findOrCreate` 同理：只查本凭证的 `user_oauth`，企业微信没有 unionid / 邮箱，直接新建。
+- `dirsync-wecom.js` 新：`corpScope(corpId)`（该企业的所有同步源 id——用 `effectiveCfg` 判 corp，含文件夹连接与套用——和所有企业微信登录凭证 provider key，含 env `WECOM_CORP_ID` 的 `wecom`）、`corpUsers(corpId, extId, {scope})`（按 `ext_id` / `open_id` **COLLATE NOCASE** 找已对应的账号，排除公共 / 已合并 / 已删除）、`corpOfProvider(providerKey)`、`findCorpDuplicates()`。同步匹配链在 bindProviders 之后、邮箱之前加 `corpUsers`；每个成员顺带数一下「同 UserId 还挂着别的账号」→ `state.duplicates`。`oauth.findOrCreate` 第 1b 步：企业微信凭证且精确查不到 → 先查该企业通讯录的封存（dir block）→ `corpUsers` 命中则把本凭证绑上去返回。
+- 遗留重复：`GET /admin/dir-duplicates`（Lv.3）、`POST /admin/dir-duplicates/merge {groups:[{key,target?}]|all, confirm:'合并账号'}`（Lv.1，逐组 `mergeUsers` via `dir_duplicate`，可撤销；失败逐条返回原因，如管理员账号不能被并）。建议保留：管理员 > 有密码 > 实名 > 2FA > 邮箱 > 手机打分，再按编号最小。前端「组织管理」页顶部 `#dir-dup-card`（`loadDirDuplicates` / `mergeDirDuplicates`，单选保留账号）；同步结果文字带「⚠️ 重复账号 N」。
+- **两份 Secret**：`CONN_KEYS` 加 `write_secret`（「通讯录同步」Secret，管理用，可选）；`writeCfg(cfg)` = 有 write_secret 用它、否则退回 secret。`setMemberEnabled` / `deleteMember` 走 writeCfg，读（同步、`memberStatus`）仍用 `secret`。`dirSourceCfgFromBody` 收 `write_secret`（打码 / 留空不改，`clear_write_secret` 清除），文件夹连接 `buildDirConnCfg` 带上，迁移并入已有连接时连接没有就带过去；两处视图打码。`ERR_HINT` 加 48002 / 48004（提示填管理用 Secret + API 编辑通讯录 + 可信 IP）。两个弹窗（同步源 `dsm-wsecret` 在 `#dsm-conn` 里，套用时隐藏；文件夹连接 `dcm-wsecret`）。
+- **撤销合并顺序放宽**（用户：「撤销要求先撤一条不合理」）：`undoBlocker` 不再按「账号有交集」拦，改为比对两次合并的改动日志（`journalTouches`：tbl|rid → 是否整行插入 / 删除 + 改过的列）——后一次未撤销的合并与本次**同一行被插入 / 删除**或**改了同一行同一列**才拦（`IGNORE_COLS` updated_at 不算，`ADDITIVE` points 不算）；后一次没有日志则仍拦。`undoMerge` 的 U 回放：累加列（points）当前值≠合并后值时按 `cur - (new - old)` 扣回。run23 改为：两次并进同一保留账号可先撤早的、积分 111→101→100；保留账号后来被并进别人 → 仍要求先撤后一次。
+- **系统内弹窗**：`dashboard.html` 新 `uiAlert / uiConfirm / uiPrompt`（Promise；`_uiDialog` 记下打开前的选区与焦点、关闭时恢复——富文本 `rtLink/rtImage/docInsert*` 的 `execCommand` 依赖它；删除类文案自动红按钮、含「密码 / 口令」的输入自动密码框；回车确定、Esc / 点遮罩取消；opts `{title, danger, password, multiline}`）。全文件 91 处原生 `alert/confirm/prompt` 用 acorn 改写为 `await ui*`，所在 7 个函数改 async。**以后一律用 ui*，不要再写原生弹窗。**合并相关文案「此操作不能撤销」改为可在期限内撤销。
+- ⚠️ 测试：run25 19 项（另一个组织的凭证登录认到同步账号且补绑、UserId 大小写、同企业另一组织不绑凭证的同步源不重复建号、别家企业同名 UserId 是另一人、Lv.2 看得到重复列表 / 不能合并、建议保留、同步提示、确认词、合并后映射转移、合并记录与撤销）；run26 8 项（两份 Secret 打码 / 分存 / 读 Secret 同步 / 停用用管理 Secret 推送 / 留空不覆盖 / 清除 / 缺管理 Secret 的报错提示 / 文件夹连接）；回归 run 35 / run8 20 / run9 26 / run10 36 / run12 25 / run13 10 / run16 22 / run17 9 / run19 35 / run20 12 / run22 48（需 `DIRSYNC_EVENT_DELAY_MS=400`）/ run23 33 / run24 27；playwright ui25：重复账号卡 → 系统内确认框 + 确认词 → 合并，同步源弹窗管理用 Secret，Esc 取消、无原生弹窗、零 JS 报错。真实企业微信未联调。
 
 ## v3.5.49 注销 / 删除账号时三方账号一并摘除 + 交接项系统核验（用户反馈）
 

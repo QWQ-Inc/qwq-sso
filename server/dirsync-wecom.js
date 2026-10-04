@@ -46,7 +46,10 @@ const sourceGet = db.prepare('SELECT * FROM dir_sync_sources WHERE id=?');
 const blockedDir = db.prepare("SELECT 1 FROM identity_blocks WHERE kind='dir' AND conn_id=? AND ext_id=?");
 
 // 通讯录「连接」字段（放在文件夹那份上）；其余（部门、绑定、默认密码、移出、频率…）是各组织「套用」自己的
-const CONN_KEYS = ['corp_id', 'secret', 'cb_token', 'cb_aes_key', 'push_suspend'];
+// v3.5.50：两份 Secret——secret = 读通讯录（推荐「自建应用」Secret），write_secret = 改通讯录（「通讯录同步」Secret：禁用 / 启用 / 删除成员）
+const CONN_KEYS = ['corp_id', 'secret', 'write_secret', 'cb_token', 'cb_aes_key', 'push_suspend'];
+/** 改通讯录用的配置：有「通讯录同步」Secret 用它，没填就退回读用的那个（老配置只有一份 Secret） */
+const writeCfg = (cfg) => ({ ...cfg, secret: (cfg && cfg.write_secret) || (cfg && cfg.secret) });
 const parseCfg = (t) => { try { return t ? JSON.parse(t) : {}; } catch (_) { return {}; } };
 /** 同步源实际生效的配置：套用文件夹通讯录的 = 文件夹连接字段 + 自己的组织级字段 */
 function effectiveCfg(src) {
@@ -59,6 +62,81 @@ function effectiveCfg(src) {
   for (const k of CONN_KEYS) { if (conn[k] !== undefined) out[k] = conn[k]; else delete out[k]; }
   return out;
 }
+// ══════════════════════════════════════════
+// 同一企业 + 同一 UserId = 同一个人（v3.5.50）
+//   之前认人只看「本同步源的映射」和「本同步源要绑定的那个登录凭证」：成员用同企业的另一个登录凭证
+//   （本站默认 / 文件夹共用 / 组织自己的另一个）登录过，或者同一企业被两个不在同一文件夹的同步源同步，
+//   就认不出来、又建一个号。现在跨所有同步源与所有企业微信登录凭证，按 corp_id + UserId 认人；
+//   企业微信 UserId 不区分大小写，比较时也忽略大小写。
+// ══════════════════════════════════════════
+const allWecomSources = db.prepare("SELECT * FROM dir_sync_sources WHERE type='wecom'");
+const allWecomCreds = db.prepare("SELECT id, config FROM oauth_providers WHERE platform='wecom'");
+const linksByExt = db.prepare('SELECT * FROM dir_source_links WHERE ext_id=? COLLATE NOCASE');
+const oauthByExt = db.prepare(`SELECT o.provider, o.user_id, o.open_id FROM user_oauth o
+  WHERE (o.provider='wecom' OR o.provider LIKE 'wecom:%') AND o.open_id=? COLLATE NOCASE`);
+const corpNorm = (c) => String(c || '').trim().toLowerCase();
+/** 这家企业的同步源 id 集合 + 登录凭证 provider key 集合 */
+function corpScope(corpId) {
+  const corp = corpNorm(corpId);
+  const sources = new Set(), providers = new Set();
+  if (!corp) return { sources, providers };
+  for (const s of allWecomSources.all()) if (corpNorm(effectiveCfg(s).corp_id) === corp) sources.add(s.id);
+  for (const c of allWecomCreds.all()) { try { if (corpNorm(JSON.parse(c.config || '{}').WECOM_CORP_ID) === corp) providers.add('wecom:' + c.id); } catch (_) {} }
+  if (corpNorm(process.env.WECOM_CORP_ID) === corp) providers.add('wecom');
+  return { sources, providers };
+}
+const usable = (u) => u && !u.is_public && !u.merged_into && u.deletion_state !== 'deleted' && u.deletion_state !== 'purged';
+/** 这家企业里这个 UserId 已经对应的所有账号（去重；调用方取第一个）。excludeSource：跳过某个同步源自己的映射 */
+function corpUsers(corpId, extId, { excludeSource = null, scope = null } = {}) {
+  extId = String(extId || '');
+  if (!extId) return [];
+  const { sources, providers } = scope || corpScope(corpId);
+  const ids = [];
+  for (const l of linksByExt.all(extId)) if (sources.has(l.source_id) && l.source_id !== excludeSource && !ids.includes(l.user_id)) ids.push(l.user_id);
+  for (const o of oauthByExt.all(extId)) if (providers.has(o.provider) && !ids.includes(o.user_id)) ids.push(o.user_id);
+  return ids.map(id => users.findById.get(id)).filter(usable);
+}
+/** 登录凭证 provider key → 它的企业 ID（env 默认凭证读 WECOM_CORP_ID） */
+function corpOfProvider(providerKey) {
+  if (providerKey === 'wecom') return process.env.WECOM_CORP_ID || '';
+  if (!String(providerKey).startsWith('wecom:')) return '';
+  const row = db.prepare('SELECT config FROM oauth_providers WHERE id=?').get(String(providerKey).slice(6));
+  try { return row ? JSON.parse(row.config || '{}').WECOM_CORP_ID || '' : ''; } catch (_) { return ''; }
+}
+/**
+ * 已经重复的账号：同一企业的同一个 UserId 挂在了两个以上账号上（映射或登录绑定）。
+ * 返回 [{ corp_id, ext_id, users:[...] }]，users 里第一个是建议保留的（资料最全的，其次编号最小）。
+ */
+function findCorpDuplicates() {
+  const corps = new Map();   // corp → { sources, providers }
+  for (const s of allWecomSources.all()) { const c = corpNorm(effectiveCfg(s).corp_id); if (c) { if (!corps.has(c)) corps.set(c, corpScope(c)); } }
+  for (const c of allWecomCreds.all()) { try { const k = corpNorm(JSON.parse(c.config || '{}').WECOM_CORP_ID); if (k && !corps.has(k)) corps.set(k, corpScope(k)); } catch (_) {} }
+  const envCorp = corpNorm(process.env.WECOM_CORP_ID);
+  if (envCorp && !corps.has(envCorp)) corps.set(envCorp, corpScope(envCorp));
+  const links = db.prepare('SELECT source_id, ext_id, user_id FROM dir_source_links').all();
+  const binds = db.prepare("SELECT provider, open_id AS ext_id, user_id FROM user_oauth WHERE provider='wecom' OR provider LIKE 'wecom:%'").all();
+  const groups = new Map();   // corp|lower(ext) → { corp_id, ext_id, ids:Set }
+  const put = (corp, ext, uid) => {
+    const k = corp + '|' + String(ext).toLowerCase();
+    if (!groups.has(k)) groups.set(k, { corp_id: corp, ext_id: ext, ids: new Set() });
+    groups.get(k).ids.add(uid);
+  };
+  for (const [corp, sc] of corps) {
+    for (const l of links) if (sc.sources.has(l.source_id)) put(corp, l.ext_id, l.user_id);
+    for (const b of binds) if (sc.providers.has(b.provider)) put(corp, b.ext_id, b.user_id);
+  }
+  const score = (u) => (u.role === 'admin' ? 64 : 0) + (u.password_hash ? 16 : 0) + (u.kyc_verified ? 8 : 0)
+    + (u.twofa_enabled ? 4 : 0) + (u.email ? 2 : 0) + (u.phone ? 1 : 0);
+  const out = [];
+  for (const g of groups.values()) {
+    const us = [...g.ids].map(id => users.findById.get(id)).filter(usable);
+    if (us.length < 2) continue;
+    us.sort((a, b) => score(b) - score(a) || (a.uid_seq || 0) - (b.uid_seq || 0));
+    out.push({ corp_id: g.corp_id, ext_id: g.ext_id, users: us });
+  }
+  return out;
+}
+
 // 同步给成员设过什么（登录绑定 / 组织密码），用来判断之后是否被人单独改过
 const appliedGet = db.prepare('SELECT value FROM dir_sync_applied WHERE source_id=? AND user_id=? AND kind=? AND key=?');
 const appliedSet = db.prepare(`INSERT INTO dir_sync_applied (source_id,user_id,kind,key,value,updated_at) VALUES (?,?,?,?,?,datetime('now'))
@@ -70,7 +148,9 @@ function apiBase() { return String(process.env.WECOM_API_BASE || 'https://qyapi.
 const ERR_HINT = {
   40001: 'Secret 不对，或不是这个企业的',
   40013: '企业 ID（corpid）不对',
-  48009: '这个 Secret 无权读取通讯录详情：「通讯录同步」Secret 已被企业微信限制，请改用「自建应用」Secret',
+  48002: '这个 Secret 没有改通讯录的权限：在同步源里填「通讯录同步 Secret（管理用）」——企业微信后台 管理工具 → 通讯录同步 里的 Secret，并开启「API 编辑通讯录」、把报错里的 from ip 加进它的可信 IP',
+  48004: '这个 Secret 没有改通讯录的权限：同上，填「通讯录同步 Secret（管理用）」',
+  48009: '这个 Secret 无权读取通讯录详情：「通讯录同步」Secret 已被企业微信限制读取，读取用的 Secret 请改填「自建应用」Secret（通讯录同步 Secret 填到「管理用」那一栏）',
   60011: '这个 Secret 没有该部门的权限：在企业微信里把应用可见范围设到要同步的部门，或在「同步范围」里只选它能看到的部门',
   60020: '本服务器出口 IP 不在企业微信可信 IP 里：到企业微信后台把报错里的 from ip 加进该应用（或通讯录同步）的可信 IP',
 };
@@ -234,6 +314,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
     bound: 0, pw_set: 0, kept: 0, conflicts: 0, unmatched: 0, force, limited: !!limited, warning: limited ? LIMITED_HINT : undefined };
   const seenUsers = new Set();
   const seenExt = new Set();
+  const corpSc = corpScope(cfg.corp_id);
 
   // 登录凭证绑定：同步只「补上」，被单独改过的不动（除非 force）
   function applyBind(user, extId, p) {
@@ -285,6 +366,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
         if (sib) user = users.findById.get(sib.user_id) || null;
       }
       for (const p of bindProviders) { if (!user) user = oauth.findByProvider.get(p, extId) || null; }
+      if (!user) user = corpUsers(cfg.corp_id, extId, { scope: corpSc })[0] || null;   // 同企业别的同步源 / 别的企业微信登录凭证认得这个人
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
       if (!user && phone && helpers.isPhone(phone)) user = users.findByPhone.get(phone) || null;
       if (user && user.is_public) { out.errors.push({ userid: extId, error: '命中公共账号，跳过' }); continue; }
@@ -308,6 +390,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
         out.linked++;
       }
       linkUpsert.run(source.id, extId, user.id, depts || null, m._idOnly ? null : (name || null));
+      if (corpUsers(cfg.corp_id, extId, { scope: corpSc }).some(u => u.id !== user.id)) out.duplicates = (out.duplicates || 0) + 1;   // 以前留下的重复账号，等管理员合并
       for (const p of bindProviders) applyBind(user, extId, p);
       seenUsers.add(user.id);
       const existing = orgMembers.get.get(subject.id, user.id);
@@ -438,12 +521,12 @@ async function memberStatus(cfg, userid) {
 }
 // 在企业微信里删除成员（需要有通讯录写权限的 Secret）
 async function deleteMember(cfg, userid) {
-  const access_token = await token(cfg);
+  const access_token = await token(writeCfg(cfg));
   await call('GET', '/cgi-bin/user/delete', { access_token, userid: String(userid) });
 }
 async function setMemberEnabled(cfg, userid, enabled) {
-  const access_token = await token(cfg);
+  const access_token = await token(writeCfg(cfg));
   await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), enable: enabled ? 1 : 0 });
 }
 
-module.exports = { memberStatus, deleteMember, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
