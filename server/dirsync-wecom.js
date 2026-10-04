@@ -33,7 +33,31 @@ const linkDelete = db.prepare('DELETE FROM dir_source_links WHERE source_id=? AN
 const stillSynced = db.prepare(`SELECT 1 FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
   WHERE d.subject_id=? AND l.user_id=? LIMIT 1`);
 const userOauthOf = db.prepare('SELECT open_id FROM user_oauth WHERE user_id=? AND provider=?');
-const wecomCredsOf = db.prepare("SELECT id, label, config FROM oauth_providers WHERE platform='wecom' AND subject_id=?");
+// 本组织可用的企业微信登录凭证：组织自己的 + 所在文件夹共用的（v3.5.47）
+const wecomCredsStmt = db.prepare(`SELECT p.id, p.label, p.config, p.folder_id, f.name AS folder_name FROM oauth_providers p
+  LEFT JOIN org_folders f ON f.id=p.folder_id
+  WHERE p.platform='wecom' AND (p.subject_id=? OR (p.folder_id IS NOT NULL AND p.folder_id<>'' AND p.folder_id=?))
+  ORDER BY (p.folder_id IS NOT NULL AND p.folder_id<>''), p.sort_weight, p.created_at`);
+const wecomCredsOf = { all: (subject) => wecomCredsStmt.all(subject.id, subject.folder_id || '') };
+// 同一份文件夹通讯录的其他「套用」里的映射：一人同时在两个组织的部门里时落到同一账号
+const siblingLink = db.prepare(`SELECT l.user_id FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
+  WHERE d.parent_id=? AND d.id<>? AND l.ext_id=? LIMIT 1`);
+const sourceGet = db.prepare('SELECT * FROM dir_sync_sources WHERE id=?');
+
+// 通讯录「连接」字段（放在文件夹那份上）；其余（部门、绑定、默认密码、移出、频率…）是各组织「套用」自己的
+const CONN_KEYS = ['corp_id', 'secret', 'cb_token', 'cb_aes_key', 'push_suspend'];
+const parseCfg = (t) => { try { return t ? JSON.parse(t) : {}; } catch (_) { return {}; } };
+/** 同步源实际生效的配置：套用文件夹通讯录的 = 文件夹连接字段 + 自己的组织级字段 */
+function effectiveCfg(src) {
+  const own = parseCfg(src && src.config);
+  if (!src || !src.parent_id) return own;
+  const parent = sourceGet.get(src.parent_id);
+  if (!parent) return { ...own, corp_id: '', secret: '' };   // 连接被删了：配置不完整，同步会报错
+  const conn = parseCfg(parent.config);
+  const out = { ...own };
+  for (const k of CONN_KEYS) { if (conn[k] !== undefined) out[k] = conn[k]; else delete out[k]; }
+  return out;
+}
 // 同步给成员设过什么（登录绑定 / 组织密码），用来判断之后是否被人单独改过
 const appliedGet = db.prepare('SELECT value FROM dir_sync_applied WHERE source_id=? AND user_id=? AND kind=? AND key=?');
 const appliedSet = db.prepare(`INSERT INTO dir_sync_applied (source_id,user_id,kind,key,value,updated_at) VALUES (?,?,?,?,?,datetime('now'))
@@ -160,7 +184,7 @@ async function fetchDirectory(cfg) {
 
 /** 这家企业微信在本系统的「登录凭证」provider key（同 corp），用于绑定 UserId；没配企业微信登录则返回 null */
 function loginProviderFor(subject, corpId) {
-  for (const c of wecomCredsOf.all(subject.id)) {
+  for (const c of wecomCredsOf.all(subject)) {
     try { if (JSON.parse(c.config || '{}').WECOM_CORP_ID === corpId) return 'wecom:' + c.id; } catch (_) {}
   }
   if (process.env.WECOM_CORP_ID && process.env.WECOM_CORP_ID === corpId) return 'wecom';
@@ -170,9 +194,10 @@ function loginProviderFor(subject, corpId) {
 /** 本组织可选的企业微信登录凭证（给管理端勾选「同步后绑定到哪些凭证」） */
 function loginProviderChoices(subject) {
   const out = [];
-  for (const c of wecomCredsOf.all(subject.id)) {
+  for (const c of wecomCredsOf.all(subject)) {
     let corp = ''; try { corp = JSON.parse(c.config || '{}').WECOM_CORP_ID || ''; } catch (_) {}
-    out.push({ key: 'wecom:' + c.id, label: '企业微信' + (c.label ? ' · ' + c.label : ''), corp_id: corp });
+    const where = c.folder_id ? `（文件夹「${c.folder_name || ''}」共用）` : '';
+    out.push({ key: 'wecom:' + c.id, label: '企业微信' + (c.label ? ' · ' + c.label : '') + where, corp_id: corp, folder: !!c.folder_id });
   }
   if (process.env.WECOM_CORP_ID) out.push({ key: 'wecom', label: '企业微信（本站默认凭证）', corp_id: process.env.WECOM_CORP_ID });
   return out;
@@ -252,6 +277,10 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       let user = null;
       const link = linkGet.get(source.id, extId);
       if (link) user = users.findById.get(link.user_id) || null;
+      if (!user && source.parent_id) {                       // 同一份文件夹通讯录，别的组织已经认出这个人
+        const sib = siblingLink.get(source.parent_id, source.id, extId);
+        if (sib) user = users.findById.get(sib.user_id) || null;
+      }
       for (const p of bindProviders) { if (!user) user = oauth.findByProvider.get(p, extId) || null; }
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
       if (!user && phone && helpers.isPhone(phone)) user = users.findByPhone.get(phone) || null;
@@ -388,4 +417,4 @@ async function setMemberEnabled(cfg, userid, enabled) {
   await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), enable: enabled ? 1 : 0 });
 }
 
-module.exports = { setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+module.exports = { effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

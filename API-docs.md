@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.42　　最后更新：2026-10
+> 版本：v3.5.47　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1866,7 +1866,25 @@ DELETE /api/admin/org-folders/:id       # 删除（Lv.2）：里面的组织回�
 ```
 
 - 组织归类走主体接口的 `folder_id`：`POST /api/admin/oauth-subjects` 与 `PATCH /api/admin/oauth-subjects/:id` 都收 `folder_id`（文件夹 id；`null`/空串 = 移出到未归类；不传 = 不改；文件夹不存在 400 且整个请求不生效）。
-- `GET /api/admin/oauth-subjects` 每个组织多回 `folder_id`，响应顶层多回 `folders`（带 `org_count`）。
+- `GET /api/admin/oauth-subjects` 每个组织多回 `folder_id`，响应顶层多回 `folders`（带 `org_count`；v3.5.47 起还带 `dir_connections` / `credentials` / `migrations`）。
+
+**文件夹共用通讯录与登录凭证**（v3.5.47，系统管理员：读 Lv.3 / 写 Lv.2）：通讯录「连接」（企业 ID / Secret / 接收事件服务器）放在文件夹上只存一份，文件夹里的组织「套用」它、各自选部门。
+
+```
+GET    /api/admin/org-folders/:id/resources          # { dir_connections:[{…, uses:[{subject_id,org_name,dept_ids,…}]}], credentials, migrations }
+POST   /api/admin/org-folders/:id/dir-sources        # 新建连接 { type, label, corp_id, secret, cb_token?, cb_aes_key?, push_suspend? }（同企业不能重复）
+PATCH  /api/admin/folder-dir-sources/:id             # 编辑 / 只传 {enabled} 启停（有套用时不能改 corp_id；打码串不覆盖）
+DELETE /api/admin/folder-dir-sources/:id             # 删除（还有组织套用时 400）
+POST   /api/admin/folder-dir-sources/:id/scope-tree  # 该连接能看到的部门
+POST   /api/admin/folder-dir-sources/:id/run         # 依次同步所有启用的套用 → { results:[{source_id, org_name, state|error}] }
+POST   /api/admin/org-folders/:id/credentials        # 文件夹共用登录凭证 { platform, label, config, enabled }
+POST   /api/admin/org-folders/:id/migrate            # 逐条迁移 { kind:"dir_source"|"credential", id, confirm:"迁移" }
+```
+
+- 组织套用：`POST /api/admin/orgs/:sid/dir-sources` 带 `parent_id`（连接 id，须是本组织所在文件夹的；须系统管理员），其余字段同普通同步源但不收企业 ID / Secret / 回调。`GET /api/admin/orgs/:sid/dir-sources` 多回 `folder_connections`、`can_use_folder`；同步源视图多回 `parent_id` / `parent_label` / `parent_enabled`，`callback_path` 指向连接。
+- 接收事件服务器：填连接的地址，一条事件会让所有启用的套用各同步一次；迁移前的组织同步源地址仍可用（自动转到连接）。
+- 文件夹凭证没有所属组织：组织的登录 IP / 时段 / 强制两步验证策略不作用于它；同人合并范围是整个文件夹。
+- 套用着文件夹通讯录的组织不能移出文件夹；文件夹上有通讯录 / 凭证时不能删除文件夹。
 
 **公开接口**（登录页 / 账号绑定页用，无需鉴权，只给公开字段、绝不含 secret）：
 

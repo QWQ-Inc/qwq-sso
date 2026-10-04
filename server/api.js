@@ -650,13 +650,15 @@ function deprovisionUserAllApps(user, event) {
 function pushExternalSuspend(user, enabled) {
   let rows = [];
   try {
-    rows = db.prepare(`SELECT l.ext_id, d.id AS source_id, d.type, d.config FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
-      WHERE l.user_id=?`).all(user.id);
+    rows = db.prepare(`SELECT l.ext_id, d.* FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
+      WHERE l.user_id=?`).all(user.id).map(r => ({ ...r, source_id: r.id }));
   } catch (_) {}
+  const done = new Set();   // 同一份文件夹通讯录被几个组织套用：同一个成员只推一次
   for (const r of rows) {
-    let cfg = {};
-    try { cfg = JSON.parse(r.config || '{}'); } catch (_) {}
+    const cfg = require('./dirsync-wecom').effectiveCfg(r);
     if (r.type !== 'wecom' || !cfg.push_suspend) continue;
+    const k = (r.parent_id || r.id) + '|' + r.ext_id;
+    if (done.has(k)) continue; done.add(k);
     require('./dirsync-wecom').setMemberEnabled(cfg, r.ext_id, enabled)
       .then(() => audit(enabled ? 'account.external_resumed' : 'account.external_suspended', { subject: String(user.uid_seq), actor: 'system', detail: { source: r.source_id, ext_id: r.ext_id } }))
       .catch(e => console.warn('[同步暂停企业微信成员失败]', r.ext_id, e.message));
@@ -1151,7 +1153,7 @@ function envConfigured(platform) {
 function instancePublic(platform, inst) {
   const meta = OAUTH_META[platform];
   let cfg = {}; try { cfg = JSON.parse(inst.config || '{}'); } catch (_) {}
-  const out = { platform, instance_id: inst.id, label: inst.label || '', enabled: !!inst.enabled };
+  const out = { platform, instance_id: inst.id, label: inst.label || inst.folder_name || '', enabled: !!inst.enabled };
   if (meta && meta.qr) {   // 扫码渠道：附上公开的 appid/redirect（非 secret）
     out.qr = {};
     for (const [k, field] of Object.entries(meta.qr)) out.qr[k] = cfg[field] || '';
@@ -1239,7 +1241,7 @@ function oauthPlatformsMeta() {
 function credView(r) {
   let cfg = {}; try { cfg = JSON.parse(r.config || '{}'); } catch (_) {}
   return {
-    id: r.id, subject_id: r.subject_id, platform: r.platform, label: r.label,
+    id: r.id, subject_id: r.subject_id, folder_id: r.folder_id || null, platform: r.platform, label: r.label,
     enabled: !!r.enabled, sort_weight: r.sort_weight, created_at: r.created_at,
     config: maskOauthConfig(r.platform, cfg),
   };
@@ -1269,7 +1271,7 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     admin_count: oauthSubjects.admins.all(s.id).length,
     credentials: oauthProviders.bySubject.all(s.id).map(credView),
   }));
-  res.json({ success: true, data: subjects, folders: orgFolderList(), platforms: oauthPlatformsMeta() });
+  res.json({ success: true, data: subjects, folders: orgFolderList().map(f => ({ ...f, ...folderResources(f.id) })), platforms: oauthPlatformsMeta() });
 });
 
 router.post('/admin/oauth-subjects', requireAdmin(2), (req, res) => {
@@ -1393,6 +1395,9 @@ router.patch('/admin/org-folders/:id', requireAdmin(2), (req, res) => {
 router.delete('/admin/org-folders/:id', requireAdmin(2), (req, res) => {
   const f = orgFolders.get.get(req.params.id);
   if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  // 文件夹上放着共用的通讯录 / 登录凭证（v3.5.47）：先删掉，免得组织里的套用和用户的登录绑定悬空
+  const nc = dirSources.byFolder.all(f.id).length, np = oauthProviders.byFolder.all(f.id).length;
+  if (nc || np) return res.status(400).json({ error: `文件夹上还有 ${nc} 份通讯录、${np} 套登录凭证，先删掉再删文件夹` });
   db.transaction(() => { orgFolders.unfileAll.run(f.id); orgFolders.remove.run(f.id); })();
   res.json({ success: true });   // 里面的组织回到「未归类」，组织本身不受影响
 });
@@ -1402,6 +1407,9 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   if (!row) return res.status(404).json({ error: '主体不存在' });
   const folder = folderIdFromBody((req.body || {}).folder_id);
   if (folder === false) return res.status(400).json({ error: '文件夹不存在' });
+  // 套用着当前文件夹通讯录的组织不能直接挪走（v3.5.47）
+  if (folder !== undefined && (folder || null) !== (row.folder_id || null) && dirSources.bySubject.all(row.id).some(x => x.parent_id))
+    return res.status(400).json({ error: '本组织在套用所在文件夹的通讯录，先在组织里删掉套用，再移出文件夹' });
   const { name, enabled, sort_weight, require_2fa, ip_allow, login_start, login_end } = req.body || {};
   oauthSubjects.update.run(
     name != null ? String(name).trim() : row.name,
@@ -1506,6 +1514,7 @@ router.patch('/admin/oauth-providers/:id', requireAdmin(2), (req, res) => {
   // 允许把凭证挪到另一个主体（改变互通归属）
   if (subject_id && subject_id !== row.subject_id && oauthSubjects.get.get(subject_id)) {
     oauthProviders.setSubject.run(subject_id, row.id);
+    if (row.folder_id) db.prepare('UPDATE oauth_providers SET folder_id=NULL WHERE id=?').run(row.id);
   }
   res.json({ success: true });
 });
@@ -2003,22 +2012,45 @@ const _dirSyncRunning = new Set();               // 按组织加锁：同一组�
 const parseJ = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 const FORCE_CONFIRM = '全部覆盖';                 // 强确认「全部覆盖同步」要求原样输入的口令
 function dirSourceView(src, subject) {
-  const cfg = parseJ(src.config) || {};
+  const cfg = dirsyncWecom.effectiveCfg(src);
+  const parent = src.parent_id ? dirSources.get.get(src.parent_id) : null;
   const { default_pw_hash, cb_aes_key, ...pub } = cfg;     // 默认组织密码只存哈希、回调 EncodingAESKey 打码，都不下发
   const bindProviders = subject && cfg.corp_id ? dirsyncWecom.bindProvidersFor(subject, cfg) : [];
+  const cbSrc = parent || src;   // 套用文件夹通讯录的：回调地址 / 事件状态都在文件夹那份连接上
   return { id: src.id, subject_id: src.subject_id, type: src.type, type_label: DIR_TYPES[src.type] || src.type,
     label: src.label || DIR_TYPES[src.type] || src.type, enabled: !!src.enabled,
+    // v3.5.47：套用的文件夹通讯录（连接字段只读，来自文件夹）
+    parent_id: src.parent_id || null, parent_label: parent ? (parent.label || DIR_TYPES[parent.type]) : null,
+    parent_enabled: parent ? !!parent.enabled : null, parent_missing: !!(src.parent_id && !parent),
     config: { ...pub, secret: cfg.secret ? SECRET_MASK : '', dept_ids: dirsyncWecom.deptIdsOf(cfg),
       bind_mode: cfg.bind_mode || 'auto', has_default_pw: !!default_pw_hash,
       cb_token: cfg.cb_token || '', cb_aes_key: cb_aes_key ? SECRET_MASK : '' },
     // 接收事件服务器（v3.5.39）：企业微信后台「通讯录同步 → 设置接收事件服务器」填这个地址（前面拼上本站域名）
-    callback_path: '/api/public/dirsync/wecom/' + src.id,
+    callback_path: '/api/public/dirsync/wecom/' + cbSrc.id,
     callback_ready: !!(cfg.cb_token && cb_aes_key),
-    event_state: parseJ(src.event_state),
+    event_state: parseJ(cbSrc.event_state),
     state: parseJ(src.state),
     bind_provider: bindProviders[0] || null, bind_providers: bindProviders,
     running: _dirSyncRunning.has(src.subject_id), created_at: src.created_at };
 }
+// 文件夹上的通讯录连接（v3.5.47）：企业 ID / Secret / 回调；下面挂着各组织的「套用」
+function dirConnView(conn) {
+  const cfg = parseJ(conn.config) || {};
+  return { id: conn.id, folder_id: conn.folder_id, type: conn.type, type_label: DIR_TYPES[conn.type] || conn.type,
+    label: conn.label || DIR_TYPES[conn.type] || conn.type, enabled: !!conn.enabled,
+    config: { corp_id: cfg.corp_id || '', secret: cfg.secret ? SECRET_MASK : '', push_suspend: !!cfg.push_suspend,
+      cb_token: cfg.cb_token || '', cb_aes_key: cfg.cb_aes_key ? SECRET_MASK : '' },
+    callback_path: '/api/public/dirsync/wecom/' + conn.id,
+    callback_ready: !!(cfg.cb_token && cfg.cb_aes_key),
+    event_state: parseJ(conn.event_state),
+    uses: dirSources.children.all(conn.id).map(u => {
+      const o = oauthSubjects.get.get(u.subject_id); const uc = parseJ(u.config) || {};
+      return { id: u.id, subject_id: u.subject_id, org_name: o ? o.name : '（已删除的组织）', label: u.label, enabled: !!u.enabled,
+        dept_ids: dirsyncWecom.deptIdsOf(uc), dept_names: uc.dept_names || {}, state: parseJ(u.state), running: _dirSyncRunning.has(u.subject_id) };
+    }),
+    created_at: conn.created_at };
+}
+const isFolderConn = (src) => !!(src && src.folder_id && !src.subject_id);
 // 同步范围（部门）：数组，兼容旧的单个 dept_id；顺带存部门名给列表展示
 function dirScopeFromBody(b, old) {
   let ids = Array.isArray(b.dept_ids) ? b.dept_ids : (b.dept_id !== undefined ? [b.dept_id] : null);
@@ -2030,8 +2062,32 @@ function dirScopeFromBody(b, old) {
   for (const id of ids) if (src[id]) names[id] = String(src[id]).slice(0, 60);
   return { dept_ids: ids, dept_names: names };
 }
-async function buildDirSourceCfg(b, old, subject) {
+// 接收事件服务器（v3.5.39）：Token（≤32 位字母数字）+ EncodingAESKey（43 位）；AESKey 打码串/留空 = 不改，cb_clear = 关闭
+function applyCbFields(cfg, b, old) {
+  if (b.cb_clear) { delete cfg.cb_token; delete cfg.cb_aes_key; return null; }
+  const tok = b.cb_token !== undefined ? String(b.cb_token).trim() : (old.cb_token || '');
+  let aes = String(b.cb_aes_key ?? '').trim();
+  if (!aes || /^•+$/.test(aes)) aes = old.cb_aes_key || '';
+  if (tok && !/^[A-Za-z0-9]{1,32}$/.test(tok)) return '回调 Token 应为 1~32 位英文字母或数字';
+  if (aes && !/^[A-Za-z0-9]{43}$/.test(aes)) return 'EncodingAESKey 应为 43 位英文字母或数字';
+  if (!!tok !== !!aes) return '接收事件服务器的 Token 和 EncodingAESKey 要一起填（或都留空）';
+  if (tok) { cfg.cb_token = tok; cfg.cb_aes_key = aes; } else { delete cfg.cb_token; delete cfg.cb_aes_key; }
+  return null;
+}
+// 文件夹通讯录连接的配置：只有连接字段
+function buildDirConnCfg(b, old) {
   old = old || {};
+  const r = dirSourceCfgFromBody(b, old);
+  if (r.error) return r;
+  const cfg = { corp_id: r.cfg.corp_id, secret: r.cfg.secret };
+  if (r.cfg.push_suspend) cfg.push_suspend = true;
+  const e = applyCbFields(cfg, b, old);
+  return e ? { error: e } : { cfg };
+}
+// opts.use = 套用的文件夹连接配置（v3.5.47）：企业 ID / Secret 用文件夹的，自己只存组织级字段
+async function buildDirSourceCfg(b, old, subject, opts = {}) {
+  old = old || {};
+  if (opts.use) b = { ...b, corp_id: opts.use.corp_id, secret: opts.use.secret };
   const r = dirSourceCfgFromBody(b, old);
   if (r.error) return r;
   const cfg = r.cfg;
@@ -2046,16 +2102,11 @@ async function buildDirSourceCfg(b, old, subject) {
     cfg.bind_providers = [...new Set(list.map(String))].filter(k => valid.has(k));
     if (!cfg.bind_providers.length) return { error: '请至少勾选一个要绑定的登录凭证，或改为「不绑定」' };
   } else delete cfg.bind_providers;
-  // 接收事件服务器（v3.5.39）：Token（≤32 位字母数字）+ EncodingAESKey（43 位）；AESKey 打码串/留空 = 不改，cb_clear = 关闭
-  if (b.cb_clear) { delete cfg.cb_token; delete cfg.cb_aes_key; }
-  else {
-    const tok = b.cb_token !== undefined ? String(b.cb_token).trim() : (old.cb_token || '');
-    let aes = String(b.cb_aes_key ?? '').trim();
-    if (!aes || /^•+$/.test(aes)) aes = old.cb_aes_key || '';
-    if (tok && !/^[A-Za-z0-9]{1,32}$/.test(tok)) return { error: '回调 Token 应为 1~32 位英文字母或数字' };
-    if (aes && !/^[A-Za-z0-9]{43}$/.test(aes)) return { error: 'EncodingAESKey 应为 43 位英文字母或数字' };
-    if (!!tok !== !!aes) return { error: '接收事件服务器的 Token 和 EncodingAESKey 要一起填（或都留空）' };
-    if (tok) { cfg.cb_token = tok; cfg.cb_aes_key = aes; } else { delete cfg.cb_token; delete cfg.cb_aes_key; }
+  if (opts.use) {
+    for (const k of dirsyncWecom.CONN_KEYS) delete cfg[k];   // 套用文件夹通讯录：连接字段不存在自己身上
+  } else {
+    const e = applyCbFields(cfg, b, old);
+    if (e) return { error: e };
   }
   // 默认组织密码：只存 bcrypt 哈希；留空 = 不改，clear_default_password = 清除
   if (b.clear_default_password) delete cfg.default_pw_hash;
@@ -2087,7 +2138,12 @@ function dirSourceCfgFromBody(b, old) {
 async function runDirSource(src, actor, opts = {}) {
   const subject = oauthSubjects.get.get(src.subject_id);
   if (!subject) throw Object.assign(new Error('组织不存在'), { status: 404 });
-  const cfg = parseJ(src.config);
+  if (src.parent_id) {
+    const parent = dirSources.get.get(src.parent_id);
+    if (!parent) throw Object.assign(new Error('套用的文件夹通讯录已被删除'), { status: 400 });
+    if (!parent.enabled) throw Object.assign(new Error('套用的文件夹通讯录已停用'), { status: 400 });
+  }
+  const cfg = dirsyncWecom.effectiveCfg(src);
   if (!cfg || !cfg.corp_id || !cfg.secret) throw Object.assign(new Error('同步源配置不完整（企业 ID / 通讯录 Secret）'), { status: 400 });
   if (src.type !== 'wecom') throw Object.assign(new Error('暂不支持该类型的同步源'), { status: 400 });
   if (_dirSyncRunning.has(subject.id)) throw Object.assign(new Error('该组织正在同步中，请稍后'), { status: 409 });
@@ -2113,7 +2169,7 @@ async function runDirSource(src, actor, opts = {}) {
 // 取同步源 + 校验对其所属组织的管理权
 function dirSourceFor(req, res, write = true) {
   const src = dirSources.get.get(req.params.id);
-  if (!src) { res.status(404).json({ error: '同步源不存在' }); return null; }
+  if (!src || isFolderConn(src)) { res.status(404).json({ error: '同步源不存在' }); return null; }
   if (!canManageOrg(req, src.subject_id, write)) { res.status(403).json({ error: '无权管理该组织' }); return null; }
   return src;
 }
@@ -2123,6 +2179,10 @@ router.get('/admin/orgs/:sid/dir-sources', requireAuth, (req, res) => {
   if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
   res.json({ success: true, types: Object.entries(DIR_TYPES).map(([key, label]) => ({ key, label })),
     bind_choices: dirsyncWecom.loginProviderChoices(s), force_confirm: FORCE_CONFIRM,
+    // 所在文件夹的通讯录连接（v3.5.47，可「套用」；只给名称与企业 ID）
+    folder_connections: s.folder_id ? dirSources.byFolder.all(s.folder_id).map(c => ({ id: c.id, label: c.label || DIR_TYPES[c.type], type: c.type,
+      corp_id: (parseJ(c.config) || {}).corp_id || '', enabled: !!c.enabled })) : [],
+    can_use_folder: isSysAdmin(req, 2),
     sources: dirSources.bySubject.all(s.id).map(x => dirSourceView(x, s)) });
 });
 // 这个 Secret 能看到哪些部门（总公司账号只开了部分部门权限时，用来挑同步范围）。
@@ -2132,11 +2192,19 @@ router.post('/admin/orgs/:sid/dir-sources/scope-tree', requireAuth, async (req, 
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
   const b = req.body || {};
-  let old = {};
+  let old = {}, fromFolder = false;
   if (b.source_id) {
     const src = dirSources.get.get(b.source_id);
     if (!src || src.subject_id !== s.id) return res.status(404).json({ error: '同步源不存在' });
-    old = parseJ(src.config) || {};
+    old = dirsyncWecom.effectiveCfg(src); fromFolder = !!src.parent_id;
+  } else if (b.parent_id) {   // 新建「套用」时：用文件夹连接的企业 ID / Secret
+    const conn = dirSources.get.get(b.parent_id);
+    if (!isFolderConn(conn) || conn.folder_id !== s.folder_id) return res.status(404).json({ error: '文件夹通讯录不存在' });
+    old = parseJ(conn.config) || {}; fromFolder = true;
+  }
+  if (fromFolder) {   // 文件夹通讯录：企业 ID / Secret 只用文件夹的；看整个企业的部门树只给系统管理员
+    if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '套用文件夹通讯录的同步范围需要系统管理员修改' });
+    b.corp_id = ''; b.secret = '';
   }
   const corp_id = String(b.corp_id || old.corp_id || '').trim();
   let secret = String(b.secret || '').trim();
@@ -2152,12 +2220,21 @@ router.post('/admin/orgs/:sid/dir-sources', requireAuth, async (req, res) => {
   const type = String(req.body?.type || 'wecom');
   if (!DIR_TYPES[type]) return res.status(400).json({ error: '暂不支持该类型的同步源' });
   if (dirSources.bySubject.all(s.id).length >= 20) return res.status(400).json({ error: '同步源太多了（上限 20）' });
-  const { cfg, error } = await buildDirSourceCfg(req.body || {}, null, s);
+  // 套用文件夹通讯录（v3.5.47）：只有系统管理员能挑部门（文件夹的 Secret 看得到整个企业，组织管理员不能自己选范围）
+  let conn = null;
+  if (req.body?.parent_id) {
+    if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '套用文件夹通讯录需要系统管理员操作' });
+    conn = dirSources.get.get(String(req.body.parent_id));
+    if (!isFolderConn(conn) || !s.folder_id || conn.folder_id !== s.folder_id) return res.status(400).json({ error: '只能套用本组织所在文件夹的通讯录' });
+    if (dirSources.children.all(conn.id).some(u => u.subject_id === s.id)) return res.status(400).json({ error: '本组织已经套用了这份通讯录' });
+  }
+  const { cfg, error } = await buildDirSourceCfg(req.body || {}, null, s, conn ? { use: parseJ(conn.config) || {} } : {});
   if (error) return res.status(400).json({ error });
   const id = uuidv4();
-  const label = String(req.body?.label || '').trim().slice(0, 40) || DIR_TYPES[type];
-  dirSources.insert.run(id, s.id, type, label, JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1);
-  audit('org.dir_sync_configured', { subject: s.id, actor: actorOf(req), detail: { op: 'create', source: type, source_id: id, label, corp_id: cfg.corp_id, dept_ids: cfg.dept_ids, bind_mode: cfg.bind_mode, default_pw: !!cfg.default_pw_hash } });
+  const label = String(req.body?.label || '').trim().slice(0, 40) || (conn ? (conn.label || DIR_TYPES[type]) : DIR_TYPES[type]);
+  if (conn) dirSources.insertUse.run(id, s.id, conn.id, conn.type, label, JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1);
+  else dirSources.insert.run(id, s.id, type, label, JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1);
+  audit('org.dir_sync_configured', { subject: s.id, actor: actorOf(req), detail: { op: 'create', source: type, source_id: id, label, parent_id: conn ? conn.id : undefined, corp_id: conn ? (parseJ(conn.config) || {}).corp_id : cfg.corp_id, dept_ids: cfg.dept_ids, bind_mode: cfg.bind_mode, default_pw: !!cfg.default_pw_hash } });
   res.json({ success: true, source: dirSourceView(dirSources.get.get(id), s) });
 });
 router.patch('/admin/dir-sources/:id', requireAuth, async (req, res) => {
@@ -2166,7 +2243,14 @@ router.patch('/admin/dir-sources/:id', requireAuth, async (req, res) => {
   let cfg = parseJ(src.config) || {};
   const onlyToggle = Object.keys(b).every(k => k === 'enabled');
   if (!onlyToggle) {
-    const r = await buildDirSourceCfg(b, cfg, oauthSubjects.get.get(src.subject_id));
+    let use = null;
+    if (src.parent_id) {
+      if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '套用文件夹通讯录的同步范围需要系统管理员修改' });
+      const conn = dirSources.get.get(src.parent_id);
+      if (!conn) return res.status(400).json({ error: '套用的文件夹通讯录已被删除' });
+      use = parseJ(conn.config) || {};
+    }
+    const r = await buildDirSourceCfg(b, cfg, oauthSubjects.get.get(src.subject_id), use ? { use } : {});
     if (r.error) return res.status(400).json({ error: r.error });
     cfg = r.cfg;
   }
@@ -2192,6 +2276,165 @@ router.post('/admin/dir-sources/:id/run', requireAuth, async (req, res) => {
   if (force && String(req.body?.confirm || '').trim() !== FORCE_CONFIRM) return res.status(400).json({ error: `全部覆盖同步需要输入确认口令「${FORCE_CONFIRM}」` });
   try { res.json({ success: true, state: await runDirSource(src, actorOf(req), { force }) }); }
   catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+// ── 文件夹资源（v3.5.47）：通讯录连接 + 共用登录凭证，文件夹里的组织套用 ──
+// 只有系统管理员能管（文件夹的 Secret 看得到整个企业）。组织管理员能看到 / 启停 / 立即同步自己组织的「套用」。
+function folderConnFor(req, res) {
+  const conn = dirSources.get.get(req.params.id);
+  if (!isFolderConn(conn)) { res.status(404).json({ error: '文件夹通讯录不存在' }); return null; }
+  return conn;
+}
+// 迁移提示：文件夹里各组织自己配的同步源 / 登录凭证，可以逐条确认后挪到文件夹上共用（不确认就照旧工作）
+function folderMigrations(folderId) {
+  const orgs = oauthSubjects.all.all().filter(s => s.folder_id === folderId);
+  const conns = dirSources.byFolder.all(folderId);
+  const items = [];
+  for (const o of orgs) {
+    for (const src of dirSources.bySubject.all(o.id)) {
+      if (src.parent_id) continue;
+      const cfg = parseJ(src.config) || {};
+      const same = conns.find(c => c.type === src.type && (parseJ(c.config) || {}).corp_id === cfg.corp_id);
+      items.push({ kind: 'dir_source', id: src.id, org_id: o.id, org_name: o.name, type: src.type, label: src.label || DIR_TYPES[src.type],
+        corp_id: cfg.corp_id || '', attach_to: same ? { id: same.id, label: same.label || DIR_TYPES[same.type] } : null,
+        secret_differs: same ? (parseJ(same.config) || {}).secret !== cfg.secret : false });
+    }
+    for (const c of oauthProviders.bySubject.all(o.id)) {
+      items.push({ kind: 'credential', id: c.id, org_id: o.id, org_name: o.name, platform: c.platform,
+        platform_name: OAUTH_META[c.platform]?.label || c.platform, label: c.label || '',
+        has_policy: !!(o.require_2fa || o.ip_allow || o.login_start || o.login_end) });
+    }
+  }
+  return items;
+}
+function folderResources(folderId) {
+  return {
+    dir_connections: dirSources.byFolder.all(folderId).map(dirConnView),
+    credentials: oauthProviders.byFolder.all(folderId).map(credView),
+    migrations: folderMigrations(folderId),
+  };
+}
+router.get('/admin/org-folders/:id/resources', requireAdmin(3), (req, res) => {
+  const f = orgFolders.get.get(req.params.id);
+  if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  res.json({ success: true, folder: { id: f.id, name: f.name }, ...folderResources(f.id), types: Object.entries(DIR_TYPES).map(([key, label]) => ({ key, label })) });
+});
+router.post('/admin/org-folders/:id/dir-sources', requireAdmin(2), (req, res) => {
+  const f = orgFolders.get.get(req.params.id);
+  if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  const type = String(req.body?.type || 'wecom');
+  if (!DIR_TYPES[type]) return res.status(400).json({ error: '暂不支持该类型的同步源' });
+  if (dirSources.byFolder.all(f.id).length >= 20) return res.status(400).json({ error: '通讯录连接太多了（上限 20）' });
+  const { cfg, error } = buildDirConnCfg(req.body || {}, null);
+  if (error) return res.status(400).json({ error });
+  if (dirSources.byFolder.all(f.id).some(c => c.type === type && (parseJ(c.config) || {}).corp_id === cfg.corp_id)) return res.status(400).json({ error: '这个文件夹已经有这家企业的通讯录了' });
+  const id = uuidv4();
+  const label = String(req.body?.label || '').trim().slice(0, 40) || DIR_TYPES[type];
+  dirSources.insertFolder.run(id, f.id, type, label, JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1);
+  audit('folder.dir_conn_configured', { subject: f.id, actor: actorOf(req), detail: { op: 'create', conn_id: id, label, corp_id: cfg.corp_id } });
+  res.json({ success: true, connection: dirConnView(dirSources.get.get(id)) });
+});
+router.patch('/admin/folder-dir-sources/:id', requireAdmin(2), (req, res) => {
+  const conn = folderConnFor(req, res); if (!conn) return;
+  const b = req.body || {};
+  let cfg = parseJ(conn.config) || {};
+  const onlyToggle = Object.keys(b).every(k => k === 'enabled');
+  if (!onlyToggle) {
+    const r = buildDirConnCfg(b, cfg);
+    if (r.error) return res.status(400).json({ error: r.error });
+    if (r.cfg.corp_id !== cfg.corp_id && dirSources.children.all(conn.id).length) return res.status(400).json({ error: '已有组织在套用这份通讯录，不能改企业 ID（要换企业请新建一份）' });
+    cfg = r.cfg;
+  }
+  const label = b.label !== undefined ? (String(b.label).trim().slice(0, 40) || DIR_TYPES[conn.type]) : conn.label;
+  const enabled = b.enabled !== undefined ? (b.enabled ? 1 : 0) : conn.enabled;
+  dirSources.update.run(label, JSON.stringify(cfg), enabled, conn.id);
+  audit('folder.dir_conn_configured', { subject: conn.folder_id, actor: actorOf(req), detail: { op: onlyToggle ? (enabled ? 'enable' : 'disable') : 'update', conn_id: conn.id, label } });
+  res.json({ success: true, connection: dirConnView(dirSources.get.get(conn.id)) });
+});
+router.delete('/admin/folder-dir-sources/:id', requireAdmin(2), (req, res) => {
+  const conn = folderConnFor(req, res); if (!conn) return;
+  const n = dirSources.children.all(conn.id).length;
+  if (n) return res.status(400).json({ error: `还有 ${n} 个组织在套用这份通讯录，先在组织里删掉套用` });
+  dirSources.remove.run(conn.id);
+  audit('folder.dir_conn_configured', { subject: conn.folder_id, actor: actorOf(req), detail: { op: 'delete', conn_id: conn.id, label: conn.label } });
+  res.json({ success: true });
+});
+router.post('/admin/folder-dir-sources/:id/scope-tree', requireAdmin(2), async (req, res) => {
+  const conn = folderConnFor(req, res); if (!conn) return;
+  const old = parseJ(conn.config) || {};
+  const b = req.body || {};
+  const corp_id = String(b.corp_id || old.corp_id || '').trim();
+  let secret = String(b.secret || '').trim();
+  if (!secret || /^•+$/.test(secret)) secret = old.secret || '';
+  try { const nodes = await dirsyncWecom.fetchScopeTree({ corp_id, secret }); res.json({ success: true, nodes, limited: !!nodes.limited, warning: nodes.limited ? dirsyncWecom.LIMITED_HINT : undefined }); }
+  catch (e) { res.status(502).json({ error: e.message }); }
+});
+// 立即同步：依次跑套用这份通讯录的所有启用组织
+router.post('/admin/folder-dir-sources/:id/run', requireAdmin(2), async (req, res) => {
+  const conn = folderConnFor(req, res); if (!conn) return;
+  if (!conn.enabled) return res.status(400).json({ error: '这份通讯录已停用，先启用再同步' });
+  const list = dirSources.children.all(conn.id).filter(u => u.enabled);
+  if (!list.length) return res.status(400).json({ error: '还没有组织套用这份通讯录（或都停用了）' });
+  const results = [];
+  for (const u of list) {
+    const o = oauthSubjects.get.get(u.subject_id);
+    try { results.push({ source_id: u.id, org_name: o?.name, state: await runDirSource(u, actorOf(req)) }); }
+    catch (e) { results.push({ source_id: u.id, org_name: o?.name, error: e.message }); }
+  }
+  res.json({ success: results.some(r => r.state), results });
+});
+// 文件夹共用的登录凭证
+router.post('/admin/org-folders/:id/credentials', requireAdmin(2), (req, res) => {
+  const f = orgFolders.get.get(req.params.id);
+  if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  const { platform, label, config, enabled, sort_weight } = req.body || {};
+  const meta = OAUTH_META[platform];
+  if (!meta) return res.status(400).json({ error: '未知平台' });
+  const cfg = {};
+  for (const k of meta.fields) { const v = config?.[k]; if (v != null && v !== '' && !isMaskedVal(v)) cfg[k] = String(v); }
+  if (!cfg[meta.primary]) return res.status(400).json({ error: `请填写 ${meta.primary}` });
+  const id = uuidv4();
+  oauthProviders.insertFolder.run(id, f.id, platform, String(label || '').trim(), JSON.stringify(cfg), enabled === false ? 0 : 1, Number.isFinite(+sort_weight) ? +sort_weight : 0);
+  audit('folder.credential_added', { subject: f.id, actor: actorOf(req), detail: { credential: id, platform, label: String(label || '').trim() } });
+  res.json({ success: true, id });
+});
+// 逐条迁移（需要原样输入确认词）：同步源 → 挂到文件夹的通讯录连接下（同一企业已有连接就并进去）；凭证 → 挪到文件夹共用
+const MIGRATE_CONFIRM = '迁移';
+router.post('/admin/org-folders/:id/migrate', requireAdmin(2), (req, res) => {
+  const f = orgFolders.get.get(req.params.id);
+  if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  const b = req.body || {};
+  if (String(b.confirm || '').trim() !== MIGRATE_CONFIRM) return res.status(400).json({ error: `请输入确认词「${MIGRATE_CONFIRM}」` });
+  const item = folderMigrations(f.id).find(x => x.kind === b.kind && x.id === b.id);
+  if (!item) return res.status(404).json({ error: '这一项不在本文件夹的可迁移列表里（组织不在本文件夹，或已经迁过了）' });
+  if (item.kind === 'credential') {
+    oauthProviders.moveToFolder.run(f.id, item.id);
+    audit('folder.migrated', { subject: f.id, actor: actorOf(req), detail: { kind: 'credential', id: item.id, from_org: item.org_id, platform: item.platform } });
+    return res.json({ success: true, kind: 'credential' });
+  }
+  const src = dirSources.get.get(item.id);
+  const cfg = parseJ(src.config) || {};
+  let conn = item.attach_to ? dirSources.get.get(item.attach_to.id) : null;
+  db.transaction(() => {
+    if (!conn) {
+      const connCfg = {};
+      for (const k of dirsyncWecom.CONN_KEYS) if (cfg[k] !== undefined) connCfg[k] = cfg[k];
+      const cid = uuidv4();
+      dirSources.insertFolder.run(cid, f.id, src.type, src.label || DIR_TYPES[src.type], JSON.stringify(connCfg), 1);
+      if (src.event_state) dirSources.setEventState.run(src.event_state, cid);
+      conn = dirSources.get.get(cid);
+    } else {
+      // 并进已有连接：它没设回调 / 停用同步时，把这一份的带过去
+      const cc = parseJ(conn.config) || {};
+      let changed = false;
+      if (!(cc.cb_token && cc.cb_aes_key) && cfg.cb_token && cfg.cb_aes_key) { cc.cb_token = cfg.cb_token; cc.cb_aes_key = cfg.cb_aes_key; changed = true; }
+      if (changed) dirSources.update.run(conn.label, JSON.stringify(cc), conn.enabled, conn.id);
+    }
+    const useCfg = { ...cfg };
+    for (const k of dirsyncWecom.CONN_KEYS) delete useCfg[k];
+    dirSources.setParent.run(conn.id, JSON.stringify(useCfg), src.id);   // 同步源 id 不变：映射、「设过什么」记录、老回调地址都照旧可用
+  })();
+  audit('folder.migrated', { subject: f.id, actor: actorOf(req), detail: { kind: 'dir_source', id: src.id, from_org: item.org_id, conn_id: conn.id, attached: !!item.attach_to, secret_differs: item.secret_differs } });
+  res.json({ success: true, kind: 'dir_source', connection_id: conn.id, attached: !!item.attach_to, secret_differs: item.secret_differs });
 });
 // 开放 API：把该组织所有启用的同步源依次跑一遍
 router.post('/v1/orgs/:sid/dir-sync/run', requireApiKey('org:sync'), async (req, res) => {
@@ -2247,15 +2490,21 @@ function noteVerifyAttempt(src, ok, reason, req) {
     dirSources.setEventState.run(JSON.stringify(next), src.id);
   } catch (_) {}
 }
+// 回调地址对应的连接与要同步的目标（v3.5.47）：
+//   组织自己的同步源 → 它自己；文件夹连接 → 套用它的各组织；套用（迁移前的老地址）→ 转到它的文件夹连接
 function dirEventSource(req) {
-  const src = dirSources.get.get(req.params.id);
+  let src = dirSources.get.get(req.params.id);
   if (!src || src.type !== 'wecom') return null;
+  if (src.parent_id) src = dirSources.get.get(src.parent_id);
+  if (!src) return null;
   const cfg = parseJ(src.config) || {};
   if (!cfg.cb_token || !cfg.cb_aes_key) return null;
-  return { src, cfg };
+  const targets = isFolderConn(src) ? dirSources.children.all(src.id) : [src];
+  return { src, cfg, targets };
 }
 router.get('/public/dirsync/wecom/:id', (req, res) => {
-  const src = dirSources.get.get(req.params.id);
+  let src = dirSources.get.get(req.params.id);
+  if (src && src.parent_id) src = dirSources.get.get(src.parent_id) || src;
   const ctx = dirEventSource(req);
   if (!ctx) {
     if (src) noteVerifyAttempt(src, false, '本同步源还没保存 Token / EncodingAESKey（先在本系统保存，再去企业微信后台保存）', req);
@@ -2300,18 +2549,23 @@ router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit:
   if (ev !== 'change_contact' || !ctx.src.enabled) {
     state.ignored = true;   // 不是通讯录变更 / 同步源已停用：只记录不同步
   } else {
-    if (change === 'update_user') {
-      try {
-        const subject = oauthSubjects.get.get(ctx.src.subject_id);
-        const oldId = dirsyncWecom.xmlField(msg, 'UserID'), newId = dirsyncWecom.xmlField(msg, 'NewUserID');
-        if (subject && newId) {
-          const r = dirsyncWecom.renameExtId(ctx.src, subject, ctx.cfg, oldId, newId);
-          if (r.renamed) state.renamed = { from: oldId, to: newId };
-        }
-      } catch (e) { console.warn('[通讯录事件] 改 UserId 失败：', e.message); state.error = String(e.message).slice(0, 200); }
+    const oldId = dirsyncWecom.xmlField(msg, 'UserID'), newId = dirsyncWecom.xmlField(msg, 'NewUserID');
+    let queued = 0;
+    for (const t of ctx.targets) {
+      if (!t.enabled) continue;
+      if (change === 'update_user' && newId) {
+        try {
+          const subject = oauthSubjects.get.get(t.subject_id);
+          if (subject) {
+            const r = dirsyncWecom.renameExtId(t, subject, dirsyncWecom.effectiveCfg(t), oldId, newId);
+            if (r.renamed) state.renamed = { from: oldId, to: newId };
+          }
+        } catch (e) { console.warn('[通讯录事件] 改 UserId 失败：', e.message); state.error = String(e.message).slice(0, 200); }
+      }
+      scheduleEventSync(t.id); queued++;
     }
-    state.queued = true;
-    scheduleEventSync(ctx.src.id);
+    state.queued = queued > 0;
+    if (!queued) state.ignored = true;   // 文件夹连接还没有组织套用 / 都停用了
   }
   dirSources.setEventState.run(JSON.stringify(state), ctx.src.id);
   res.type('text').send('success');
@@ -2320,7 +2574,8 @@ router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit:
 // 定时同步：每 10 分钟看一眼，到点（interval_hours）的启用同步源跑一次。0 = 只手动。
 function runDueDirSyncs() {
   for (const src of dirSources.dueList.all()) {
-    const cfg = parseJ(src.config);
+    if (src.parent_id) { const p = dirSources.get.get(src.parent_id); if (!p || !p.enabled) continue; }
+    const cfg = dirsyncWecom.effectiveCfg(src);
     if (!cfg || !(cfg.interval_hours > 0)) continue;
     const last = Date.parse(parseJ(src.state)?.at || '') || 0;
     if (Date.now() - last < cfg.interval_hours * 3600e3) continue;

@@ -6,16 +6,16 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.46.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.47**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.46，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.47，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
-- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
+- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
 - **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接预检 + 审批）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
@@ -202,7 +202,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.46）
+## 数据库表清单（截至 v3.5.47）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）、`deletion_state`/`deleted_at`/`purge_at`（注销删除，v3.5.44）
@@ -211,7 +211,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体；+`folder_id` 文件夹共用凭证，v3.5.47）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39；+`folder_id`/`parent_id` 文件夹通讯录连接与组织套用，v3.5.47）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -435,6 +435,19 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.47 文件夹共用通讯录与登录凭证 + 逐条迁移（用户反馈）
+
+三级版本。用户：「企业微信这样的通讯录同步数据，统一归到文件夹里，方便其他同文件夹组织套用。……现在已有的需要管理员手动确认迁移提示再迁移。」问过用户：共用一份通讯录、各组织选部门；凭证也可放文件夹；已有的逐条提示、管理员确认。（跨系统联邦共享能力排 v3.5.48。）
+- **数据**：`dir_sync_sources` 加 `folder_id` / `parent_id`。文件夹通讯录「连接」= `folder_id` 有值、`subject_id=''`，config 只存连接字段 `CONN_KEYS = corp_id/secret/cb_token/cb_aes_key/push_suspend`；组织「套用」= 普通同步源行 + `parent_id` 指向连接，config 只存组织级字段（部门、绑定、默认密码、移出、频率、uid_mode、idonly_create）。`dirsync-wecom.effectiveCfg(src)` = 连接字段 + 自己的字段，**所有读同步源配置的地方都要走它**（runDirSource、定时、回调改 UserId、pushExternalSuspend、视图）。`oauth_providers.folder_id`：文件夹凭证 `subject_id=NULL`；启动时「无主体凭证建同 id 主体」的老迁移已排除 folder_id 非空的。
+- **匹配**：套用之间按 ext_id 互认（`siblingLink`：同 parent 的其他套用里已映射的 UserId → 同一账号），一人同在两组织部门不会建两个号。移出判断仍按组织（`stillSynced`）。
+- **凭证**：`wecomCredsOf(subject)` 含所在文件夹的凭证（`loginProviderChoices` 标 `folder:true`，auto 绑定也会选到同企业的文件夹凭证）。`oauth.js getCred` 文件夹凭证只看文件夹还在；同人合并范围 `mergeScopeKeys`：组织凭证 = 本组织 + 所在文件夹凭证，文件夹凭证 = 文件夹凭证 + 文件夹里各组织凭证；env 默认凭证仍全局邮箱合并。⚠️ 组织的登录策略（IP / 时段 / 强制 2FA）按凭证所属主体执行，**文件夹凭证没有主体，不受组织策略约束**（迁移提示里写明）。登录页文件夹凭证无名称时显示文件夹名。
+- **接口**（文件夹资源全部系统管理员，读 Lv.3 / 写 Lv.2）：`GET /admin/org-folders/:id/resources`；`POST /admin/org-folders/:id/dir-sources`（同企业不能建两份）、`PATCH/DELETE /admin/folder-dir-sources/:id`（有套用时不能删、不能改 corp_id；只传 enabled = 启停）、`POST .../scope-tree`、`POST .../run`（跑所有启用套用）；`POST /admin/org-folders/:id/credentials`；`POST /admin/org-folders/:id/migrate {kind:dir_source|credential, id, confirm:'迁移'}`。`GET /admin/oauth-subjects` 的 `folders[]` 带 `dir_connections`（含 `uses`）/ `credentials` / `migrations`。组织侧：`GET /admin/orgs/:sid/dir-sources` 多回 `folder_connections`（只名称 + corp_id）与 `can_use_folder`；`POST` 带 `parent_id` = 套用（**须系统管理员**——文件夹 Secret 看得到整个企业，组织管理员不能自己挑部门）；套用的非启停 PATCH、按文件夹连接的 scope-tree 也须系统管理员；组织管理员可启停 / 立即同步 / 删除本组织套用。
+- **迁移**：同步源迁移 = 同文件夹已有同企业连接就并入（连接没回调时把这份的 Token/AESKey 带过去；Secret 不同以连接为准，提示 `secret_differs`），否则新建连接（连接字段 + event_state 搬过去）；然后 `setParent` 把原同步源变成套用——**id 不变**，所以映射、`dir_sync_applied`、旧回调地址（`dirEventSource` 遇到套用 id 转到父连接）都照旧。凭证迁移 = `moveToFolder`（provider key 不变，已绑用户照常登录）。
+- **回调**：`/api/public/dirsync/wecom/:id` 认三种 id：组织自己的源 → 自己；文件夹连接 → 它的所有启用套用各 `renameExtId` + `scheduleEventSync`；套用 id → 父连接。校验 / 事件状态记在连接上。
+- **护栏**：套用着文件夹通讯录的组织不能移出文件夹；文件夹上有通讯录 / 凭证时不能删文件夹；连接停用 → 套用同步 400、定时跳过。
+- 前端：组织管理选中文件夹（或「全部」里有资源的文件夹分节）显示「📁 文件夹共用」面板（`folderResourcesHtml`：连接行带「套用：组织（部门）」+ 全部同步 / 启停 / 编辑 / 删除；凭证行；💡 可迁移项逐条「迁移…」prompt 输入确认词）；`openDirConnModal`；`openOauthModal(null, cred, folderId)`；同步源弹窗新建时「通讯录来源」下拉选套用（隐藏企业 ID / Secret / 回调 / 停用同步），编辑套用时显示只读提示；同步源行「📁 套用「X」」标记；组织卡片无自己凭证时提示用文件夹共用的。
+- ⚠️ 测试：run22 48 项（权限、打码、同企业重复、套用不存连接字段、跨组织同人同账号、组织管理员只读 / 启停、一条事件两组织各同步一次、文件夹凭证登录页 / 绑定 / 发起登录、护栏四项、编辑打码、迁移提示 / 确认词 / 并入 / id 与映射保留 / 旧回调地址、凭证迁移、新建连接迁移）；回归 run 35 / run8 20 / run9 26 / run10 36 / run12 25 / run13 10 / run16 22 / run17 9 / run18 19 / run19 34（需 `DB_PATH`，测试进程直接调 tick）；playwright ui21：面板、迁移、套用弹窗隐藏连接字段、部门树、保存，零 JS 报错。真实企业微信未联调。
 
 ## v3.5.46.1 合并后不再保留原账号 + 用户列表显示不全（用户反馈）
 

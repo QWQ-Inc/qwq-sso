@@ -101,6 +101,8 @@ function getCred(platform, instanceId) {
       const subj = oauthSubjects.get.get(row.subject_id);
       if (subj && !subj.enabled) return null;
     }
+    // 文件夹共用凭证（v3.5.47）：文件夹被删了就不能再用
+    if (row.folder_id && !row.subject_id && !db.prepare('SELECT 1 FROM org_folders WHERE id=?').get(row.folder_id)) return null;
     let cfg = {}; try { cfg = JSON.parse(row.config || '{}'); } catch (_) {}
     const out = { _instanceId: instanceId, _providerKey: `${platform}:${instanceId}`, _label: row.label || '' };
     fields.forEach(k => { out[k] = cfg[k] != null && cfg[k] !== '' ? cfg[k] : undefined; });
@@ -129,9 +131,24 @@ function subjectOfProviderKey(providerKey) {
   const row = oauthProviders.get.get(credId);
   return row ? (row.subject_id || null) : null;
 }
-// 某主体下全部凭证的 providerKey 列表（用于同人合并的查找范围）
-function credentialKeysOfSubject(subjectId) {
-  return oauthProviders.bySubject.all(subjectId).map(r => `${r.platform}:${r.id}`);
+// 同人合并的查找范围（providerKey 列表）；env 默认凭证返回 null（走全局邮箱合并）
+//   组织凭证：本组织的凭证 + 所在文件夹共用的凭证
+//   文件夹凭证（v3.5.47）：文件夹共用的凭证 + 文件夹里各组织的凭证
+function mergeScopeKeys(providerKey) {
+  const idx = providerKey.indexOf(':');
+  if (idx < 0) return null;
+  const row = oauthProviders.get.get(providerKey.slice(idx + 1));
+  if (!row) return null;
+  let rows = [];
+  if (row.subject_id) {
+    const subj = oauthSubjects.get.get(row.subject_id);
+    rows = oauthProviders.bySubject.all(row.subject_id);
+    if (subj && subj.folder_id) rows = rows.concat(oauthProviders.byFolder.all(subj.folder_id));
+  } else if (row.folder_id) {
+    rows = oauthProviders.byFolder.all(row.folder_id).concat(
+      db.prepare('SELECT p.* FROM oauth_providers p JOIN oauth_subjects s ON s.id=p.subject_id WHERE s.folder_id=?').all(row.folder_id));
+  } else return null;
+  return rows.map(r => `${r.platform}:${r.id}`);
 }
 // 建号并绑定本次三方身份
 function createBoundUser({ provider, openId, unionId, name, email }) {
@@ -181,10 +198,9 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   if (user) return user;
 
   // 2. 「主体」内同人识别合并
-  const subjectId = subjectOfProviderKey(provider);
-  if (subjectId) {
-    // DB 凭证：只在【同一主体】内合并（跨主体保持数据隔离）。先按 unionid，再按邮箱。
-    const keys = credentialKeysOfSubject(subjectId);
+  const keys = mergeScopeKeys(provider);
+  if (keys) {
+    // DB 凭证：只在【同一主体 / 同一文件夹】内合并（跨组织保持数据隔离）。先按 unionid，再按邮箱。
     if (keys.length) {
       const ph = keys.map(() => '?').join(',');
       let match = null;

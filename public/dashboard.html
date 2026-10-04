@@ -5469,7 +5469,7 @@ function dirSourceRowsHtml(sid, sources, indent) {
   if (!(sources || []).length) return indent ? '' : '<div style="color:var(--txd);padding:8px 4px;font-size:12px;">还没有同步源，点「+ 添加同步源」。</div>';
   return sources.map(x => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${pad}">
     <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
-    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · 🔑 默认密码' : ''}${x.callback_ready ? ' · <span title="已配置接收事件服务器：企业微信通讯录变动会实时触发同步" style="color:#1F7A3A;">⚡ 实时</span>' : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
+    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} ${x.parent_id ? `<span title="套用文件夹通讯录：企业 ID / Secret / 回调在文件夹上" style="font-size:11px;color:${x.parent_missing || x.parent_enabled === false ? 'var(--err)' : 'var(--ac)'};">📁 ${x.parent_missing ? '套用的文件夹通讯录已删除' : '套用「' + esc(x.parent_label || '') + '」' + (x.parent_enabled === false ? '（已停用）' : '')}</span> ` : ''}<span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · 🔑 默认密码' : ''}${x.callback_ready ? ' · <span title="已配置接收事件服务器：企业微信通讯录变动会实时触发同步" style="color:#1F7A3A;">⚡ 实时</span>' : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
     <span style="font-size:11px;">${_dirStateText(x.state)}</span>
     ${_credBadge(x.enabled)}
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" onclick="runDirSource('${x.id}','${esc(sid)}')">立即同步</button>` : ''}
@@ -5494,9 +5494,11 @@ async function openDirSourceModal(sid, srcId) {
   const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
   const c = src ? src.config : { dept_ids: [], uid_mode: 'userid', interval_hours: 0, remove_missing: true, bind_mode: 'auto' };
   // 可绑定的登录凭证（本组织的企业微信凭证 + 本站默认企业微信）
-  let choices = [];
+  let choices = [], conns = [], canUseFolder = false;
   if (_IS_DEV) choices = [{ key: 'wecom:demo', label: '企业微信 · A公司', corp_id: 'wwdemo' }, { key: 'wecom', label: '企业微信（本站默认凭证）', corp_id: 'wwhq' }];
-  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) choices = r.data.bind_choices || []; }
+  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) { choices = r.data.bind_choices || []; conns = r.data.folder_connections || []; canUseFolder = !!r.data.can_use_folder; } }
+  // 套用文件夹通讯录（v3.5.47）：企业 ID / Secret / 回调都用文件夹那份，这里只选本组织的部门等
+  const parentId = src ? (src.parent_id || '') : '';
   // 同步范围：已选部门（id → 名称）
   const picked = new Map((c.dept_ids || []).map(id => [Number(id), (c.dept_names || {})[id] || '']));
   let visibleIds = null;   // 加载部门后：这个 Secret 能看到的部门；选了看不到的会标红（同步会报无权限）
@@ -5508,11 +5510,15 @@ async function openDirSourceModal(sid, srcId) {
   ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:560px;text-align:left;">
     <h3 style="margin-bottom:6px;">${src ? '编辑通讯录同步源' : '添加通讯录同步源'}</h3>
     <div style="font-size:11px;color:var(--txd);line-height:1.7;">把外部通讯录所选部门（含子部门）的成员同步成本组织成员：按 UserId → 邮箱 → 手机 匹配已有账号，匹配不到才新建；离开的人从本组织移出（只动同步进来、且已不在本组织任何同步源里的成员）。</div>
+    ${src ? (parentId ? `<div style="margin-top:10px;padding:8px 10px;background:var(--sf2);border-radius:4px;font-size:12px;color:var(--tx);">📁 套用文件夹通讯录「${esc(src.parent_label || '（已删除）')}」<span style="color:var(--txd);">${esc(c.corp_id || '')}</span>——企业 ID / Secret / 接收事件服务器在文件夹上改。</div>` : '')
+      : (conns.length ? `${lab('通讯录来源')}<select id="dsm-parent" style="${inp}"><option value="">本组织单独配置（自己填企业 ID / Secret）</option>${conns.map(x => `<option value="${esc(x.id)}" ${canUseFolder ? '' : 'disabled'}>📁 套用文件夹通讯录：${esc(x.label)}（${esc(x.corp_id)}）${x.enabled ? '' : ' · 已停用'}${canUseFolder ? '' : ' · 需系统管理员'}</option>`).join('')}</select>` : '')}
     ${lab('类型')}<select id="dsm-type" ${src ? 'disabled' : ''} style="${inp}"><option value="wecom">企业微信</option><option disabled>飞书（即将支持）</option><option disabled>钉钉（即将支持）</option></select>
     ${lab('名称（如「A 公司企业微信」）')}<input id="dsm-label" value="${esc(src ? src.label : '')}" placeholder="企业微信" style="${inp}">
+    <div id="dsm-conn">
     ${lab('企业 ID（corpid）')}<input id="dsm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
     ${lab('读取通讯录用的 Secret（推荐填<b>自建应用</b>的 Secret：应用管理 → 自建应用 → Secret，应用可见范围设为要同步的部门，并把本服务器出口 IP 加进该应用的可信 IP）')}
     <div style="font-size:11px;color:var(--warn);margin:-2px 0 4px;line-height:1.6;">⚠️「管理工具 → 通讯录同步」的 Secret 已被企业微信限制（报 48009）：只能读到 UserId 和部门 ID，读不到姓名 / 部门名 / 联系方式。用它也能跑，但只会同步已关联过的人，新的人不会建号。</div><input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
+    </div>
 
     ${lab('同步范围（部门，可多选；用总公司账号但只开了某几个部门权限时，只勾那几个）')}
     <div style="display:flex;gap:8px;align-items:flex-start;">
@@ -5542,7 +5548,7 @@ async function openDirSourceModal(sid, srcId) {
       ${c.has_default_pw ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dsm-pwclear"> 清除默认组织密码（已给成员设的不受影响）</label>' : ''}
     </div>
 
-    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
+    <div id="dsm-cb-box" style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
       <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 接收事件服务器（实时同步 · 可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">企业微信里成员 / 部门一有变动就推送过来，约 10 秒后自动同步一次（一阵批量变动只同步一次）；不配置则只靠定时 / 手动同步。<br>
         步骤：① 在下面生成 Token 和 EncodingAESKey，<b>先复制</b>再保存本页 ② 企业微信后台「管理工具 → 通讯录同步 → 设置接收事件服务器」填入 URL、Token、EncodingAESKey 并保存（企业微信会立即校验这个地址，需要公网可访问）。<br>
@@ -5558,7 +5564,7 @@ async function openDirSourceModal(sid, srcId) {
     </div>
     <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-idonly" ${c.idonly_create !== false ? 'checked' : ''}> 只拿到 UserId 的成员也建账号（Secret 受限时；姓名先用 UserId，拿到真名后自动替换）</label>
-    <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（恢复时再启用；需要能修改通讯录的「通讯录同步」Secret）</label>
+    <label id="dsm-suspend-row" style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（恢复时再启用；需要能修改通讯录的「通讯录同步」Secret）</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
     ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? '🔐 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : 'ℹ️ 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
       <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>
@@ -5575,13 +5581,20 @@ async function openDirSourceModal(sid, srcId) {
   };
   const syncTree = () => ov.querySelectorAll('.dsm-deptcb').forEach(cb => { cb.checked = picked.has(Number(cb.value)); });
   renderChips();
+  const curParent = () => parentId || ($('#dsm-parent') ? $('#dsm-parent').value : '');
+  const applyParent = () => {   // 套用文件夹通讯录：连接相关的字段不在这里填
+    const on = !!curParent();
+    ['#dsm-conn', '#dsm-cb-box', '#dsm-suspend-row'].forEach(q => { const el = $(q); if (el) el.style.display = on ? 'none' : ''; });
+  };
+  applyParent();
+  if ($('#dsm-parent')) $('#dsm-parent').onchange = () => { applyParent(); visibleIds = null; $('#dsm-tree').style.display = 'none'; renderChips(); };
   $('#dsm-dept-addbtn').onclick = () => { const v = parseInt($('#dsm-dept-add').value, 10); if (v > 0) { picked.set(v, picked.get(v) || ''); $('#dsm-dept-add').value = ''; renderChips(); syncTree(); } };
   $('#dsm-load-dept').onclick = async () => {
     const box = $('#dsm-tree'); box.style.display = 'block'; box.innerHTML = '<span style="color:var(--txd);">加载中…</span>';
     let nodes;
     if (_IS_DEV) nodes = [{ id: 3, name: '销售部', parent: 1 }, { id: 31, name: '华东大区', parent: 3 }, { id: 32, name: '华南大区', parent: 3 }];
     else {
-      const { ok, data } = await api('POST', '/admin/orgs/' + sid + '/dir-sources/scope-tree', { source_id: src ? src.id : undefined, corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim() });
+      const { ok, data } = await api('POST', '/admin/orgs/' + sid + '/dir-sources/scope-tree', curParent() && !src ? { parent_id: curParent() } : { source_id: src ? src.id : undefined, corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim() });
       if (!ok) { box.innerHTML = '<span style="color:var(--err);">' + esc(data.error || '加载失败') + '</span>'; return; }
       nodes = data.nodes || [];
     }
@@ -5613,11 +5626,16 @@ async function openDirSourceModal(sid, srcId) {
       uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, idonly_create: $('#dsm-idonly').checked, push_suspend: $('#dsm-suspend').checked, enabled: $('#dsm-enabled').checked,
       bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
+    if (curParent()) {
+      if (!src) body.parent_id = curParent();
+      delete body.corp_id; delete body.secret; delete body.push_suspend;
+    } else {
     body.cb_token = $('#dsm-cb-token').value.trim();
     const cbAes = $('#dsm-cb-aes').value.trim();
     if (cbAes) body.cb_aes_key = cbAes;
     else if (body.cb_token && !c.cb_aes_key) { showToast('请同时填写 EncodingAESKey（可点「随机生成」）'); return; }
     if ($('#dsm-cb-clear')?.checked) { body.cb_clear = true; delete body.cb_token; delete body.cb_aes_key; }
+    }
     const pw = $('#dsm-pw').value;
     if (pw) { if (pw.length < 6) { showToast('默认组织密码至少 6 位'); return; } body.default_password = pw; }
     if ($('#dsm-pwclear')?.checked) body.clear_default_password = true;
@@ -5712,7 +5730,8 @@ async function loadOauthSubjects() {
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)},${JSON.stringify(c).replace(/'/g,"&#39;")})'>编辑</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>删除</button>
       </div>`;
-    }).join('') || '<div style="padding:7px 14px 7px 30px;border-top:1px solid var(--bd);color:var(--txd);font-size:11px;">（该主体下还没有凭证）</div>';
+    }).join('') || (() => { const fc = ((_orgFolders.find(f => f.id === s.folder_id) || {}).credentials || []).length;
+      return `<div style="padding:7px 14px 7px 30px;border-top:1px solid var(--bd);color:var(--txd);font-size:11px;">${fc ? `（本组织没有自己的凭证，用所在文件夹共用的 ${fc} 套）` : '（该主体下还没有凭证）'}</div>`; })();
     return `<div style="border:1px solid var(--bd);border-radius:6px;margin:0 12px 12px;overflow:hidden;">
       <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--sf2);flex-wrap:wrap;">
         <span style="font-weight:700;color:var(--txt);">🏢 ${esc(s.name)}</span>
@@ -5863,22 +5882,151 @@ function renderOrgGroups(cardHtml) {
   const inF = id => _oauthSubjects.filter(s => (s.folder_id || null) === id);
   const empty = t => `<div style="color:var(--txd);padding:6px 16px 12px;font-size:12px;">${t}</div>`;
   if (sel === '_none') return inF(null).map(cardHtml).join('') || empty('没有未归类的组织。');
-  if (sel !== 'all') return inF(sel).map(cardHtml).join('') || empty('这个文件夹里还没有组织：在组织卡片上点「📁 移到」放进来。');
+  if (sel !== 'all') { const f = _orgFolders.find(x => x.id === sel); return (f ? folderResourcesHtml(f) : '') + (inF(sel).map(cardHtml).join('') || empty('这个文件夹里还没有组织：在组织卡片上点「📁 移到」放进来。')); }
   if (!_orgFolders.length) return _oauthSubjects.map(cardHtml).join('');
   // 「全部」：按文件夹分组，可折叠；最后是未归类
   const collapsed = new Set(_orgFolderCollapsed());
-  const section = (key, title, list) => {
+  const section = (key, title, list, f) => {
     const shut = collapsed.has(key);
     return `<div style="margin:0 0 6px;">
       <div style="display:flex;align-items:center;gap:6px;padding:6px 14px;cursor:pointer;user-select:none;color:var(--tx);font-weight:700;font-size:13px;" onclick='toggleOrgFolderCollapse(${JSON.stringify(key)})'>
         <span style="width:12px;color:var(--txd);">${shut ? '▸' : '▾'}</span>${title}<span style="font-weight:400;color:var(--txd);font-size:11px;">${list.length} 个组织</span>
       </div>
-      ${shut ? '' : (list.map(cardHtml).join('') || empty('（空）'))}
+      ${shut ? '' : ((f && ((f.dir_connections || []).length || (f.credentials || []).length || (f.migrations || []).length) ? folderResourcesHtml(f) : '') + (list.map(cardHtml).join('') || empty('（空）')))}
     </div>`;
   };
-  return _orgFolders.map(f => section(f.id, '📁 ' + esc(f.name), inF(f.id))).join('')
+  return _orgFolders.map(f => section(f.id, '📁 ' + esc(f.name), inF(f.id), f)).join('')
     + section('_none', '未归类', inF(null));
 }
+// ── 文件夹共用资源（v3.5.47）：一份通讯录 / 一套登录凭证放在文件夹上，文件夹里的组织套用 ──
+function folderResourcesHtml(f) {
+  const conns = f.dir_connections || [], creds = f.credentials || [], mig = f.migrations || [];
+  const fid = JSON.stringify(f.id);
+  const connRows = conns.map(x => {
+    const uses = (x.uses || []).map(u => `${esc(u.org_name)}<span style="color:var(--txd);">（${esc(_dirScopeText({ dept_ids: u.dept_ids, dept_names: u.dept_names }))}${u.enabled ? '' : ' · 停用'}）</span>`).join('、');
+    return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 14px;border-top:1px solid var(--bd);">
+      <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
+      <span style="flex:1;min-width:160px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')}${x.callback_ready ? ' · <span style="color:#1F7A3A;">⚡ 实时</span>' : ''}${x.config.push_suspend ? ' · 停用同步' : ''}</span>
+        <div style="font-size:11px;color:var(--tx);margin-top:2px;">${uses ? '套用：' + uses : '<span style="color:var(--txd);">还没有组织套用——在组织卡片「+ 通讯录同步」里选这份</span>'}</div></span>
+      ${_credBadge(x.enabled)}
+      ${x.enabled && (x.uses || []).length ? `<button class="btn" style="${_rowBtn}" onclick='runFolderConn(${JSON.stringify(x.id)})'>全部同步</button>` : ''}
+      <button class="btn" style="${_rowBtn}" onclick='toggleFolderConn(${JSON.stringify(x.id)},${!x.enabled})'>${x.enabled ? '停用' : '启用'}</button>
+      <button class="btn" style="${_rowBtn}" onclick='openDirConnModal(${fid},${JSON.stringify(x.id)})'>编辑</button>
+      <button class="btn" style="${_rowDanger}" onclick='delFolderConn(${JSON.stringify(x.id)})'>删除</button>
+    </div>`;
+  }).join('');
+  const credRows = creds.map(c => {
+    const meta = _oauthPlatforms.find(p => p.key === c.platform);
+    const pname = meta ? meta.label : c.platform;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid var(--bd);">
+      <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔑 ${esc(pname)}</span>
+      <span style="flex:1;color:var(--txt);">${esc(c.label || pname)} <span style="color:var(--txd);font-size:11px;">文件夹里的组织共用</span></span>
+      ${_credBadge(c.enabled)}
+      ${_INAPP_PLATFORMS.includes(c.platform) ? `<button class="btn" style="${_rowBtn}" onclick='copyInappLoginUrl(${JSON.stringify(c.id)})'>应用内登录地址</button>` : ''}
+      <button class="btn" style="${_rowBtn}" onclick='toggleOauthProvider(${JSON.stringify(c.id)},${!c.enabled})'>${c.enabled ? '停用' : '启用'}</button>
+      <button class="btn" style="${_rowBtn}" onclick='openOauthModal(null,${JSON.stringify(c).replace(/'/g,"&#39;")},${fid})'>编辑</button>
+      <button class="btn" style="${_rowDanger}" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>删除</button>
+    </div>`;
+  }).join('');
+  const migRows = mig.map(m => {
+    const what = m.kind === 'dir_source'
+      ? `通讯录「${esc(m.label)}」<span style="color:var(--txd);">${esc(m.corp_id)}</span> → ${m.attach_to ? '并入文件夹已有的「' + esc(m.attach_to.label) + '」' + (m.secret_differs ? ' <span style="color:var(--warn);">（Secret 不同，以文件夹的为准）</span>' : '') : '新建一份文件夹通讯录'}`
+      : `登录凭证 ${esc(m.platform_name)}「${esc(m.label || m.platform_name)}」 → 文件夹共用${m.has_policy ? ' <span style="color:var(--warn);">（该组织的登录 IP / 时段 / 强制两步验证策略不再作用于这套凭证）</span>' : ''}`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:12px;color:var(--tx);">
+      <span style="flex:1;">🏢 ${esc(m.org_name)} · ${what}</span>
+      <button class="btn" style="${_rowBtn}" onclick='migrateToFolder(${fid},${JSON.stringify(m.kind)},${JSON.stringify(m.id)})'>迁移…</button>
+    </div>`;
+  }).join('');
+  return `<div style="border:1px dashed var(--ac);border-radius:6px;margin:0 12px 12px;overflow:hidden;">
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;flex-wrap:wrap;">
+      <span style="font-weight:700;color:var(--txt);font-size:13px;">📁 文件夹共用</span>
+      <span style="font-size:11px;color:var(--txd);flex:1;min-width:180px;">通讯录、登录凭证放在这里，文件夹里的组织套用（各自选部门）；密钥只存一份</span>
+      <button class="btn" style="${_rowBtn}" onclick='openDirConnModal(${fid})'>+ 通讯录</button>
+      <button class="btn" style="${_rowBtn}" onclick='openOauthModal(null,null,${fid})'>+ 登录凭证</button>
+    </div>
+    ${connRows}${credRows}
+    ${mig.length ? `<div style="border-top:1px solid var(--bd);background:var(--sf2);padding:6px 0 4px;">
+      <div style="padding:2px 14px 4px;font-size:12px;color:var(--warn);font-weight:600;">💡 文件夹里有 ${mig.length} 项组织自己配的通讯录 / 登录凭证，可以逐条迁到文件夹共用（不迁照旧可用）</div>
+      ${migRows}</div>` : ''}
+  </div>`;
+}
+async function migrateToFolder(fid, kind, id) {
+  const f = _orgFolders.find(x => x.id === fid); if (!f) return;
+  const m = (f.migrations || []).find(x => x.kind === kind && x.id === id); if (!m) return;
+  const desc = kind === 'dir_source'
+    ? `把「${m.org_name}」的通讯录「${m.label}」（${m.corp_id}）迁到文件夹「${f.name}」：\n· ${m.attach_to ? '并入文件夹已有的「' + m.attach_to.label + '」' + (m.secret_differs ? '（两边 Secret 不同，之后用文件夹的）' : '') : '在文件夹上新建一份，企业 ID / Secret / 接收事件服务器搬过去'}\n· 本组织改为「套用」它，所选部门、绑定、默认密码等照旧\n· 已同步的成员、旧的回调地址都继续有效`
+    : `把「${m.org_name}」的登录凭证「${m.label || m.platform_name}」挪到文件夹「${f.name}」共用：\n· 文件夹里的组织都能用它登录，同一人会在整个文件夹范围内认作同一账号\n· 已绑定的用户照旧能登录${m.has_policy ? '\n· ⚠️ 该组织的登录 IP 白名单 / 登录时段 / 强制两步验证，不再作用于经这套凭证的登录' : ''}`;
+  const v = prompt(desc + '\n\n确认请输入：迁移');
+  if (v === null) return;
+  if (v.trim() !== '迁移') { showToast('确认词不正确，已取消'); return; }
+  const { ok, data } = await api('POST', '/admin/org-folders/' + fid + '/migrate', { kind, id, confirm: '迁移' });
+  if (!ok) { showToast(data.error || '迁移失败'); return; }
+  showToast(kind === 'dir_source' ? (data.attached ? '已并入文件夹通讯录' : '已迁到文件夹通讯录') : '凭证已挪到文件夹共用');
+  loadOauthSubjects();
+}
+async function toggleFolderConn(id, enabled) {
+  const { ok, data } = await api('PATCH', '/admin/folder-dir-sources/' + id, { enabled });
+  if (!ok) { showToast(data.error || '操作失败'); return; }
+  showToast(enabled ? '已启用' : '已停用（套用它的组织都暂停同步）'); loadOauthSubjects();
+}
+async function delFolderConn(id) {
+  if (!confirm('删除这份文件夹通讯录？（还有组织套用时不能删）')) return;
+  const { ok, data } = await api('DELETE', '/admin/folder-dir-sources/' + id);
+  if (!ok) { showToast(data.error || '删除失败'); return; }
+  showToast('已删除'); loadOauthSubjects();
+}
+async function runFolderConn(id) {
+  showToast('同步中…');
+  const { ok, data } = await api('POST', '/admin/folder-dir-sources/' + id + '/run', {});
+  if (!ok && !(data.results || []).length) { showToast(data.error || '同步失败'); loadOauthSubjects(); return; }
+  showToast((data.results || []).map(r => `${r.org_name || ''}：${r.state ? '在册 ' + r.state.total + '，新加入 ' + r.state.added + '，移出 ' + r.state.removed : '失败 ' + r.error}`).join('；'));
+  loadOauthSubjects();
+}
+function openDirConnModal(fid, connId) {
+  const f = _orgFolders.find(x => x.id === fid);
+  const x = connId ? ((f && f.dir_connections) || []).find(c => c.id === connId) : null;
+  const c = x ? x.config : {};
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
+  const lab = (t) => `<label style="display:block;font-size:12px;color:var(--txd);margin:10px 0 4px;">${t}</label>`;
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:560px;text-align:left;">
+    <h3 style="margin-bottom:6px;">${x ? '编辑文件夹通讯录' : '添加文件夹通讯录'} · ${esc(f ? f.name : '')}</h3>
+    <div style="font-size:11px;color:var(--txd);line-height:1.7;">企业 ID、Secret、接收事件服务器只在这里存一份；文件夹里的组织在自己的「+ 通讯录同步」里选「套用文件夹通讯录」，各自挑要同步的部门。</div>
+    ${lab('名称')}<input id="dcm-label" value="${esc(x ? x.label : '')}" placeholder="企业微信" style="${inp}">
+    ${lab('企业 ID（corpid）')}<input id="dcm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
+    ${lab('读取通讯录用的 Secret（推荐自建应用的 Secret，可见范围要覆盖各组织要同步的部门）')}<input id="dcm-secret" type="password" autocomplete="new-password" placeholder="${x ? '已配置，留空不修改' : ''}" style="${inp}">
+    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
+      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 接收事件服务器（可选）</div>
+      <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">一份通讯录只能在企业微信后台填一个地址：变动推过来后，套用它的各组织都会自动同步一次。</div>
+      ${lab('URL（填到企业微信）')}
+      <div style="display:flex;gap:6px;"><input id="dcm-cb-url" readonly value="${x ? esc(location.origin + x.callback_path) : ''}" placeholder="保存后生成" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" ${x ? '' : 'disabled'} onclick="_dsmCopy('dcm-cb-url')">复制</button></div>
+      ${lab('Token')}
+      <div style="display:flex;gap:6px;"><input id="dcm-cb-token" value="${esc(c.cb_token || '')}" placeholder="1~32 位字母数字" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmRand('dcm-cb-token',16)">随机生成</button><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmCopy('dcm-cb-token')">复制</button></div>
+      ${lab('EncodingAESKey')}
+      <div style="display:flex;gap:6px;"><input id="dcm-cb-aes" value="" placeholder="${c.cb_aes_key ? '已设置，留空不修改（保存后不再显示）' : '43 位字母数字'}" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmRand('dcm-cb-aes',43)">随机生成</button><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmCopy('dcm-cb-aes')">复制</button></div>
+      ${c.cb_token ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dcm-cb-clear"> 关闭接收事件服务器</label>' : ''}
+      ${x ? `<div style="font-size:11px;color:var(--txd);margin-top:6px;">${_dirEventText(x)}</div>` : ''}
+    </div>
+    <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dcm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（需能修改通讯录的 Secret）</label>
+    <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dcm-enabled" ${!x || x.enabled ? 'checked' : ''}> 启用</label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;"><button class="btn" id="dcm-cancel">取消</button><button class="btn primary" id="dcm-save">保存</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const $ = (q) => ov.querySelector(q);
+  $('#dcm-cancel').onclick = () => ov.remove();
+  $('#dcm-save').onclick = async () => {
+    const body = { type: 'wecom', label: $('#dcm-label').value.trim(), corp_id: $('#dcm-corp').value.trim(), secret: $('#dcm-secret').value.trim(),
+      push_suspend: $('#dcm-suspend').checked, enabled: $('#dcm-enabled').checked, cb_token: $('#dcm-cb-token').value.trim() };
+    const aes = $('#dcm-cb-aes').value.trim();
+    if (aes) body.cb_aes_key = aes;
+    else if (body.cb_token && !c.cb_aes_key) { showToast('请同时填写 EncodingAESKey（可点「随机生成」）'); return; }
+    if ($('#dcm-cb-clear')?.checked) { body.cb_clear = true; delete body.cb_token; }
+    const { ok, data } = x ? await api('PATCH', '/admin/folder-dir-sources/' + x.id, body) : await api('POST', '/admin/org-folders/' + fid + '/dir-sources', body);
+    if (!ok) { showToast(data.error || '保存失败'); return; }
+    ov.remove(); showToast('已保存'); loadOauthSubjects();
+  };
+}
+
 async function newOrgFolder(thenMoveSid) {
   const name = (prompt('新文件夹名称（如「华东区域」「子公司」）') || '').trim();
   if (!name) return;
@@ -5897,7 +6045,7 @@ async function renameOrgFolder(id) {
 }
 async function delOrgFolder(id) {
   const f = _orgFolders.find(x => x.id === id); if (!f) return;
-  if (!confirm(`删除文件夹「${f.name}」？里面的 ${f.org_count || 0} 个组织会回到「未归类」，组织本身不受影响。`)) return;
+  if (!confirm(`删除文件夹「${f.name}」？里面的 ${f.org_count || 0} 个组织会回到「未归类」，组织本身不受影响。（文件夹上有共用的通讯录 / 登录凭证时要先删掉）`)) return;
   const { ok, data } = await api('DELETE', '/admin/org-folders/' + id);
   if (!ok) { showToast(data.error || '删除失败'); return; }
   try { localStorage.setItem('sso_org_folder', 'all'); } catch (_) {}
@@ -5982,7 +6130,7 @@ const AUDIT_EVENT_LABEL = {
   'access.face_enrolled':'录入人脸', 'access.face_deleted':'删除人脸',
   'access.pass_issued':'签发访客码', 'access.pass_revoked':'撤销访客码',
   'access.fed_issued':'签发跨域码', 'fed.app_login':'跨域应用登录', 'fed.pair_received':'接收联邦配对',
-  'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验', 'file.watermarked':'导出文件加水印', 'org.dir_synced':'通讯录同步', 'org.dir_sync_configured':'配置通讯录同步',
+  'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验', 'file.watermarked':'导出文件加水印', 'org.dir_synced':'通讯录同步', 'org.dir_sync_configured':'配置通讯录同步', 'folder.dir_conn_configured':'配置文件夹通讯录', 'folder.credential_added':'添加文件夹凭证', 'folder.migrated':'迁移到文件夹',
   'org.member_password_set':'设置组织密码', 'org.member_password_cleared':'清除组织密码',
 };
 // 水印追踪码反查（v3.5.33）：外泄的图片/PDF 上「T+8 位」→ 谁、何时、导出了哪个附件
@@ -7802,17 +7950,19 @@ function _oauthFieldsHtml(platformKey, cfg) {
 }
 
 // openOauthModal(subjectId, cred?) — 新增/编辑某主体下的一套登录凭证
-function openOauthModal(subjectId, cred) {
+function openOauthModal(subjectId, cred, folderId) {
   const editing = !!(cred && cred.id);
   document.getElementById('oauth-modal-title').textContent = editing ? '编辑登录凭证' : '添加登录凭证';
   const body = document.getElementById('oauth-modal-body');
   const platformKey = editing ? cred.platform : (_oauthPlatforms[0] && _oauthPlatforms[0].key);
   const opts = _oauthPlatforms.map(p => `<option value="${p.key}" ${p.key===platformKey?'selected':''}>${esc(p.label)}</option>`).join('');
   const subj = _oauthSubjects.find(s => s.id === subjectId);
+  const fold = folderId ? _orgFolders.find(f => f.id === folderId) : null;
   body.innerHTML = `
     <input type="hidden" id="oc-id" value="${editing?esc(cred.id):''}">
     <input type="hidden" id="oc-subject" value="${esc(subjectId||'')}">
-    <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">所属主体：<b style="color:var(--txt);">${esc(subj?subj.name:'')}</b></div>
+    <input type="hidden" id="oc-folder" value="${esc(folderId||'')}">
+    <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">${fold ? `所属文件夹：<b style="color:var(--txt);">📁 ${esc(fold.name)}</b>（文件夹里的组织共用，同一人在整个文件夹范围内认作同一账号）` : `所属主体：<b style="color:var(--txt);">${esc(subj?subj.name:'')}</b>`}</div>
     <div style="margin-bottom:10px;">
       <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">渠道</label>
       <select id="oc-platform" ${editing?'disabled':''} onchange="_oauthPlatformChanged()"
@@ -7852,7 +8002,9 @@ async function saveOauthProvider() {
   btn.disabled = true;
   const res = id
     ? await api('PATCH', '/admin/oauth-providers/' + id, { label, config, enabled })
-    : await api('POST', '/admin/oauth-providers', { subject_id, platform, label, config, enabled });
+    : (document.getElementById('oc-folder').value
+      ? await api('POST', '/admin/org-folders/' + document.getElementById('oc-folder').value + '/credentials', { platform, label, config, enabled })
+      : await api('POST', '/admin/oauth-providers', { subject_id, platform, label, config, enabled }));
   btn.disabled = false;
   if (res.ok) { showToast('已保存'); closeOauthModal(); loadOauthSubjects(); }
   else showToast('保存失败：' + (res.data?.error || '未知错误'));

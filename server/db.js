@@ -410,6 +410,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS org_folders (
   created_at  TEXT DEFAULT (datetime('now'))
 )`); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN folder_id TEXT'); } catch(_) {}
+// v3.5.47：登录凭证也可以放在文件夹上（folder_id 有值、subject_id 为空），文件夹里的组织共用
+try { db.exec('ALTER TABLE oauth_providers ADD COLUMN folder_id TEXT'); } catch(_) {}
 // 外部身份 ↔ 本系统用户的稳定映射（企业微信 UserId 不一定带邮箱/手机，靠它保证每次同步落到同一账号）
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_links (
   subject_id TEXT NOT NULL,
@@ -434,6 +436,10 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_sources (
 )`); } catch(_) {}
 // v3.5.39：接收事件服务器（企业微信通讯录变更回调）最近一次事件的状态
 try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN event_state TEXT'); } catch(_) {}
+// v3.5.47：通讯录统一归到文件夹——文件夹上放一份「通讯录连接」（folder_id 有值、subject_id=''：企业 ID / Secret / 回调 Token…），
+// 文件夹里的各组织「套用」它（parent_id = 那份连接，各自选部门、绑定方式、默认密码…）。parent_id 为空 = 组织自己单独配的。
+try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN folder_id TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN parent_id TEXT'); } catch(_) {}
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
   source_id  TEXT NOT NULL,
   ext_id     TEXT NOT NULL,
@@ -548,7 +554,7 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS memo_attachments (
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_memo_att ON memo_attachments(memo_id)'); } catch(_) {}
 // 迁移：v3.4.14 里每套凭证各自独立——给无主体的凭证各建一个「同 id」主体（保持互不合并的现状）
 try {
-  const orphans = db.prepare("SELECT id,label FROM oauth_providers WHERE subject_id IS NULL OR subject_id=''").all();
+  const orphans = db.prepare("SELECT id,label FROM oauth_providers WHERE (subject_id IS NULL OR subject_id='') AND (folder_id IS NULL OR folder_id='')").all();
   const insS = db.prepare("INSERT OR IGNORE INTO oauth_subjects (id,name) VALUES (?,?)");
   const updP = db.prepare("UPDATE oauth_providers SET subject_id=? WHERE id=?");
   orphans.forEach(o => { insS.run(o.id, o.label || o.id); updP.run(o.id, o.id); });
@@ -1020,9 +1026,12 @@ const oauthProviderStmts = {
   all:          db.prepare('SELECT * FROM oauth_providers ORDER BY platform, sort_weight, created_at'),
   byPlatform:   db.prepare('SELECT * FROM oauth_providers WHERE platform=? ORDER BY sort_weight, created_at'),
   // 登录页可用凭证：凭证启用 且 所属主体启用
-  enabledByPlatform: db.prepare(`SELECT p.* FROM oauth_providers p
+  // 文件夹凭证（v3.5.47）没有主体，只要凭证启用且文件夹还在
+  enabledByPlatform: db.prepare(`SELECT p.*, f.name AS folder_name FROM oauth_providers p
     LEFT JOIN oauth_subjects s ON p.subject_id=s.id
+    LEFT JOIN org_folders f ON p.folder_id=f.id
     WHERE p.platform=? AND p.enabled=1 AND COALESCE(s.enabled,1)=1
+      AND (p.folder_id IS NULL OR p.folder_id='' OR f.id IS NOT NULL)
     ORDER BY p.sort_weight, p.created_at`),
   bySubject:    db.prepare('SELECT * FROM oauth_providers WHERE subject_id=? ORDER BY platform, sort_weight, created_at'),
   get:          db.prepare('SELECT * FROM oauth_providers WHERE id=?'),
@@ -1031,6 +1040,9 @@ const oauthProviderStmts = {
   setSubject:   db.prepare('UPDATE oauth_providers SET subject_id=? WHERE id=?'),
   remove:       db.prepare('DELETE FROM oauth_providers WHERE id=?'),
   removeBySubject: db.prepare('DELETE FROM oauth_providers WHERE subject_id=?'),
+  byFolder:     db.prepare('SELECT * FROM oauth_providers WHERE folder_id=? ORDER BY platform, sort_weight, created_at'),
+  insertFolder: db.prepare('INSERT INTO oauth_providers (id,subject_id,folder_id,platform,label,config,enabled,sort_weight) VALUES (?,NULL,?,?,?,?,?,?)'),
+  moveToFolder: db.prepare('UPDATE oauth_providers SET folder_id=?, subject_id=NULL WHERE id=?'),
 };
 
 // 「主体」（组织）CRUD + 同人合并查询
@@ -1463,6 +1475,11 @@ const orgFolderStmts = {
 // 通讯录同步源（v3.5.36）
 const dirSourceStmts = {
   bySubject: db.prepare('SELECT * FROM dir_sync_sources WHERE subject_id=? ORDER BY created_at'),
+  byFolder:  db.prepare("SELECT * FROM dir_sync_sources WHERE folder_id=? AND (parent_id IS NULL OR parent_id='') ORDER BY created_at"),
+  children:  db.prepare('SELECT * FROM dir_sync_sources WHERE parent_id=? ORDER BY created_at'),
+  insertFolder: db.prepare("INSERT INTO dir_sync_sources (id,subject_id,folder_id,type,label,config,enabled) VALUES (?,'',?,?,?,?,?)"),
+  insertUse: db.prepare('INSERT INTO dir_sync_sources (id,subject_id,parent_id,type,label,config,enabled) VALUES (?,?,?,?,?,?,?)'),
+  setParent: db.prepare("UPDATE dir_sync_sources SET parent_id=?, config=?, updated_at=datetime('now') WHERE id=?"),
   get:       db.prepare('SELECT * FROM dir_sync_sources WHERE id=?'),
   insert:    db.prepare('INSERT INTO dir_sync_sources (id,subject_id,type,label,config,enabled) VALUES (?,?,?,?,?,?)'),
   update:    db.prepare("UPDATE dir_sync_sources SET label=?, config=?, enabled=?, updated_at=datetime('now') WHERE id=?"),
