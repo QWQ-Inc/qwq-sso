@@ -36,8 +36,8 @@ jobs:
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git fetch --tags --force
 
-          publish() {   # $1 = tag
-            TAG="$1"
+          publish() {   # $1 = tag，$2 = 提交（可选：tag 还不存在时由 Release API 在该提交上创建）
+            TAG="$1"; TARGET="${2:-}"
             NOTES_FILE="${RUNNER_TEMP}/notes-${TAG}.md"
             # 取 CHANGELOG.md 里 "## <TAG> " 到下一个 "## v" 之间的内容作为 Release 说明
             awk -v tag="$TAG" '
@@ -49,7 +49,11 @@ jobs:
             if gh release view "$TAG" >/dev/null 2>&1; then
               gh release edit "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
             else
-              gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --verify-tag
+              if [ -n "$TARGET" ]; then
+                gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --target "$TARGET"
+              else
+                gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE" --verify-tag
+              fi
             fi
           }
 
@@ -68,7 +72,6 @@ jobs:
               continue
             fi
             echo "补打 $VER → $SHA"
-            git tag -a "$VER" -m "$VER" "$SHA"
-            git push origin "refs/tags/$VER"
-            publish "$VER"
+            # 不用 git push：GITHUB_TOKEN 推 tag 会被「无 workflows 权限」拒绝；改由 Release API 在服务端建 tag
+            publish "$VER" "$SHA"
           done
