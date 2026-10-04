@@ -492,6 +492,32 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS account_deletions (
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.48：账号合并可撤销——合并记录 + 合并时数据库每一行改动的日志（撤销时按日志倒放）。
+// 撤销窗口 MERGE_UNDO_DAYS（默认 30 天），过期日志清掉（里面有被删账号的完整数据）。
+try { db.exec(`CREATE TABLE IF NOT EXISTS merge_records (
+  id         TEXT PRIMARY KEY,
+  target_id  TEXT NOT NULL,
+  target     TEXT,                            -- JSON 快照 {name, uid}
+  sources    TEXT,                            -- JSON [{id,uid_seq,uid_code,name,email,phone}]
+  via        TEXT,
+  actor      TEXT,                            -- 操作人（审计格式 admin:<uid> / user:<uid> …）
+  actor_uid  TEXT,
+  journal    INTEGER NOT NULL DEFAULT 0,      -- 1 = 有改动日志、可撤销；0 = 日志已过期清掉
+  undone_at  TEXT,
+  undone_by  TEXT,
+  undo_note  TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS merge_journal (
+  seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+  merge_id TEXT NOT NULL,
+  tbl      TEXT NOT NULL,
+  op       TEXT NOT NULL,                     -- I / U / D
+  rid      INTEGER,
+  old_row  TEXT,
+  new_row  TEXT
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_merge_journal ON merge_journal(merge_id, seq)'); } catch(_) {}
 // 应用是否「重要、注销前须交接」（v3.5.44）
 try { db.exec('ALTER TABLE apps ADD COLUMN handover_required INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // v3.5.43：外部系统里的姓名（「应用内姓名」，不可靠，只展示；真实姓名以实名认证为准）

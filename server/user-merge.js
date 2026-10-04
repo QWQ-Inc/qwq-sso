@@ -52,7 +52,7 @@ function checkMerge(target, sources) {
 }
 
 // 执行合并（事务）。返回 { merged, moved:{...} }
-function mergeUsers(targetId, sourceIds, { reason = '', onAppRevoked = null } = {}) {
+function mergeUsers(targetId, sourceIds, { reason = '', onAppRevoked = null, actor = '', actorUid = null, via = '' } = {}) {
   const target = users.findById.get(targetId);
   const sources = sourceIds.map(id => users.findById.get(id));
   const err = checkMerge(target, sources);
@@ -66,7 +66,16 @@ function mergeUsers(targetId, sourceIds, { reason = '', onAppRevoked = null } = 
     for (const s of sources) pushOut.push({ s, list: apps.getUserApps.all(s.id) });
   } catch (_) {}
 
+  // v3.5.48：合并记录 + 改动日志（撤销用）。日志靠临时触发器记下事务里每一行的增删改，事务结束就拆掉触发器
+  const mergeId = crypto.randomUUID();
+  const days = undoDays();
+  const stopJournal = days > 0 ? startJournal(mergeId) : () => {};
+  try {
   db.transaction(() => {
+    db.prepare('INSERT INTO merge_records (id,target_id,target,sources,via,actor,actor_uid,journal,undo_note) VALUES (?,?,?,?,?,?,?,?,?)').run(
+      mergeId, target.id, JSON.stringify({ name: target.name, uid_seq: target.uid_seq, uid_code: target.uid_code || null }),
+      JSON.stringify(sources.map(s => ({ id: s.id, uid_seq: s.uid_seq, uid_code: s.uid_code || null, name: s.name, email: s.email || null, phone: s.phone || null }))),
+      via || null, actor || null, actorUid || null, days > 0 ? 1 : 0, reason || null);
     for (const s of sources) {
       const t = users.findById.get(target.id);   // 每轮取最新（邮箱/手机/实名可能刚接过来）
       moved.oauth += run('UPDATE user_oauth SET user_id=? WHERE user_id=?', t.id, s.id).changes;
@@ -126,11 +135,12 @@ function mergeUsers(targetId, sourceIds, { reason = '', onAppRevoked = null } = 
       if (absorbAndDelete(s.id, t.id)) moved.deleted = (moved.deleted || 0) + 1;
     }
   })();
+  } finally { stopJournal(); }
 
   // 事务外：通知被合并账号授权过的应用「这个身份没了」（应用自己按 merged_into 决定怎么处理本地账号）
   if (onAppRevoked) for (const { s, list } of pushOut) for (const a of list) { try { onAppRevoked(a, s, target); } catch (_) {} }
 
-  return { merged: sources.map(s => ({ id: s.id, uid_seq: s.uid_seq, name: s.name })), target: { id: target.id, uid_seq: target.uid_seq, name: target.name }, moved, reason };
+  return { merge_id: mergeId, undo_days: days, merged: sources.map(s => ({ id: s.id, uid_seq: s.uid_seq, name: s.name })), target: { id: target.id, uid_seq: target.uid_seq, name: target.name }, moved, reason };
 }
 
 // 把 sourceId 名下剩下的所有数据并到 targetId，再删掉 sourceId 这个账号行（须在事务里调用）。
@@ -170,4 +180,109 @@ function absorbLegacyMerged() {
   return n;
 }
 
-module.exports = { mergeUsers, checkMerge, isShellAccount, absorbLegacyMerged };
+// ══════════════════════════════════════════
+// 撤销合并（v3.5.48）
+//   合并时：给每张表建临时触发器，把事务里的每次 INSERT / UPDATE / DELETE 记进 merge_journal（旧行、新行，BLOB 存 hex）。
+//   撤销时：倒着放——插入的删掉、删除的原样插回（同 rowid）、修改的改回去。
+//   修改只改回「合并后没再被动过」的字段（当前值 = 合并后的值）；合并之后又被改过的字段保留现值，计入 kept。
+//   必须按时间倒序撤销：同一批账号后来又参与过、且还没撤销的合并，要先撤销那一次。
+// ══════════════════════════════════════════
+const JOURNAL_SKIP = new Set(['merge_journal', 'merge_records', 'audit_chain', 'sqlite_sequence']);
+const qi = s => '"' + String(s).replace(/"/g, '""') + '"';
+const ql = s => "'" + String(s).replace(/'/g, "''") + "'";
+const colsOf = t => db.prepare(`PRAGMA table_info(${qi(t)})`).all().map(c => c.name);
+function undoDays() {
+  const v = parseInt(process.env.MERGE_UNDO_DAYS, 10);
+  return Number.isFinite(v) ? Math.min(365, Math.max(0, v)) : 30;
+}
+function rowExpr(p, cols) {
+  return 'json_object(' + cols.map(c => `${ql(c)}, json_array(typeof(${p}.${qi(c)}), CASE typeof(${p}.${qi(c)}) WHEN 'blob' THEN hex(${p}.${qi(c)}) ELSE ${p}.${qi(c)} END)`).join(', ') + ')';
+}
+function startJournal(mergeId) {
+  const made = [];
+  try {
+    for (const { name: t, sql } of db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) {
+      if (JOURNAL_SKIP.has(t) || /WITHOUT\s+ROWID/i.test(sql || '')) continue;
+      const cols = colsOf(t); if (!cols.length) continue;
+      const k = '_mj' + made.length;
+      const ins = (op, rid, o, n) => `INSERT INTO merge_journal (merge_id,tbl,op,rid,old_row,new_row) VALUES (${ql(mergeId)},${ql(t)},'${op}',${rid},${o},${n});`;
+      db.exec(`CREATE TEMP TRIGGER ${k}i AFTER INSERT ON main.${qi(t)} BEGIN ${ins('I', 'NEW.rowid', 'NULL', 'NULL')} END`);
+      db.exec(`CREATE TEMP TRIGGER ${k}u AFTER UPDATE ON main.${qi(t)} BEGIN ${ins('U', 'OLD.rowid', rowExpr('OLD', cols), rowExpr('NEW', cols))} END`);
+      db.exec(`CREATE TEMP TRIGGER ${k}d AFTER DELETE ON main.${qi(t)} BEGIN ${ins('D', 'OLD.rowid', rowExpr('OLD', cols), 'NULL')} END`);
+      made.push(k);
+    }
+  } catch (e) { stop(); throw e; }
+  function stop() { for (const k of made) for (const x of 'iud') { try { db.exec(`DROP TRIGGER IF EXISTS temp.${k}${x}`); } catch (_) {} } }
+  return stop;
+}
+const decodeVal = ([type, v]) => type === 'blob' ? Buffer.from(String(v), 'hex') : v;
+const sameVal = (a, b) => (Buffer.isBuffer(a) || Buffer.isBuffer(b)) ? (Buffer.isBuffer(a) && Buffer.isBuffer(b) && a.equals(b)) : a === b;
+
+function getMerge(id) { return db.prepare('SELECT rowid AS _rid, * FROM merge_records WHERE id=?').get(id); }
+function mergeIds(rec) { let src = []; try { src = JSON.parse(rec.sources || '[]'); } catch (_) {} return new Set([rec.target_id, ...src.map(x => x.id)]); }
+// 能否撤销；返回错误文案或 null
+function undoBlocker(rec) {
+  if (!rec) return '合并记录不存在';
+  if (rec.undone_at) return '这次合并已经撤销过了';
+  if (!rec.journal) return '这次合并没有可用的改动日志（超过撤销期限，或发生在可撤销功能上线之前），不能撤销；只能从数据备份恢复';
+  const ids = mergeIds(rec);
+  for (const later of db.prepare('SELECT rowid AS _rid, * FROM merge_records WHERE rowid>? AND undone_at IS NULL').all(rec._rid)) {
+    const lids = mergeIds(later);
+    if ([...ids].some(x => lids.has(x))) return `这些账号之后又参与了一次合并（${String(later.created_at).slice(0, 16)}），请先撤销那一次`;
+  }
+  return null;
+}
+function undoMerge(mergeId, { by = null } = {}) {
+  const rec = getMerge(mergeId);
+  const err = undoBlocker(rec);
+  if (err) { const e = new Error(err); e.status = 400; throw e; }
+  const stats = { restored_rows: 0, kept_fields: 0, skipped: 0 };
+  const colCache = {};
+  const cols = t => colCache[t] || (colCache[t] = new Set(colsOf(t)));
+  db.transaction(() => {
+    db.pragma('defer_foreign_keys = ON');   // 倒放时父子行的顺序不一定对，外键到提交时再查
+    for (const j of db.prepare('SELECT * FROM merge_journal WHERE merge_id=? ORDER BY seq DESC').all(mergeId)) {
+      let have;
+      try { have = cols(j.tbl); } catch (_) { stats.skipped++; continue; }
+      if (!have.size) { stats.skipped++; continue; }
+      const T = qi(j.tbl);
+      if (j.op === 'I') {
+        stats.restored_rows += db.prepare(`DELETE FROM ${T} WHERE rowid=?`).run(j.rid).changes;
+      } else if (j.op === 'D') {
+        const old = JSON.parse(j.old_row || '{}');
+        const keys = Object.keys(old).filter(c => have.has(c));
+        if (db.prepare(`SELECT 1 FROM ${T} WHERE rowid=?`).get(j.rid)) { stats.skipped++; continue; }
+        db.prepare(`INSERT INTO ${T} (rowid, ${keys.map(qi).join(',')}) VALUES (?, ${keys.map(() => '?').join(',')})`).run(j.rid, ...keys.map(c => decodeVal(old[c])));
+        stats.restored_rows++;
+      } else if (j.op === 'U') {
+        const old = JSON.parse(j.old_row || '{}'), neu = JSON.parse(j.new_row || '{}');
+        const cur = db.prepare(`SELECT * FROM ${T} WHERE rowid=?`).get(j.rid);
+        if (!cur) { stats.skipped++; continue; }
+        const sets = [], vals = [];
+        for (const c of Object.keys(old)) {
+          if (!have.has(c) || !neu[c]) continue;
+          const o = decodeVal(old[c]), n = decodeVal(neu[c]);
+          if (sameVal(o, n)) continue;
+          if (sameVal(cur[c], n)) { sets.push(`${qi(c)}=?`); vals.push(o); }
+          else stats.kept_fields++;      // 合并后又被改过：保留现值
+        }
+        if (sets.length) { db.prepare(`UPDATE ${T} SET ${sets.join(',')} WHERE rowid=?`).run(...vals, j.rid); stats.restored_rows++; }
+      }
+    }
+    db.prepare("UPDATE merge_records SET undone_at=datetime('now'), undone_by=?, journal=0 WHERE id=?").run(by, mergeId);
+    db.prepare('DELETE FROM merge_journal WHERE merge_id=?').run(mergeId);
+  })();
+  return { record: getMerge(mergeId), stats };
+}
+// 过了撤销期限的日志清掉（里面有被删账号的完整数据）；保留账号已不存在的也清掉
+function purgeMergeJournals() {
+  const days = undoDays();
+  const rows = db.prepare(`SELECT id FROM merge_records WHERE journal=1 AND (created_at < datetime('now', ?) OR target_id NOT IN (SELECT id FROM users))`).all(`-${days} days`);
+  for (const r of rows) db.transaction(() => {
+    db.prepare('DELETE FROM merge_journal WHERE merge_id=?').run(r.id);
+    db.prepare('UPDATE merge_records SET journal=0 WHERE id=?').run(r.id);
+  })();
+  return rows.length;
+}
+
+module.exports = { mergeUsers, checkMerge, isShellAccount, absorbLegacyMerged, undoMerge, undoBlocker, getMerge, purgeMergeJournals, undoDays };

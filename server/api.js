@@ -1663,9 +1663,10 @@ router.post('/admin/orgs/:sid/members/merge', requireAuth, (req, res) => {
   try {
     const r = userMerge.mergeUsers(target.id, sources.map(u => u.id), {
       onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+      actor: actorOf(req), actorUid: req.user.uid, via: 'org_admin',
     });
     audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req),
-      detail: { org: s.id, via: 'org_admin', sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+      detail: { org: s.id, via: 'org_admin', merge_id: r.merge_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
     res.json({ success: true, ...r });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -2901,8 +2902,9 @@ router.post('/user/kyc/merge', requireAuth, noPublic, (req, res) => {
   try {
     const r = userMerge.mergeUsers(me.id, ids, {
       onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+      actor: actorOf(req), actorUid: req.user.uid, via: 'kyc_self',
     });
-    audit('user.merged', { subject: String(me.uid_seq), actor: actorOf(req), detail: { via: 'kyc_self', sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+    audit('user.merged', { subject: String(me.uid_seq), actor: actorOf(req), detail: { via: 'kyc_self', merge_id: r.merge_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
     res.json({ success: true, ...r });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
@@ -2920,11 +2922,75 @@ router.post('/admin/users/merge', requireAdmin(1), (req, res) => {
   try {
     const r = userMerge.mergeUsers(target.id, sources.map(s => s.id), {
       onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+      actor: actorOf(req), actorUid: req.user.uid, via: 'super_admin',
     });
-    audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: 'super_admin', sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+    audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: 'super_admin', merge_id: r.merge_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
     res.json({ success: true, ...r });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
+// ── 合并记录与撤销合并（v3.5.48）──
+// 系统管理员看全部；其他人只看自己做的合并。撤销：超级管理员，或做这次合并的人本人。
+const MERGE_VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时自动并入空壳账号' };
+function mergeRecordView(req, r) {
+  const t = users.findById.get(r.target_id);
+  let target = {}, sources = [];
+  try { target = JSON.parse(r.target || '{}'); } catch (_) {}
+  try { sources = JSON.parse(r.sources || '[]'); } catch (_) {}
+  const actor = r.actor_uid ? users.findById.get(r.actor_uid) : null;
+  const undoer = r.undone_by ? users.findById.get(r.undone_by) : null;
+  const blocker = userMerge.undoBlocker(r);
+  const mayUndo = isSysAdmin(req, 1) || (r.actor_uid && r.actor_uid === req.user.uid);
+  const showUid = x => x.uid_code || (x.uid_seq != null ? '#' + String(x.uid_seq).padStart(5, '0') : '');
+  return { id: r.id, created_at: r.created_at, via: r.via, via_label: MERGE_VIA[r.via] || r.via || '',
+    actor_name: actor ? `${actor.name}（${uidShow(actor)}）` : (r.actor || ''),
+    target: { id: r.target_id, exists: !!t, name: t ? t.name : target.name, uid: t ? uidShow(t) : showUid(target) },
+    sources: sources.map(x => ({ id: x.id, name: x.name, uid: showUid(x), exists: !!users.findById.get(x.id) })),
+    undone_at: r.undone_at, undone_by_name: undoer ? `${undoer.name}（${uidShow(undoer)}）` : null,
+    undo_until: r.journal ? new Date(Date.parse(String(r.created_at).replace(' ', 'T') + 'Z') + userMerge.undoDays() * 86400e3).toISOString() : null,
+    can_undo: !blocker && !!mayUndo, undo_blocker: blocker };
+}
+// 可撤销功能上线前的合并：从审计存证里找出来，只展示（没有改动日志，不能撤销）
+function legacyMerges(userUidSeq) {
+  const rows = db.prepare(`SELECT subject, actor, detail, created_at FROM audit_chain WHERE event_type='user.merged' ${userUidSeq != null ? 'AND subject=?' : ''} ORDER BY seq DESC LIMIT 200`)
+    .all(...(userUidSeq != null ? [String(userUidSeq)] : []));
+  const out = [];
+  for (const r of rows) {
+    let d = {}; try { d = JSON.parse(r.detail || '{}'); } catch (_) {}
+    if (d.merge_id) continue;
+    const t = db.prepare('SELECT * FROM users WHERE uid_seq=?').get(Number(r.subject));
+    out.push({ legacy: true, created_at: String(r.created_at).replace('T', ' ').slice(0, 19), via: d.via, via_label: MERGE_VIA[d.via] || d.via || '', actor_name: r.actor,
+      target: { id: t ? t.id : null, exists: !!t, name: t ? t.name : '', uid: t ? uidShow(t) : '#' + String(r.subject).padStart(5, '0') },
+      sources: (d.sources || []).map(n => ({ uid: '#' + String(n).padStart(5, '0'), name: '', exists: !!db.prepare('SELECT 1 FROM users WHERE uid_seq=?').get(Number(n)) })),
+      can_undo: false, undo_blocker: '可撤销合并功能上线之前的合并，没有改动日志，不能撤销；只能从数据备份恢复' });
+  }
+  return out;
+}
+router.get('/admin/merges', requireAuth, (req, res) => {
+  const all = isSysAdmin(req, 3);
+  const u = req.query.user ? users.findById.get(String(req.query.user)) : null;
+  if (req.query.user && !u) return res.status(404).json({ error: '用户不存在' });
+  let rows = db.prepare(`SELECT rowid AS _rid, * FROM merge_records ${u ? 'WHERE target_id=?' : ''} ORDER BY rowid DESC LIMIT 200`).all(...(u ? [u.id] : []));
+  if (!all) rows = rows.filter(r => r.actor_uid === req.user.uid);
+  const merges = rows.map(r => mergeRecordView(req, r));
+  if (all) merges.push(...legacyMerges(u ? u.uid_seq : null));
+  res.json({ success: true, undo_days: userMerge.undoDays(), merges });
+});
+router.post('/admin/merges/:id/undo', requireAuth, (req, res) => {
+  const r = userMerge.getMerge(req.params.id);
+  if (!r) return res.status(404).json({ error: '合并记录不存在' });
+  if (!isSysAdmin(req, 1) && r.actor_uid !== req.user.uid) return res.status(403).json({ error: '只有超级管理员或做这次合并的人能撤销' });
+  if (String(req.body?.confirm || '').trim() !== '撤销合并') return res.status(400).json({ error: '请输入「撤销合并」确认' });
+  try {
+    const out = userMerge.undoMerge(r.id, { by: req.user.uid });
+    let src = []; try { src = JSON.parse(r.sources || '[]'); } catch (_) {}
+    const t = users.findById.get(r.target_id);
+    audit('user.merge_undone', { subject: t ? String(t.uid_seq) : r.target_id, actor: actorOf(req), detail: { merge_id: r.id, sources: src.map(x => x.uid_seq), ...out.stats } });
+    res.json({ success: true, stats: out.stats, merge: mergeRecordView(req, userMerge.getMerge(r.id)) });
+  } catch (e) { res.status(e.status || 500).json({ error: '撤销失败：' + e.message }); }
+});
+setInterval(() => { try { userMerge.purgeMergeJournals(); } catch (e) { console.warn('[合并日志清理]', e.message); } }, 6 * 3600e3).unref();
+setTimeout(() => { try { userMerge.purgeMergeJournals(); } catch (_) {} }, 8000).unref();
+
 router.get('/admin/users/:id/siblings', requireAdmin(3), (req, res) => {
   const u = users.findById.get(req.params.id);
   if (!u) return res.status(404).json({ error: '用户不存在' });
@@ -3420,6 +3486,47 @@ router.post('/admin/deletions/:id/checklist', requireAuth, deletionAction((req, 
   if (!isSysAdmin(req, 3) && !hasGrant(req, 'user.delete', target)) deny('无权操作');
   return lifecycle.setChecklist(r.id, String(req.body?.key || ''), !!req.body?.done, req.user.uid);
 }));
+// 批量操作（v3.5.48）：勾选多条后一次执行，逐条返回结果。彻底清除 / 批准 / 恢复要原样输入确认词。
+const BULK_CONFIRM = { purge: '彻底清除', approve: '批准删除', restore: '恢复账号' };
+router.post('/admin/deletions/bulk', requireAuth, (req, res) => {
+  const action = String(req.body?.action || '');
+  if (!['purge', 'approve', 'reject', 'cancel', 'restore'].includes(action)) return res.status(400).json({ error: '不支持的操作' });
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))].slice(0, 200);
+  if (!ids.length) return res.status(400).json({ error: '请先勾选' });
+  if (BULK_CONFIRM[action] && String(req.body?.confirm || '').trim() !== BULK_CONFIRM[action]) return res.status(400).json({ error: `请输入「${BULK_CONFIRM[action]}」确认` });
+  if (action === 'purge' && !isSysAdmin(req, 1)) return res.status(403).json({ error: '彻底清除只有超级管理员能做' });
+  const results = [];
+  for (const id of ids) {
+    const r = lifecycle.getReq(id);
+    const u = r ? users.findById.get(r.user_id) : null;
+    const name = u ? `${u.name}（${uidShow(u)}）` : id;
+    try {
+      if (!r) deny('申请不存在');
+      if (action === 'purge') {
+        if (!u || u.deletion_state !== 'deleted') deny('不是「已删除」状态');
+        lifecycle.purge(u, req.user.uid);
+      } else if (action === 'restore') {
+        if (!u) deny('账号已不存在');
+        if (!hasGrant(req, 'user.delete', u)) deny('无权恢复');
+        lifecycle.restore(u, req.user.uid);
+      } else if (action === 'approve') {
+        if (r.status !== 'pending' || !r.needs_approval) deny('这条不需要审批');
+        if (!canDecideDeletion(req, r)) deny('无权审批');
+        lifecycle.approve(r.id, req.user.uid);
+      } else if (action === 'reject') {
+        if (r.status !== 'pending') deny('不是进行中');
+        if (!canDecideDeletion(req, r)) deny('无权驳回');
+        lifecycle.reject(r.id, req.user.uid);
+      } else if (action === 'cancel') {
+        if (r.status !== 'pending') deny('不是进行中');
+        if (r.requested_by !== req.user.uid && !hasGrant(req, 'user.delete', u)) deny('无权撤回');
+        lifecycle.cancel(r.id, req.user.uid);
+      }
+      results.push({ id, name, ok: true });
+    } catch (e) { results.push({ id, name, ok: false, error: e.message }); }
+  }
+  res.json({ success: results.some(x => x.ok), done: results.filter(x => x.ok).length, failed: results.filter(x => !x.ok).length, results });
+});
 router.post('/admin/users/:id/restore', requireAuth, (req, res) => {
   const u = users.findById.get(req.params.id);
   if (!u) return res.status(404).json({ error: '用户不存在' });

@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.47　　最后更新：2026-10
+> 版本：v3.5.48　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1855,6 +1855,17 @@ DELETE /api/admin/oauth-providers/:id   # 删凭证
 - `config` 的键名与该平台环境变量同名（如 `WECHAT_APP_ID`/`WECHAT_APP_SECRET`/`WECHAT_REDIRECT_URI`）。
 - secret 字段读取时打码为 `••••••••`；提交时打码串一律不覆盖原值（编辑时留着圆点即保留）。
 - 主体停用 → 其下所有凭证的登录入口整体关闭（登录页隐藏 + 后端 `/auth/<平台>?inst=` 直连也拒绝）。
+
+**账号合并记录 / 撤销合并**（v3.5.48）：
+
+```
+GET  /api/admin/merges[?user=<保留账号 id>]   # 合并记录（系统管理员看全部 + 本版之前的只读 legacy 项；其他人只看自己做的）
+POST /api/admin/merges/:id/undo              # 撤销 { confirm:"撤销合并" }（超级管理员或做这次合并的人；期限 MERGE_UNDO_DAYS，默认 30 天）
+```
+
+每条记录：`target{id,name,uid,exists}`、`sources[{id,name,uid,exists}]`、`via`/`via_label`、`actor_name`、`created_at`、`undo_until`、`can_undo`、`undo_blocker`、`undone_at`。撤销后返回 `stats{restored_rows, kept_fields, skipped}`（`kept_fields` = 合并后又被改过、保留现值的字段数）。同一批账号合并过多次要从最近一次往前撤。
+
+**注销与删除批量操作**（v3.5.48）：`POST /api/admin/deletions/bulk { action, ids[], confirm }`，`action` = `purge`（彻底清除，仅超级管理员，confirm「彻底清除」）/ `approve`（confirm「批准删除」）/ `restore`（confirm「恢复账号」）/ `reject` / `cancel`；逐条按单条接口的权限判断，返回 `{ done, failed, results:[{id,name,ok,error}] }`。
 
 **组织文件夹**（v3.5.38）：管理端把组织归类用，一级、不嵌套，一个组织最多在一个文件夹；**只影响管理端展示，不影响登录与权限**。
 
