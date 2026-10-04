@@ -1274,9 +1274,18 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
   res.json({ success: true, data: subjects, folders: orgFolderList().map(f => ({ ...f, ...folderResources(f.id) })), platforms: oauthPlatformsMeta() });
 });
 
+// 组织名称唯一（v3.5.53）：比较时做 NFKC（全角括号 / 空格归一）+ 去空白 + 忽略大小写
+const orgNameKey = (n) => String(n || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+function orgNameTaken(name, exceptId = '') {
+  const k = orgNameKey(name);
+  if (!k) return null;
+  return db.prepare('SELECT id, name FROM oauth_subjects').all().find(r => r.id !== exceptId && orgNameKey(r.name) === k) || null;
+}
 router.post('/admin/oauth-subjects', requireAdmin(2), (req, res) => {
   const { name, enabled, sort_weight } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: '请填写主体名称' });
+  const dup = orgNameTaken(name);
+  if (dup) return res.status(409).json({ error: `组织名称「${dup.name}」已被占用，换一个名称`, code: 'name_taken', existing_id: dup.id });
   const folder = folderIdFromBody(req.body?.folder_id);
   if (folder === false) return res.status(400).json({ error: '文件夹不存在' });
   const id = uuidv4();
@@ -1414,6 +1423,11 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   if (folder !== undefined && (folder || null) !== (row.folder_id || null))
     db.prepare("DELETE FROM folder_cred_orgs WHERE subject_id=? AND provider_id NOT IN (SELECT id FROM oauth_providers WHERE folder_id=?)").run(row.id, folder || '');
   const { name, enabled, sort_weight, require_2fa, ip_allow, login_start, login_end } = req.body || {};
+  if (name != null) {
+    if (!String(name).trim()) return res.status(400).json({ error: '请填写主体名称' });
+    const dup = orgNameKey(name) !== orgNameKey(row.name) && orgNameTaken(name, row.id);
+    if (dup) return res.status(409).json({ error: `组织名称「${dup.name}」已被占用，换一个名称`, code: 'name_taken', existing_id: dup.id });
+  }
   oauthSubjects.update.run(
     name != null ? String(name).trim() : row.name,
     enabled == null ? row.enabled : (enabled ? 1 : 0),
@@ -2512,9 +2526,12 @@ router.post('/admin/folder-dir-sources/:id/create-orgs', requireAdmin(2), async 
     if (c.platform !== 'wecom') return false;
     try { return String(JSON.parse(c.config || '{}').WECOM_CORP_ID || '').toLowerCase() === String(ccfg.corp_id || '').toLowerCase(); } catch (_) { return false; }
   }) : [];
-  const created = [];
+  const created = [], skipped = [], seen = new Set();
   for (const d of depts) {
     const name = d.name || ('部门 ' + d.id);
+    const dup = orgNameTaken(name);
+    if (dup || seen.has(orgNameKey(name))) { skipped.push({ dept_id: d.id, name, reason: '同名组织已存在', existing_id: dup ? dup.id : null }); continue; }
+    seen.add(orgNameKey(name));
     const sid = uuidv4(), uid = uuidv4();
     db.transaction(() => {
       oauthSubjects.insert.run(sid, name, 1, 0);
@@ -2525,6 +2542,7 @@ router.post('/admin/folder-dir-sources/:id/create-orgs', requireAdmin(2), async 
     })();
     created.push({ org_id: sid, name, dept_id: d.id, source_id: uid });
   }
+  if (!created.length) return res.status(409).json({ error: '勾选的部门都已有同名组织，没有新建', skipped });
   audit('folder.orgs_created', { subject: conn.folder_id, actor: actorOf(req), detail: { conn_id: conn.id, orgs: created.map(c => ({ id: c.org_id, name: c.name, dept: c.dept_id })), creds: creds.map(c => c.id) } });
   if (req.body?.run && conn.enabled) {
     for (const c of created) {
@@ -2532,7 +2550,7 @@ router.post('/admin/folder-dir-sources/:id/create-orgs', requireAdmin(2), async 
       catch (e) { c.error = e.message; }
     }
   }
-  res.json({ success: true, created, bound_creds: creds.length });
+  res.json({ success: true, created, skipped, bound_creds: creds.length });
 });
 // 开放 API：把该组织所有启用的同步源依次跑一遍
 router.post('/v1/orgs/:sid/dir-sync/run', requireApiKey('org:sync'), async (req, res) => {

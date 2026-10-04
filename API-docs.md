@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.52　　最后更新：2026-10
+> 版本：v3.5.53　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1866,6 +1866,9 @@ POST   /api/admin/oauth-providers       # 新增凭证到某主体 { subject_id,
 PATCH  /api/admin/oauth-providers/:id   # 改凭证 { label?, config?, enabled?, subject_id? }（subject_id 可把凭证挪到别的主体）
 DELETE /api/admin/oauth-providers/:id   # 删凭证
 ```
+
+> 组织名称唯一（v3.5.53）：新建 / 改名时与已有组织同名（全角半角括号、空格、大小写视为相同）返回 `409 {code:'name_taken', existing_id}`；`POST /api/admin/folder-dir-sources/:id/create-orgs` 遇到同名部门跳过，响应 `skipped:[{dept_id,name,reason}]`，全部同名时 409。
+
 
 **所需等级**：读 Lv.3，写 Lv.2。
 
