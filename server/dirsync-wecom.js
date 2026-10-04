@@ -43,6 +43,7 @@ const wecomCredsOf = { all: (subject) => wecomCredsStmt.all(subject.id, subject.
 const siblingLink = db.prepare(`SELECT l.user_id FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
   WHERE d.parent_id=? AND d.id<>? AND l.ext_id=? LIMIT 1`);
 const sourceGet = db.prepare('SELECT * FROM dir_sync_sources WHERE id=?');
+const blockedDir = db.prepare("SELECT 1 FROM identity_blocks WHERE kind='dir' AND conn_id=? AND ext_id=?");
 
 // 通讯录「连接」字段（放在文件夹那份上）；其余（部门、绑定、默认密码、移出、频率…）是各组织「套用」自己的
 const CONN_KEYS = ['corp_id', 'secret', 'cb_token', 'cb_aes_key', 'push_suspend'];
@@ -267,6 +268,8 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
   for (const m of members) {
     const extId = String(m.userid);
     if (!ACTIVE.has(Number(m.status ?? 1))) { out.skipped++; continue; }
+    // 属于已删除账号的成员（v3.5.49）：不建号、不关联，等他在企业微信里离开后封存自然失效
+    if (blockedDir.get(source.parent_id || source.id, extId)) { out.blocked = (out.blocked || 0) + 1; continue; }
     out.total++;
     seenExt.add(extId);
     const email = String(m.email || m.biz_mail || '').trim().toLowerCase();
@@ -285,6 +288,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
       if (!user && phone && helpers.isPhone(phone)) user = users.findByPhone.get(phone) || null;
       if (user && user.is_public) { out.errors.push({ userid: extId, error: '命中公共账号，跳过' }); continue; }
+      if (user && (user.deletion_state === 'deleted' || user.deletion_state === 'purged')) { out.blocked = (out.blocked || 0) + 1; continue; }   // 按邮箱 / 手机认到了已删除的账号
       // 只拿到 UserId（通讯录同步 Secret 受限）：认不出是不是已有账号。默认照样建号（姓名用 UserId 占位），
       // 一人多号 / 与已有账号重复的，可在组织成员列表里合并；同步源关了 idonly_create 则不建号只计数
       if (!user && m._idOnly && cfg.idonly_create === false) { out.unmatched++; continue; }
@@ -412,9 +416,34 @@ function renameExtId(source, subject, cfg, oldId, newId) {
 
 // 账号停用 / 删除时同步暂停企业微信成员（v3.5.44，同步源开了 push_suspend 才做）：user/update enable=0/1。
 // 需要有通讯录写权限的 Secret（「通讯录同步」Secret；自建应用 Secret 不能改成员）。
+// 注销 / 删除账号前核验「该成员已离职」（v3.5.49）：gone 没有这个人 / disabled 已禁用 / quit 已退出 / active 在职 / unknown 查不到
+async function memberStatus(cfg, userid) {
+  const access_token = await token(cfg);
+  try {
+    const m = await call('GET', '/cgi-bin/user/get', { access_token, userid: String(userid) });
+    const st = Number(m.status ?? 1);
+    return { status: st === 2 ? 'disabled' : st === 5 ? 'quit' : 'active' };
+  } catch (e) {
+    if (e.errcode === 60111) return { status: 'gone' };
+    if (e.errcode !== FORBIDDEN) throw e;
+    // 受限 Secret 读不了成员详情：只能看 UserId 还在不在通讯录里
+    const ids = new Set(); let cursor = '';
+    for (let i = 0; i < 100; i++) {
+      const j = await call('POST', '/cgi-bin/user/list_id', { access_token }, { cursor, limit: 10000 });
+      for (const x of j.dept_user || []) ids.add(String(x.userid));
+      cursor = j.next_cursor; if (!cursor) break;
+    }
+    return ids.has(String(userid)) ? { status: 'unknown', error: '受限的「通讯录同步」Secret 读不到成员是否禁用（这个 UserId 仍在通讯录里）' } : { status: 'gone' };
+  }
+}
+// 在企业微信里删除成员（需要有通讯录写权限的 Secret）
+async function deleteMember(cfg, userid) {
+  const access_token = await token(cfg);
+  await call('GET', '/cgi-bin/user/delete', { access_token, userid: String(userid) });
+}
 async function setMemberEnabled(cfg, userid, enabled) {
   const access_token = await token(cfg);
   await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), enable: enabled ? 1 : 0 });
 }
 
-module.exports = { effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+module.exports = { memberStatus, deleteMember, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

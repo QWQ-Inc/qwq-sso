@@ -518,6 +518,20 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS merge_journal (
   new_row  TEXT
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_merge_journal ON merge_journal(merge_id, seq)'); } catch(_) {}
+// v3.5.49：账号删除执行时，三方登录绑定 / 外部通讯录映射从账号上摘掉（快照存在申请里，恢复时放回），
+// 并把这些外部身份封存：保留期内不能再用它登录，同步也不会给它重新建号 / 关联。彻底清除时随账号一起删掉。
+try { db.exec('ALTER TABLE account_deletions ADD COLUMN ext_snapshot TEXT'); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS identity_blocks (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,                 -- 被删除的账号（彻底清除时随之删除）
+  deletion_id TEXT,
+  kind        TEXT NOT NULL,                 -- oauth（三方登录身份）/ dir（通讯录成员）
+  provider    TEXT,                          -- oauth：provider key
+  conn_id     TEXT,                          -- dir：通讯录连接（文件夹连接或组织自己的同步源）
+  ext_id      TEXT NOT NULL,                 -- open_id / UserId
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_identity_blocks ON identity_blocks(kind, ext_id)'); } catch(_) {}
 // 应用是否「重要、注销前须交接」（v3.5.44）
 try { db.exec('ALTER TABLE apps ADD COLUMN handover_required INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // v3.5.43：外部系统里的姓名（「应用内姓名」，不可靠，只展示；真实姓名以实名认证为准）

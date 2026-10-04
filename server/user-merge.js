@@ -35,6 +35,7 @@ function checkMerge(target, sources) {
   if (!target) return '保留账号不存在';
   if (target.is_public) return '公共账号不能参与合并';
   if (target.status === 'disabled' && target.merged_into) return '保留账号已被合并到别的账号';
+  if (target.deletion_state) return '保留账号正在注销或已删除，不能参与合并';
   if (!sources.length) return '请至少选择一个要合并的账号';
   if (sources.length > 20) return '一次最多合并 20 个账号';
   const seen = new Set([target.id]);
@@ -45,6 +46,7 @@ function checkMerge(target, sources) {
     if (s.is_public) return '公共账号不能参与合并';
     if (s.role === 'admin') return `「${s.name}」是管理员账号，不能被合并；请把它选为保留账号`;
     if (s.merged_into) return `「${s.name}」已经合并过了`;
+    if (s.deletion_state) return `「${s.name}」正在注销或已删除，不能合并`;
     if (s.kyc_verified && target.kyc_verified && s.kyc_pseudonym && target.kyc_pseudonym && s.kyc_pseudonym !== target.kyc_pseudonym)
       return `「${s.name}」与保留账号实名的不是同一个人，不能合并`;
   }

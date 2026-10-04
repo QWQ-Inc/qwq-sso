@@ -2045,7 +2045,7 @@
 
   const urlErr = new URLSearchParams(location.search).get('error');
   if (urlErr) {
-    const msgs={wechat_failed:'微信登录失败',wecom_failed:'企业微信登录失败',feishu_failed:'飞书登录失败',dingtalk_failed:'钉钉登录失败',douyin_failed:'抖音登录失败',kuaishou_failed:'快手登录失败',xiaohongshu_failed:'小红书登录失败',bilibili_failed:'Bilibili 登录失败',google_failed:'Google 登录失败',apple_failed:'Apple 登录失败',account_disabled:'账号已停用，请联系管理员',invalid_state:'登录已过期，请重新发起',ip_denied:'当前网络（IP）不在该登录主体的允许范围内',time_denied:'当前时间不在该登录主体的允许登录时段内',need_2fa:'该登录主体要求两步验证，请先用其他方式登录并在账号设定里开启两步验证后再试'};
+    const msgs={wechat_failed:'微信登录失败',wecom_failed:'企业微信登录失败',feishu_failed:'飞书登录失败',dingtalk_failed:'钉钉登录失败',douyin_failed:'抖音登录失败',kuaishou_failed:'快手登录失败',xiaohongshu_failed:'小红书登录失败',bilibili_failed:'Bilibili 登录失败',google_failed:'Google 登录失败',apple_failed:'Apple 登录失败',account_disabled:'账号已停用，请联系管理员',account_deleted:'这个三方账号对应的账号已注销 / 删除，不能再用它登录',invalid_state:'登录已过期，请重新发起',ip_denied:'当前网络（IP）不在该登录主体的允许范围内',time_denied:'当前时间不在该登录主体的允许登录时段内',need_2fa:'该登录主体要求两步验证，请先用其他方式登录并在账号设定里开启两步验证后再试'};
     showTip('login','error',msgs[urlErr]||('登录失败：'+urlErr));
   }
 

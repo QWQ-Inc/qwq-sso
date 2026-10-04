@@ -4971,11 +4971,35 @@ async function renderUserSiblings(u) {
 }
 
 // ── 账号注销 / 删除（v3.5.44）──
-function _delChecklistHtml(list, onToggle) {
+// v3.5.49：交接清单由系统核验——外部账号查企业微信、职责 / 设备查数据库；只有「重要应用」由管理员确认。
+// opts: { admin, onToggle(key, done), onAction(key, action) }（函数名，挂在 window 上）
+function _delChecklistHtml(list, opts = {}) {
   if (!list || !list.length) return '<div style="color:var(--txd);">没有需要交接的重要应用。</div>';
-  return list.map(i => `<label style="display:flex;gap:6px;align-items:flex-start;padding:3px 0;color:var(--txt);cursor:pointer;">
-    <input type="checkbox" ${i.done ? 'checked' : ''} ${onToggle ? `onchange='${onToggle}(${JSON.stringify(i.key)}, this.checked)'` : 'disabled'} style="margin-top:2px;">
-    <span>${esc(i.label)}${i.done && i.done_at ? ` <span style="color:var(--txd);font-size:10px;">（${esc(fmtTime(i.done_at))} 标记完成）</span>` : ''}</span></label>`).join('');
+  const btn = (i, act, text, danger) => opts.onAction ? `<button class="btn" style="font-size:10px;padding:1px 7px;${danger ? 'color:var(--err);border-color:var(--err);' : ''}" onclick='${opts.onAction}(${JSON.stringify(i.key)}, ${JSON.stringify(act)})'>${text}</button>` : '';
+  return list.map(i => {
+    const c = i.check || String(i.key).split(':')[0];
+    const pending = i.note == null;   // 预检（还没申请）：只列出来
+    const icon = pending ? '•' : i.done ? '<span style="color:#1F7A3A;">✓</span>' : '<span style="color:var(--err);">✗</span>';
+    let acts = '';
+    if (!pending && !i.done) {
+      if (c === 'ext') acts = btn(i, 'recheck', '重新核验') + (opts.admin ? btn(i, 'disable', '在企业微信中禁用') + btn(i, 'remove_member', '在企业微信中删除…', true) : '');
+      else if ((c === 'orgadmin' || c === 'groupadmin') && opts.admin) acts = btn(i, 'remove_role', '取消他的管理员职责');
+      else if (c === 'device' && opts.admin) acts = btn(i, 'release_device', '从他名下回收');
+    }
+    const tick = c === 'app' && !pending && opts.admin && opts.onToggle
+      ? `<label style="font-size:11px;cursor:pointer;margin-left:4px;"><input type="checkbox" ${i.done ? 'checked' : ''} onchange='${opts.onToggle}(${JSON.stringify(i.key)}, this.checked)' style="vertical-align:-2px;"> 已交接</label>` : '';
+    return `<div style="display:flex;gap:6px;align-items:flex-start;padding:4px 0;color:var(--txt);flex-wrap:wrap;">
+      <span style="width:12px;flex:none;">${icon}</span>
+      <span style="flex:1;min-width:200px;">${esc(i.label)}${i.note ? ` <span style="color:var(--txd);font-size:10px;">（${esc(i.note)}）</span>` : ''}</span>
+      <span style="display:flex;gap:4px;flex-wrap:wrap;">${acts}${tick}</span></div>`;
+  }).join('');
+}
+async function _delItemAction(url, key, action, after) {
+  if (action === 'remove_member' && !confirm('在企业微信里删除这个成员？这是企业微信里的操作，删除后在企业微信那边无法恢复。')) return;
+  showToast(action === 'recheck' ? '正在核验…' : '处理中…');
+  const { ok, data } = await api('POST', url, { key, action });
+  if (!ok) showToast(data?.error || '操作失败'); else showToast('已更新');
+  after();
 }
 const _fmtDay = t => t ? esc(String(fmtTime(t)).slice(0, 16)) : '—';
 // 本人：账号设定里的「注销账号」
@@ -4993,12 +5017,12 @@ async function loadAcctDeletion(u) {
     body.innerHTML = `<div style="padding:10px;border:1px solid #E8C26A;background:rgba(232,194,106,.12);border-radius:6px;color:var(--txt);line-height:1.8;">
         ${p.kind === 'self' ? '你已申请注销账号' : '管理员已发起删除你的账号'}，${waiting ? '交接清单完成后' : ''}将于 <b>${_fmtDay(p.execute_at)}</b> ${waiting ? '起' : ''}执行。
         执行后账号停用，${c.retain_days} 天内可联系管理员恢复，之后彻底删除。</div>
-      ${p.checklist.length ? `<div style="margin:10px 0 4px;color:var(--txm);font-weight:600;">交接清单（全部完成才会执行）</div>${_delChecklistHtml(p.checklist, p.kind === 'self' ? 'toggleMyDelItem' : null)}` : ''}
+      ${p.checklist.length ? `<div style="margin:10px 0 4px;color:var(--txm);font-weight:600;">交接清单（全部完成才会执行）</div>${_delChecklistHtml(p.checklist, { onAction: 'myDelItemAction' })}` : ''}
       ${p.kind === 'self' ? '<div style="margin-top:10px;"><button class="btn primary" style="font-size:12px;" onclick="cancelMyDeletion()">撤销注销</button></div>' : ''}`;
     return;
   }
   body.innerHTML = `<div style="line-height:1.8;">注销后有 <b>${c.cooldown_days} 天</b>冷静期，期间账号照常可用、可随时撤销；冷静期满后账号停用，<b>${c.retain_days} 天</b>内可联系管理员恢复，之后账号和个人数据彻底删除、无法找回。</div>
-    ${data.preflight.length ? `<div style="margin:8px 0 4px;color:var(--txm);font-weight:600;">注销前需要交接：</div>${_delChecklistHtml(data.preflight.map(i => ({ ...i, done: false })), null)}<div style="margin-top:4px;">申请后可在这里逐项标记完成。</div>` : ''}
+    ${data.preflight.length ? `<div style="margin:8px 0 4px;color:var(--txm);font-weight:600;">注销前需要交接：</div>${_delChecklistHtml(data.preflight, {})}<div style="margin-top:4px;">这些项由系统核验（企业微信账号要在企业微信里删除或禁用；职责、设备要管理员处理），不能自己勾选；三方登录绑定会在删除时自动解除。</div>` : ''}
     <div style="margin-top:10px;"><button class="btn" style="font-size:12px;color:var(--err);border-color:var(--err);" onclick="openMyDeletion()">注销账号…</button></div>`;
 }
 async function openMyDeletion() {
@@ -5014,11 +5038,7 @@ async function cancelMyDeletion() {
   const { ok, data } = await api('DELETE', '/user/account/deletion');
   if (ok) { showToast('已撤销注销'); loadProfile(); } else showToast('撤销失败：' + (data?.error || '未知错误'));
 }
-async function toggleMyDelItem(key, done) {
-  const { ok, data } = await api('POST', '/user/account/deletion/checklist', { key, done });
-  if (!ok) showToast('操作失败：' + (data?.error || '未知错误'));
-  loadProfile();
-}
+function myDelItemAction(key, action) { _delItemAction('/user/account/deletion/item', key, action, () => loadProfile()); }
 // 管理端：用户详情里的删除区
 async function renderUserDeletionSection(u) {
   const box = document.getElementById('ud-del-' + u.id);
@@ -5030,6 +5050,7 @@ async function renderUserDeletionSection(u) {
   if (data.state === 'deleted') {
     html = `<div style="padding:10px;border:1px solid var(--err);border-radius:6px;margin-bottom:10px;line-height:1.8;color:var(--txt);">
       账号已于 ${_fmtDay(data.deleted_at)} 删除，<b>${_fmtDay(data.purge_at)}</b> 将彻底清除（之前可恢复）。
+      ${(data.blocked || []).length ? `<div style="margin-top:4px;font-size:12px;">已解除并封存的外部账号（保留期内不能再用来登录，同步也不会认回来；恢复账号时放回）：${data.blocked.map(b => esc(b.where) + ' <b>' + esc(b.ext_id) + '</b>').join('、')}</div>` : '<div style="margin-top:4px;font-size:12px;color:var(--txd);">没有挂着的三方登录 / 通讯录账号。</div>'}
       <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
         ${data.can_restore ? `<button class="btn primary" style="font-size:11px;" onclick="admRestoreUser('${u.id}')">恢复账号</button>` : ''}
         ${data.can_purge ? `<button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="admPurgeUser('${u.id}')">立即彻底清除…</button>` : ''}
@@ -5038,8 +5059,9 @@ async function renderUserDeletionSection(u) {
     html = `<div style="padding:10px;border:1px solid #E8C26A;background:rgba(232,194,106,.12);border-radius:6px;margin-bottom:10px;line-height:1.8;color:var(--txt);">
       ${p.kind === 'self' ? '用户本人申请注销' : `管理员 ${esc(p.requested_by_name || '')} 发起删除`}${p.reason ? '（' + esc(p.reason) + '）' : ''}，
       ${p.needs_approval && !p.approved_by ? `待上级审批，或 <b>${_fmtDay(p.execute_at)}</b> 等待期满后执行` : `最早 <b>${_fmtDay(p.execute_at)}</b> 执行`}${p.checklist_done ? '' : '，交接清单完成后才会执行'}。
-      ${p.checklist.length ? `<div style="margin-top:6px;font-weight:600;color:var(--txm);">交接清单</div>${_delChecklistHtml(p.checklist, `admDelItem_${p.id.replace(/-/g, '')}`)}` : ''}
+      ${p.checklist.length ? `<div style="margin-top:6px;font-weight:600;color:var(--txm);">交接清单</div>${_delChecklistHtml(p.checklist, { admin: true, onToggle: `admDelItem_${p.id.replace(/-/g, '')}`, onAction: `admDelAct_${p.id.replace(/-/g, '')}` })}` : ''}
       <div style="margin-top:6px;"><button class="btn" style="font-size:11px;" onclick="goto('adm-deletions')">去审批 / 撤回</button></div></div>`;
+    window[`admDelAct_${p.id.replace(/-/g, '')}`] = (key, action) => _delItemAction(`/admin/deletions/${p.id}/item`, key, action, () => loadAdmUserDetail(u.id));
     window[`admDelItem_${p.id.replace(/-/g, '')}`] = async (key, done) => {
       const r = await api('POST', `/admin/deletions/${p.id}/checklist`, { key, done });
       if (!r.ok) showToast('操作失败：' + (r.data?.error || '未知错误'));
@@ -5091,7 +5113,7 @@ async function loadDeletions() {
       <div style="margin-top:4px;line-height:1.8;">${r.kind === 'self' ? '本人申请注销' : '管理员删除：' + esc(r.requested_by_name || '')}${r.reason ? ' · ' + esc(r.reason) : ''} · 发起 ${_fmtDay(r.created_at)}
         ${r.status === 'pending' ? ` · ${r.needs_approval && !r.approved_by ? '待审批 / ' : ''}最早 ${_fmtDay(r.execute_at)} 执行 · 交接 ${done}/${r.checklist.length}` : ''}
         ${r.approved_by_name ? ' · 审批人 ' + esc(r.approved_by_name) : ''}${r.status === 'done' && r.user?.purge_at ? ' · ' + _fmtDay(r.user.purge_at) + ' 彻底清除' : ''}</div>
-      ${r.status === 'pending' && r.checklist.length ? `<details style="margin-top:4px;"><summary style="cursor:pointer;">交接清单</summary>${_delChecklistHtml(r.checklist, `delItem_${r.id.replace(/-/g, '')}`)}</details>` : ''}
+      ${r.status === 'pending' && r.checklist.length ? `<details style="margin-top:4px;" ${r.checklist_done ? '' : 'open'}><summary style="cursor:pointer;">交接清单（${done}/${r.checklist.length}）</summary>${_delChecklistHtml(r.checklist, { admin: true, onToggle: `delItem_${r.id.replace(/-/g, '')}`, onAction: `delAct_${r.id.replace(/-/g, '')}` })}</details>` : ''}
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
         ${r.can_decide ? `<button class="btn primary" style="font-size:11px;" onclick="decideDeletion('${r.id}','approve')">批准</button><button class="btn" style="font-size:11px;" onclick="decideDeletion('${r.id}','reject')">驳回</button>` : ''}
         ${r.status === 'pending' ? `<button class="btn" style="font-size:11px;" onclick="decideDeletion('${r.id}','cancel')">撤回</button>` : ''}
@@ -5100,6 +5122,7 @@ async function loadDeletions() {
   }).join('') : '<div style="padding:8px 0;">没有记录。</div>';
   _delRows = rows; _delBulkBar();
   rows.filter(r => r.status === 'pending').forEach(r => {
+    window[`delAct_${r.id.replace(/-/g, '')}`] = (key, action) => _delItemAction(`/admin/deletions/${r.id}/item`, key, action, () => loadDeletions());
     window[`delItem_${r.id.replace(/-/g, '')}`] = async (key, done) => {
       const x = await api('POST', `/admin/deletions/${r.id}/checklist`, { key, done });
       if (!x.ok) showToast('操作失败：' + (x.data?.error || '未知错误'));
@@ -6222,7 +6245,7 @@ async function openSubjectApps(sid, name) {
 const AUDIT_EVENT_LABEL = {
   'backup.run':'数据备份', 'backup.target_added':'添加备份目标', 'backup.target_removed':'删除备份目标', 'backup.downloaded':'下载备份',
   'account.deletion_requested':'申请注销 / 删除账号', 'account.deletion_approved':'批准删除账号', 'account.deletion_cancelled':'撤回注销 / 删除', 'account.deletion_rejected':'驳回删除账号',
-  'account.deleted':'账号已删除', 'account.restored':'恢复账号', 'account.purged':'彻底清除账号', 'user.merge_undone':'撤销合并', 'account.external_suspended':'同步禁用企业微信成员', 'account.external_resumed':'同步启用企业微信成员', 'kyc.account_limit':'同一实名账号数超限',
+  'account.deleted':'账号已删除', 'account.restored':'恢复账号', 'account.purged':'彻底清除账号', 'account.external_removed':'在企业微信中删除成员', 'account.handover_done':'交接项处理', 'user.merge_undone':'撤销合并', 'account.external_suspended':'同步禁用企业微信成员', 'account.external_resumed':'同步启用企业微信成员', 'kyc.account_limit':'同一实名账号数超限',
   'admin.grant_added':'授予管理权限', 'admin.grant_removed':'撤销管理权限', 'user.merged':'合并账号',
   'site.verify_file_added':'添加域名验证文件', 'site.verify_file_replaced':'替换域名验证文件', 'site.verify_file_extended':'域名验证文件延期', 'site.verify_file_removed':'删除域名验证文件',
   'kyc.verified':'实名认证通过', 'kyc.reverified':'二次实名通过', 'kyc.session_started':'发起实名会话',

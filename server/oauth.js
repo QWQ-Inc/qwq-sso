@@ -166,6 +166,13 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   // 0. 绑定模式：把本次三方身份绑到「当前登录用户」（stash-bind 存进 session），而不是登录/建号
   const creq = reqCtx.getStore();
   if (creq) creq._loginProviderKey = provider;   // 供 loginSuccess 解析登录主体 + 执行其策略
+  // 属于已删除账号的三方身份（v3.5.49 封存）：保留期内不能登录、不能被绑到别的账号、也不会自动建新号
+  const blocked = () => { if (creq) creq._blockedIdentity = true; return null; };
+  if (db.prepare("SELECT 1 FROM identity_blocks WHERE kind='oauth' AND provider=? AND ext_id=?").get(provider, openId)) {
+    if (creq?.session?.bindUserId) { creq._bind = { error: '这个三方账号属于已删除的账号，不能绑定' }; return users.findById.get(creq.session.bindUserId) || null; }
+    return blocked();
+  }
+  const isDeleted = u => u && (u.deletion_state === 'deleted' || u.deletion_state === 'purged');
   const bindUserId = creq?.session?.bindUserId;
   const bindOk = bindUserId && (!creq.session.bindExpire || creq.session.bindExpire > Date.now());
   if (bindOk) {
@@ -213,6 +220,7 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
           WHERE u.email=? AND o.provider IN (${ph})`).get(email, ...keys);
       }
       if (match) {
+        if (isDeleted(match)) return blocked();   // 认到的是已删除的账号：不往它身上挂新绑定
         oauth.bind.run(uuidv4(), match.id, provider, openId, unionId);
         return match;
       }
@@ -225,6 +233,7 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   if (email) {
     const existing = users.findByEmail.get(email);
     if (existing) {
+      if (isDeleted(existing)) return blocked();
       oauth.bind.run(uuidv4(), existing.id, provider, openId, unionId);
       return existing;
     }
@@ -245,6 +254,7 @@ function loginSuccess(res, user) {
       ? '/dashboard.html?bind=success' + (b.merged ? '&merged=1' : '')
       : `/dashboard.html?bind=error&msg=${encodeURIComponent(b.error || '绑定失败')}`);
   }
+  if (creq && creq._blockedIdentity) return res.redirect('/login.html?error=account_deleted');
   if (!user || user.status === 'disabled') {
     return res.redirect('/login.html?error=account_disabled');
   }
@@ -867,3 +877,4 @@ router.get('/csdn', (req, res) => {
 });
 
 module.exports = router;
+router.findOrCreate = findOrCreate;   // 测试用

@@ -2155,7 +2155,7 @@ async function runDirSource(src, actor, opts = {}) {
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
       removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, bind_providers: out.bind_providers,
       bound: out.bound, pw_set: out.pw_set, kept: out.kept, conflicts: out.conflicts, force: out.force,
-      limited: out.limited, unmatched: out.unmatched, created_idonly: out.created_idonly || 0, warning: out.warning,
+      limited: out.limited, unmatched: out.unmatched, created_idonly: out.created_idonly || 0, blocked: out.blocked || 0, warning: out.warning,
       errors: out.errors.slice(0, 20) };
     dirSources.setState.run(JSON.stringify(state), src.id);
     audit('org.dir_synced', { subject: subject.id, actor, detail: { source: src.type, source_id: src.id, label: src.label, force: out.force, total: out.total, created: out.created, added: out.added, removed: out.removed, bound: out.bound, pw_set: out.pw_set, kept: out.kept, errors: out.errors.length } });
@@ -3362,6 +3362,8 @@ lifecycle.init({
 });
 setInterval(() => { try { lifecycle.tick(); } catch (e) { console.warn('[账号注销定时任务]', e.message); } }, 3600e3).unref();
 setTimeout(() => { try { lifecycle.tick(); } catch (_) {} }, 5000).unref();
+// v3.5.49：升级前已删除、三方绑定 / 通讯录映射还挂着的账号，启动时补摘并封存
+setTimeout(() => { try { const n = lifecycle.detachLegacyDeleted(); if (n) console.log(`[删除账号] 已为 ${n} 个已删除账号解除三方绑定并封存`); } catch (e) { console.warn('[删除账号补摘]', e.message); } }, 4000).unref();
 // v3.5.46.1：升级前合并留下的「已合并」账号，启动时并掉（历史记录转给保留账号后删除）
 setTimeout(() => { try { const n = userMerge.absorbLegacyMerged(); if (n) console.log(`[合并账号清理] 已并掉 ${n} 个旧的已合并账号`); } catch (e) { console.warn('[合并账号清理]', e.message); } }, 3000).unref();
 
@@ -3419,12 +3421,55 @@ router.delete('/user/account/deletion', requireAuth, noPublic, (req, res) => {
   lifecycle.cancel(r.id, req.user.uid);
   res.json({ success: true });
 });
+// v3.5.49：本人不能自己勾交接项（勾选证明不了什么）——外部账号由系统实时核验，「重要应用」由管理员确认
 router.post('/user/account/deletion/checklist', requireAuth, noPublic, (req, res) => {
+  res.status(403).json({ error: '交接项不能自己勾选：企业微信等外部账号由系统核验（在企业微信里删除或禁用后点「重新核验」），重要应用由管理员确认' });
+});
+router.post('/user/account/deletion/item', requireAuth, noPublic, async (req, res) => {
   const r = lifecycle.pendingOf(req.user.uid);
-  if (!r || r.kind !== 'self') return res.status(404).json({ error: '没有进行中的注销申请' });
-  try { res.json({ success: true, pending: deletionView(lifecycle.setChecklist(r.id, String(req.body?.key || ''), !!req.body?.done, req.user.uid)) }); }
+  if (!r) return res.status(404).json({ error: '没有进行中的注销申请' });
+  if (req.body?.action !== 'recheck') return res.status(403).json({ error: '只能重新核验；其他处理请联系管理员' });
+  try { await deletionItemAction(r, String(req.body?.key || ''), 'recheck', req, false); res.json({ success: true, pending: deletionView(lifecycle.getReq(r.id)) }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
+// 交接项处理（v3.5.49）：recheck 实时查企业微信成员状态；disable / remove_member 在企业微信里禁用 / 删除该成员（需有通讯录写权限的 Secret）；
+// remove_role 取消组织 / 分组管理员；release_device 把设备从他名下拿掉。处理完由系统重新核验，不靠勾选
+async function deletionItemAction(r, key, action, req, admin) {
+  const it = r.checklist.find(i => i.key === key);
+  if (!it) throw Object.assign(new Error('交接项不存在'), { status: 404 });
+  if (r.status !== 'pending') throw Object.assign(new Error('申请已结束'), { status: 400 });
+  const target = users.findById.get(r.user_id);
+  const bad = msg => { throw Object.assign(new Error(msg), { status: 400 }); };
+  if (it.check === 'ext') {
+    if (!['recheck', 'disable', 'remove_member'].includes(action)) bad('不支持的操作');
+    const src = dirSources.get.get(it.source_id);
+    if (!src) { lifecycle.setVerification(r.id, key, { status: 'gone' }); return; }
+    const cfg = dirsyncWecom.effectiveCfg(src);
+    if (action !== 'recheck') {
+      if (!admin) bad('只有管理员能在企业微信里操作成员');
+      try {
+        if (action === 'disable') await dirsyncWecom.setMemberEnabled(cfg, it.ext_id, false);
+        else await dirsyncWecom.deleteMember(cfg, it.ext_id);
+      } catch (e) { bad((action === 'disable' ? '禁用' : '删除') + '失败：' + e.message + '（需要有通讯录写权限的「通讯录同步」Secret；也可以直接到企业微信后台处理后再点「重新核验」）'); }
+      audit(action === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(target?.uid_seq || ''), actor: actorOf(req), detail: { source: src.id, ext_id: it.ext_id, deletion: r.id } });
+    }
+    let v;
+    // 自己刚调企业微信禁用 / 删除成功，就是证据（受限的「通讯录同步」Secret 能改成员、却读不到成员状态）
+    if (action === 'disable') v = { status: 'disabled', via: 'api' };
+    else if (action === 'remove_member') v = { status: 'gone', via: 'api' };
+    else { try { v = await dirsyncWecom.memberStatus(cfg, it.ext_id); } catch (e) { v = { status: 'error', error: String(e.message || e).slice(0, 200) }; } }
+    lifecycle.setVerification(r.id, key, v);
+    return;
+  }
+  if (!admin) bad('这一项要管理员处理');
+  const id = key.split(':').slice(1).join(':');
+  if (it.check === 'orgadmin' && action === 'remove_role') db.prepare('DELETE FROM oauth_subject_admins WHERE subject_id=? AND user_id=?').run(id, r.user_id);
+  else if (it.check === 'groupadmin' && action === 'remove_role') db.prepare('DELETE FROM group_admins WHERE group_id=? AND user_id=?').run(id, r.user_id);
+  else if (it.check === 'device' && action === 'release_device') db.prepare("UPDATE devices SET owner_user_id=NULL, updated_at=datetime('now') WHERE id=? AND owner_user_id=?").run(id, r.user_id);
+  else bad('不支持的操作');
+  audit('account.handover_done', { subject: String(target?.uid_seq || ''), actor: actorOf(req), detail: { deletion: r.id, key, action } });
+  lifecycle.tryExecute(r.id);
+}
 
 // 管理端：删除预检（交接清单 + 会直接执行还是要审批）
 router.get('/admin/users/:id/deletion', requireAuth, (req, res) => {
@@ -3435,7 +3480,13 @@ router.get('/admin/users/:id/deletion', requireAuth, (req, res) => {
   res.json({ success: true, config: lifecycle.config(), mode, pending: deletionView(lifecycle.pendingOf(u.id)),
     preflight: lifecycle.preflight(u), state: u.deletion_state || null, deleted_at: u.deleted_at || null, purge_at: u.purge_at || null,
     can_restore: u.deletion_state === 'deleted' && hasGrant(req, 'user.delete', u),
-    can_purge: u.deletion_state === 'deleted' && isSysAdmin(req, 1) });
+    can_purge: u.deletion_state === 'deleted' && isSysAdmin(req, 1),
+    // 删除时摘下并封存的外部身份（v3.5.49）：保留期内不能用它们登录、同步也不会认回来
+    blocked: db.prepare('SELECT kind, provider, conn_id, ext_id, created_at FROM identity_blocks WHERE user_id=? ORDER BY created_at').all(u.id).map(b => {
+      const src = b.conn_id ? dirSources.get.get(b.conn_id) : null;
+      const plat = b.provider ? String(b.provider).split(':')[0] : 'wecom';
+      return { kind: b.kind, ext_id: b.ext_id, where: b.kind === 'dir' ? `${src ? (src.label || '通讯录') : '通讯录'}（通讯录成员）` : `${OAUTH_META[plat]?.label || plat}登录`, at: b.created_at };
+    }) });
 });
 // 管理端：删除账号（强确认：原样输入对方 UID）
 router.post('/admin/users/:id/delete', requireAuth, (req, res) => {
@@ -3481,6 +3532,14 @@ router.post('/admin/deletions/:id/cancel', requireAuth, deletionAction((req, r) 
   if (r.requested_by !== req.user.uid && !hasGrant(req, 'user.delete', target)) deny('只有发起人、超级管理员或被授权的人能撤回');
   return lifecycle.cancel(r.id, req.user.uid);
 }));
+router.post('/admin/deletions/:id/item', requireAuth, async (req, res) => {
+  const r = lifecycle.getReq(req.params.id);
+  if (!r) return res.status(404).json({ error: '申请不存在' });
+  const target = users.findById.get(r.user_id);
+  if (!isSysAdmin(req, 3) && !hasGrant(req, 'user.delete', target)) return res.status(403).json({ error: '无权操作' });
+  try { await deletionItemAction(r, String(req.body?.key || ''), String(req.body?.action || ''), req, true); res.json({ success: true, deletion: deletionView(lifecycle.getReq(r.id)) }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
 router.post('/admin/deletions/:id/checklist', requireAuth, deletionAction((req, r) => {
   const target = users.findById.get(r.user_id);
   if (!isSysAdmin(req, 3) && !hasGrant(req, 'user.delete', target)) deny('无权操作');

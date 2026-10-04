@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.48　　最后更新：2026-10
+> 版本：v3.5.49　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1864,6 +1864,15 @@ POST /api/admin/merges/:id/undo              # 撤销 { confirm:"撤销合并" }
 ```
 
 每条记录：`target{id,name,uid,exists}`、`sources[{id,name,uid,exists}]`、`via`/`via_label`、`actor_name`、`created_at`、`undo_until`、`can_undo`、`undo_blocker`、`undone_at`。撤销后返回 `stats{restored_rows, kept_fields, skipped}`（`kept_fields` = 合并后又被改过、保留现值的字段数）。同一批账号合并过多次要从最近一次往前撤。
+
+**注销 / 删除的交接项**（v3.5.49）：交接清单由系统核验，不能手动勾选（只有 `check:"app"` 的重要应用项由管理员 `POST /api/admin/deletions/:id/checklist {key, done}` 确认）。每项带 `check`（ext / bind / orgadmin / groupadmin / device / app）、`done`、`note`。
+
+```
+POST /api/admin/deletions/:id/item     { key, action }   # recheck / disable / remove_member（企业微信成员）、remove_role、release_device
+POST /api/user/account/deletion/item   { key, action:"recheck" }   # 本人只能重新核验
+```
+
+执行删除时，账号的三方登录绑定与通讯录映射被摘除并封存（保留期内不能用来登录、同步不认回），`GET /api/admin/users/:id/deletion` 的 `blocked[]` 列出被封存的外部账号；恢复时放回，彻底清除时一并删除。
 
 **注销与删除批量操作**（v3.5.48）：`POST /api/admin/deletions/bulk { action, ids[], confirm }`，`action` = `purge`（彻底清除，仅超级管理员，confirm「彻底清除」）/ `approve`（confirm「批准删除」）/ `restore`（confirm「恢复账号」）/ `reject` / `cancel`；逐条按单条接口的权限判断，返回 `{ done, failed, results:[{id,name,ok,error}] }`。
 
