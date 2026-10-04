@@ -585,7 +585,10 @@ function _devApi(method, path, body) {
       { id:'c1', subject_id:'S1', platform:'wechat', label:'A公司微信', enabled:true, config:{ WECHAT_APP_ID:'wxAAA', WECHAT_APP_SECRET:'••••••••', WECHAT_REDIRECT_URI:'https://sso/cb' } },
     ]},
   ];
-  if (path === '/admin/oauth-subjects' && method === 'GET') return ok({ success:true, data: db._oauthSubjects, platforms:_oauthPlatformsMeta() });
+  if (path === '/admin/oauth-subjects' && method === 'GET') { db._orgFolders = db._orgFolders || []; return ok({ success:true, data: db._oauthSubjects, folders: db._orgFolders.map(f=>({ ...f, org_count: db._oauthSubjects.filter(x=>x.folder_id===f.id).length })), platforms:_oauthPlatformsMeta() }); }
+  if (path === '/admin/org-folders' && method === 'POST') { db._orgFolders = db._orgFolders || []; const f={ id:'F'+Date.now(), name:body.name, sort_weight:0 }; db._orgFolders.push(f); return ok({ success:true, folder:{ ...f, org_count:0 } }); }
+  if (method === 'PATCH' && path.startsWith('/admin/org-folders/')) { const f=(db._orgFolders||[]).find(x=>x.id===path.split('/').pop()); if(f) f.name=body.name??f.name; return ok({ success:true }); }
+  if (method === 'DELETE' && path.startsWith('/admin/org-folders/')) { const id=path.split('/').pop(); db._orgFolders=(db._orgFolders||[]).filter(x=>x.id!==id); db._oauthSubjects.forEach(x=>{ if(x.folder_id===id) x.folder_id=null; }); return ok({ success:true }); }
   // 组织成员（IAM）演示
   db._orgMembers = db._orgMembers || {};        // sid -> [{user_id,name,uid_seq,org_uid,uid_code}]
   db._orgUidRule = db._orgUidRule || {};        // sid -> {prefix,len,seq}
@@ -637,8 +640,8 @@ function _devApi(method, path, body) {
   let lm = path.match(/^\/memos\/([^/]+)\/links$/);
   if (lm && method === 'POST') { const m=db._memos.find(x=>x.id===lm[1]); if(m){ m.attachments=Array.isArray(m.attachments)?m.attachments:[]; if(!/^\//.test(body.url)&&!/corp\.local/.test(body.url)) return err('该链接不在允许范围（默认仅放行白名单内网域）'); m.attachments.push({ id:'l'+Date.now(), kind:'link', filename:body.label||body.url, url:body.url }); } return ok({ success:true }); }
   if (path === '/admin/memos' && method === 'GET') return ok({ success:true, memos: db._memos.map(m=>({ ...m, owner_name:db.myUser.name, owner_uid_seq:db.myUser.uid_seq, attachments:mCount(m) })) });
-  if (path === '/admin/oauth-subjects' && method === 'POST') { db._oauthSubjects.push({ id:'S'+Date.now(), name:body.name, enabled:body.enabled!==false, credentials:[] }); return ok({ success:true }); }
-  if (method === 'PATCH' && path.startsWith('/admin/oauth-subjects/')) { const s=db._oauthSubjects.find(x=>x.id===path.split('/').pop()); if(s){s.name=body.name??s.name;s.enabled=body.enabled??s.enabled;} return ok({ success:true }); }
+  if (path === '/admin/oauth-subjects' && method === 'POST') { const id='S'+Date.now(); db._oauthSubjects.push({ id, name:body.name, enabled:body.enabled!==false, folder_id:body.folder_id||null, credentials:[] }); return ok({ success:true, id }); }
+  if (method === 'PATCH' && path.startsWith('/admin/oauth-subjects/')) { const s=db._oauthSubjects.find(x=>x.id===path.split('/').pop()); if(s){s.name=body.name??s.name;s.enabled=body.enabled??s.enabled; if(body.folder_id!==undefined) s.folder_id=body.folder_id||null;} return ok({ success:true }); }
   if (method === 'DELETE' && path.startsWith('/admin/oauth-subjects/')) { db._oauthSubjects=db._oauthSubjects.filter(x=>x.id!==path.split('/').pop()); return ok({ success:true }); }
   if (path === '/admin/oauth-providers' && method === 'POST') {
     const s = db._oauthSubjects.find(x=>x.id===body.subject_id);
@@ -2364,6 +2367,7 @@ async function loadMe() {
             <button class="btn primary" style="font-size:11px;" onclick="openSubjectModal()">+ 新建主体</button>
           </div>
           <div class="card-body" style="padding:8px 0;">
+            <div id="org-folder-bar" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:4px 12px 10px;"></div>
             <div id="oauth-subjects-list" style="font-size:12px;color:var(--txd);padding:12px;">加载中…</div>
           </div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
@@ -2756,6 +2760,10 @@ async function loadMe() {
     <div style="margin-bottom:10px;">
       <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">主体名称（如「XX集团」「A公司」）</label>
       <input id="subj-name" placeholder="主体名称" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+    </div>
+    <div style="margin-bottom:10px;">
+      <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">所在文件夹（只用于在管理端归类，不影响登录）</label>
+      <select id="sm-folder" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);"></select>
     </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:6px;">
       <input type="checkbox" id="sm-enabled" checked> 启用（关闭则其下所有凭证的登录入口都隐藏）
@@ -5132,6 +5140,8 @@ async function loadOauthSubjects() {
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">加载失败</div>'; return; }
   _oauthPlatforms = data.platforms || [];
   _oauthSubjects = data.data || [];
+  _orgFolders = data.folders || [];
+  renderOrgFolderBar();
   if (!box) return;
   if (!_oauthSubjects.length) {
     box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">还没有登录主体，点右上角「新建主体」，再往主体里添加登录凭证。</div>';
@@ -5140,7 +5150,7 @@ async function loadOauthSubjects() {
   const badge = (on) => on
     ? '<span style="font-size:10px;color:#1a7f37;background:#e6f4ea;padding:1px 7px;border-radius:10px;">启用</span>'
     : '<span style="font-size:10px;color:var(--txd);background:var(--sf2);padding:1px 7px;border-radius:10px;">停用</span>';
-  box.innerHTML = _oauthSubjects.map(s => {
+  const cardHtml = s => {
     const creds = (s.credentials || []).map(c => {
       const meta = _oauthPlatforms.find(p => p.key === c.platform);
       const pname = meta ? meta.label : c.platform;
@@ -5166,13 +5176,117 @@ async function loadOauthSubjects() {
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openSubjectApps(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>📦 开放应用</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)})'>+ 凭证</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openDirSourceModal(${JSON.stringify(s.id)})'>+ 通讯录同步</button>
+        <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOrgMoveMenu(event,${JSON.stringify(s.id)})'>📁 移到</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openSubjectModal(${JSON.stringify(s).replace(/'/g,"&#39;")})'>编辑</button>
         <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delSubject(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>删除</button>
       </div>
       ${creds}
       ${dirSourceRowsHtml(s.id, s.dir_sources, true)}
     </div>`;
-  }).join('');
+  };
+  box.innerHTML = renderOrgGroups(cardHtml);
+}
+
+// ── 组织文件夹（v3.5.38）：把组织归类。一级不嵌套；一个组织最多在一个文件夹 ──
+let _orgFolders = [];
+function _orgFolderSel() {
+  let v = 'all'; try { v = localStorage.getItem('sso_org_folder') || 'all'; } catch (_) {}
+  if (v !== 'all' && v !== '_none' && !_orgFolders.some(f => f.id === v)) v = 'all';   // 记住的文件夹已删
+  return v;
+}
+function _orgFolderCollapsed() { try { return JSON.parse(localStorage.getItem('sso_org_folder_collapsed') || '[]'); } catch (_) { return []; } }
+function selectOrgFolder(v) { try { localStorage.setItem('sso_org_folder', v); } catch (_) {} loadOauthSubjects(); }
+function toggleOrgFolderCollapse(id) {
+  const c = new Set(_orgFolderCollapsed());
+  c.has(id) ? c.delete(id) : c.add(id);
+  try { localStorage.setItem('sso_org_folder_collapsed', JSON.stringify([...c])); } catch (_) {}
+  loadOauthSubjects();
+}
+function renderOrgFolderBar() {
+  const bar = document.getElementById('org-folder-bar'); if (!bar) return;
+  const sel = _orgFolderSel();
+  const unfiled = _oauthSubjects.filter(s => !s.folder_id).length;
+  const chip = (v, label, n) => `<button class="btn" style="font-size:11px;padding:3px 10px;border-radius:14px;${sel === v ? 'background:var(--ac);color:#fff;border-color:var(--ac);' : ''}" onclick='selectOrgFolder(${JSON.stringify(v)})'>${label} <span style="opacity:.7;">${n}</span></button>`;
+  let html = chip('all', '全部', _oauthSubjects.length);
+  html += _orgFolders.map(f => chip(f.id, '📁 ' + esc(f.name), f.org_count || 0)).join('');
+  if (_orgFolders.length) html += chip('_none', '未归类', unfiled);
+  html += `<button class="btn" style="font-size:11px;padding:3px 10px;border-radius:14px;border-style:dashed;" onclick="newOrgFolder()">+ 新建文件夹</button>`;
+  const f = _orgFolders.find(x => x.id === sel);
+  if (f) html += `<span style="flex:1;"></span><button class="btn" style="font-size:11px;padding:2px 8px;" onclick='renameOrgFolder(${JSON.stringify(f.id)})'>重命名</button><button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delOrgFolder(${JSON.stringify(f.id)})'>删除文件夹</button>`;
+  bar.innerHTML = html;
+}
+function renderOrgGroups(cardHtml) {
+  const sel = _orgFolderSel();
+  const inF = id => _oauthSubjects.filter(s => (s.folder_id || null) === id);
+  const empty = t => `<div style="color:var(--txd);padding:6px 16px 12px;font-size:12px;">${t}</div>`;
+  if (sel === '_none') return inF(null).map(cardHtml).join('') || empty('没有未归类的组织。');
+  if (sel !== 'all') return inF(sel).map(cardHtml).join('') || empty('这个文件夹里还没有组织：在组织卡片上点「📁 移到」放进来。');
+  if (!_orgFolders.length) return _oauthSubjects.map(cardHtml).join('');
+  // 「全部」：按文件夹分组，可折叠；最后是未归类
+  const collapsed = new Set(_orgFolderCollapsed());
+  const section = (key, title, list) => {
+    const shut = collapsed.has(key);
+    return `<div style="margin:0 0 6px;">
+      <div style="display:flex;align-items:center;gap:6px;padding:6px 14px;cursor:pointer;user-select:none;color:var(--tx);font-weight:700;font-size:13px;" onclick='toggleOrgFolderCollapse(${JSON.stringify(key)})'>
+        <span style="width:12px;color:var(--txd);">${shut ? '▸' : '▾'}</span>${title}<span style="font-weight:400;color:var(--txd);font-size:11px;">${list.length} 个组织</span>
+      </div>
+      ${shut ? '' : (list.map(cardHtml).join('') || empty('（空）'))}
+    </div>`;
+  };
+  return _orgFolders.map(f => section(f.id, '📁 ' + esc(f.name), inF(f.id))).join('')
+    + section('_none', '未归类', inF(null));
+}
+async function newOrgFolder(thenMoveSid) {
+  const name = (prompt('新文件夹名称（如「华东区域」「子公司」）') || '').trim();
+  if (!name) return;
+  const { ok, data } = await api('POST', '/admin/org-folders', { name });
+  if (!ok) { showToast(data.error || '新建失败'); return; }
+  if (thenMoveSid && data.folder) { await moveOrgToFolder(thenMoveSid, data.folder.id, data.folder.name); return; }
+  showToast('已新建文件夹'); loadOauthSubjects();
+}
+async function renameOrgFolder(id) {
+  const f = _orgFolders.find(x => x.id === id); if (!f) return;
+  const name = (prompt('文件夹新名称', f.name) || '').trim();
+  if (!name || name === f.name) return;
+  const { ok, data } = await api('PATCH', '/admin/org-folders/' + id, { name });
+  if (!ok) { showToast(data.error || '重命名失败'); return; }
+  showToast('已重命名'); loadOauthSubjects();
+}
+async function delOrgFolder(id) {
+  const f = _orgFolders.find(x => x.id === id); if (!f) return;
+  if (!confirm(`删除文件夹「${f.name}」？里面的 ${f.org_count || 0} 个组织会回到「未归类」，组织本身不受影响。`)) return;
+  const { ok, data } = await api('DELETE', '/admin/org-folders/' + id);
+  if (!ok) { showToast(data.error || '删除失败'); return; }
+  try { localStorage.setItem('sso_org_folder', 'all'); } catch (_) {}
+  showToast('已删除文件夹'); loadOauthSubjects();
+}
+async function moveOrgToFolder(sid, folderId, folderName) {
+  document.getElementById('org-move-menu')?.remove();
+  const { ok, data } = await api('PATCH', '/admin/oauth-subjects/' + sid, { folder_id: folderId || null });
+  if (!ok) { showToast(data.error || '移动失败'); return; }
+  const f = _orgFolders.find(x => x.id === folderId);
+  showToast(folderId ? `已移到「${folderName || (f ? f.name : '文件夹')}」` : '已移出到未归类'); loadOauthSubjects();
+}
+function openOrgMoveMenu(ev, sid) {
+  ev.stopPropagation();
+  document.getElementById('org-move-menu')?.remove();
+  const s = _oauthSubjects.find(x => x.id === sid); if (!s) return;
+  const cur = s.folder_id || null;
+  const item = (fid, label) => `<div class="org-move-item" style="padding:7px 12px;cursor:pointer;font-size:12px;white-space:nowrap;${(fid || null) === cur ? 'color:var(--ac);font-weight:600;' : 'color:var(--tx);'}" onclick='moveOrgToFolder(${JSON.stringify(sid)},${JSON.stringify(fid)})'>${(fid || null) === cur ? '✓ ' : ''}${label}</div>`;
+  const m = document.createElement('div');
+  m.id = 'org-move-menu';
+  m.style.cssText = 'position:fixed;z-index:1200;background:var(--sf);border:1px solid var(--bd);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:160px;max-height:300px;overflow:auto;padding:4px 0;';
+  m.innerHTML = `<div style="padding:4px 12px 6px;font-size:11px;color:var(--txd);">把「${esc(s.name)}」移到</div>`
+    + _orgFolders.map(f => item(f.id, '📁 ' + esc(f.name))).join('')
+    + item(null, '未归类')
+    + `<div style="border-top:1px solid var(--bd);margin-top:4px;padding:7px 12px;cursor:pointer;font-size:12px;color:var(--ac);" onclick='document.getElementById("org-move-menu").remove();newOrgFolder(${JSON.stringify(sid)})'>+ 新建文件夹并移入</div>`;
+  document.body.appendChild(m);
+  const r = ev.currentTarget.getBoundingClientRect();
+  const left = Math.min(r.left, window.innerWidth - m.offsetWidth - 8);
+  const top = (r.bottom + m.offsetHeight + 8 > window.innerHeight) ? Math.max(8, r.top - m.offsetHeight - 4) : r.bottom + 4;
+  m.style.left = Math.max(8, left) + 'px'; m.style.top = top + 'px';
+  m.querySelectorAll('.org-move-item').forEach(el => { el.onmouseenter = () => el.style.background = 'var(--sf2)'; el.onmouseleave = () => el.style.background = ''; });
+  setTimeout(() => document.addEventListener('click', function close(e) { if (!m.contains(e.target)) { m.remove(); document.removeEventListener('click', close); } }), 0);
 }
 
 // 从「主体」侧管理它开放了哪些应用（反向视角，比逐个应用去勾更直观）
@@ -6754,6 +6868,10 @@ function openSubjectModal(subj) {
   document.getElementById('subject-modal-title').textContent = editing ? '编辑主体' : '新建主体';
   document.getElementById('sm-id').value = editing ? subj.id : '';
   document.getElementById('subj-name').value = editing ? subj.name : '';
+  // 所在文件夹：编辑时取当前；新建时默认当前选中的文件夹
+  const selF = _orgFolderSel();
+  const curF = editing ? (subj.folder_id || '') : (_orgFolders.some(f => f.id === selF) ? selF : '');
+  document.getElementById('sm-folder').innerHTML = '<option value="">未归类</option>' + _orgFolders.map(f => `<option value="${esc(f.id)}" ${f.id === curF ? 'selected' : ''}>📁 ${esc(f.name)}</option>`).join('');
   document.getElementById('sm-enabled').checked = editing ? !!subj.enabled : true;
   document.getElementById('sm-2fa').checked   = editing ? !!subj.require_2fa : false;
   document.getElementById('sm-ip').value      = editing ? (subj.ip_allow || '') : '';
@@ -6811,7 +6929,8 @@ async function saveSubject() {
   const direct_listed = document.getElementById('sm-listed').checked;
   const require_org_password = document.getElementById('sm-req-orgpw').checked;
   const deny_code_login = document.getElementById('sm-deny-code').checked;
-  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login };
+  const folder_id = document.getElementById('sm-folder').value || null;
+  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id };
   let res;
   if (id) {
     res = await api('PATCH', '/admin/oauth-subjects/' + id, { name, enabled, ...policy, ...extra });

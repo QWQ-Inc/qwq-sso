@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const wmBurn = require('./watermark-burn');
@@ -1189,6 +1189,7 @@ function credView(r) {
 router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
   const subjects = oauthSubjects.all.all().map(s => ({
     id: s.id, name: s.name, enabled: !!s.enabled, sort_weight: s.sort_weight,
+    folder_id: s.folder_id || null,   // 组织文件夹（v3.5.38），null = 未归类
     // 每主体登录策略
     require_2fa: !!s.require_2fa, ip_allow: s.ip_allow || '', login_start: s.login_start || '', login_end: s.login_end || '',
     // 组织专属凭证（短信/邮件）+ 是否允许直接登录
@@ -1208,20 +1209,59 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     admin_count: oauthSubjects.admins.all(s.id).length,
     credentials: oauthProviders.bySubject.all(s.id).map(credView),
   }));
-  res.json({ success: true, data: subjects, platforms: oauthPlatformsMeta() });
+  res.json({ success: true, data: subjects, folders: orgFolderList(), platforms: oauthPlatformsMeta() });
 });
 
 router.post('/admin/oauth-subjects', requireAdmin(2), (req, res) => {
   const { name, enabled, sort_weight } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: '请填写主体名称' });
+  const folder = folderIdFromBody(req.body?.folder_id);
+  if (folder === false) return res.status(400).json({ error: '文件夹不存在' });
   const id = uuidv4();
   oauthSubjects.insert.run(id, String(name).trim(), enabled === false ? 0 : 1, Number.isFinite(+sort_weight) ? +sort_weight : 0);
+  if (folder) orgFolders.setSubject.run(folder, id);
   res.json({ success: true, id });
+});
+
+// ── 组织文件夹（v3.5.38）：管理端把组织归类。一级、不嵌套；一个组织最多在一个文件夹 ──
+function orgFolderList() {
+  return orgFolders.all.all().map(f => ({ id: f.id, name: f.name, sort_weight: f.sort_weight, org_count: f.org_count }));
+}
+// body.folder_id → 文件夹 id / null（未归类）/ undefined（没传，不改）/ false（文件夹不存在）
+function folderIdFromBody(v) {
+  if (v === undefined) return undefined;
+  if (v === null || v === '') return null;
+  return orgFolders.get.get(String(v)) ? String(v) : false;
+}
+router.get('/admin/org-folders', requireAdmin(3), (req, res) => res.json({ success: true, folders: orgFolderList() }));
+router.post('/admin/org-folders', requireAdmin(2), (req, res) => {
+  const name = String(req.body?.name || '').trim().slice(0, 40);
+  if (!name) return res.status(400).json({ error: '请填写文件夹名称' });
+  if (orgFolders.all.all().length >= 200) return res.status(400).json({ error: '文件夹太多了（上限 200）' });
+  const id = uuidv4();
+  orgFolders.insert.run(id, name, Number.isFinite(+req.body?.sort_weight) ? +req.body.sort_weight : 0);
+  res.json({ success: true, folder: orgFolderList().find(f => f.id === id) });
+});
+router.patch('/admin/org-folders/:id', requireAdmin(2), (req, res) => {
+  const f = orgFolders.get.get(req.params.id);
+  if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  const name = req.body?.name !== undefined ? String(req.body.name).trim().slice(0, 40) : f.name;
+  if (!name) return res.status(400).json({ error: '请填写文件夹名称' });
+  orgFolders.update.run(name, Number.isFinite(+req.body?.sort_weight) ? +req.body.sort_weight : f.sort_weight, f.id);
+  res.json({ success: true });
+});
+router.delete('/admin/org-folders/:id', requireAdmin(2), (req, res) => {
+  const f = orgFolders.get.get(req.params.id);
+  if (!f) return res.status(404).json({ error: '文件夹不存在' });
+  db.transaction(() => { orgFolders.unfileAll.run(f.id); orgFolders.remove.run(f.id); })();
+  res.json({ success: true });   // 里面的组织回到「未归类」，组织本身不受影响
 });
 
 router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   const row = oauthSubjects.get.get(req.params.id);
   if (!row) return res.status(404).json({ error: '主体不存在' });
+  const folder = folderIdFromBody((req.body || {}).folder_id);
+  if (folder === false) return res.status(400).json({ error: '文件夹不存在' });
   const { name, enabled, sort_weight, require_2fa, ip_allow, login_start, login_end } = req.body || {};
   oauthSubjects.update.run(
     name != null ? String(name).trim() : row.name,
@@ -1256,6 +1296,7 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
       req.body.require_org_password !== undefined ? (req.body.require_org_password ? 1 : 0) : (row.require_org_password || 0),
       req.body.deny_code_login !== undefined ? (req.body.deny_code_login ? 1 : 0) : (row.deny_code_login || 0), row.id);
   }
+  if (folder !== undefined) orgFolders.setSubject.run(folder, row.id);   // 组织文件夹（v3.5.38），null = 移出到未归类
   if (req.body.direct_listed !== undefined) oauthSubjects.setDirectListed.run(req.body.direct_listed ? 1 : 0, row.id); // v3.5.18 登录页是否显性列出
   // 开了直登就确保有组织码（不显性组织靠它被搜索到）
   if (req.body.allow_direct_login) ensureOrgCode(oauthSubjects.get.get(row.id));

@@ -1825,6 +1825,18 @@ DELETE /api/admin/oauth-providers/:id   # 删凭证
 - secret 字段读取时打码为 `••••••••`；提交时打码串一律不覆盖原值（编辑时留着圆点即保留）。
 - 主体停用 → 其下所有凭证的登录入口整体关闭（登录页隐藏 + 后端 `/auth/<平台>?inst=` 直连也拒绝）。
 
+**组织文件夹**（v3.5.38）：管理端把组织归类用，一级、不嵌套，一个组织最多在一个文件夹；**只影响管理端展示，不影响登录与权限**。
+
+```
+GET    /api/admin/org-folders           # 文件夹列表 { folders:[{id,name,sort_weight,org_count}] }（Lv.3）
+POST   /api/admin/org-folders           # 新建 { name, sort_weight? }（Lv.2，名称 ≤40 字，上限 200 个）
+PATCH  /api/admin/org-folders/:id       # 重命名 / 排序 { name?, sort_weight? }（Lv.2）
+DELETE /api/admin/org-folders/:id       # 删除（Lv.2）：里面的组织回到「未归类」，组织本身不受影响
+```
+
+- 组织归类走主体接口的 `folder_id`：`POST /api/admin/oauth-subjects` 与 `PATCH /api/admin/oauth-subjects/:id` 都收 `folder_id`（文件夹 id；`null`/空串 = 移出到未归类；不传 = 不改；文件夹不存在 400 且整个请求不生效）。
+- `GET /api/admin/oauth-subjects` 每个组织多回 `folder_id`，响应顶层多回 `folders`（带 `org_count`）。
+
 **公开接口**（登录页 / 账号绑定页用，无需鉴权，只给公开字段、绝不含 secret）：
 
 ```

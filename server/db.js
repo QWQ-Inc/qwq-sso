@@ -390,6 +390,14 @@ try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_subjects_org_code ON 
 // 外部通讯录同步（v3.5.35，先做企业微信）：dir_sync=配置 JSON（含通讯录 secret），dir_sync_state=上次同步结果 JSON
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync_state TEXT'); } catch(_) {}
+// v3.5.38：组织文件夹——管理端把组织归类（一级，不嵌套；一个组织最多在一个文件夹，NULL = 未归类）
+try { db.exec(`CREATE TABLE IF NOT EXISTS org_folders (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  sort_weight INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN folder_id TEXT'); } catch(_) {}
 // 外部身份 ↔ 本系统用户的稳定映射（企业微信 UserId 不一定带邮箱/手机，靠它保证每次同步落到同一账号）
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_links (
   subject_id TEXT NOT NULL,
@@ -1366,6 +1374,18 @@ const deviceStmts = {
   remove: db.prepare('DELETE FROM devices WHERE id=?'),
 };
 
+// 组织文件夹（v3.5.38）
+const orgFolderStmts = {
+  all:    db.prepare(`SELECT f.*, (SELECT COUNT(*) FROM oauth_subjects s WHERE s.folder_id=f.id) AS org_count
+    FROM org_folders f ORDER BY f.sort_weight, f.created_at`),
+  get:    db.prepare('SELECT * FROM org_folders WHERE id=?'),
+  insert: db.prepare('INSERT INTO org_folders (id,name,sort_weight) VALUES (?,?,?)'),
+  update: db.prepare('UPDATE org_folders SET name=?, sort_weight=? WHERE id=?'),
+  remove: db.prepare('DELETE FROM org_folders WHERE id=?'),
+  unfileAll: db.prepare('UPDATE oauth_subjects SET folder_id=NULL WHERE folder_id=?'),   // 删文件夹 = 里面的组织回到未归类
+  setSubject: db.prepare('UPDATE oauth_subjects SET folder_id=? WHERE id=?'),
+};
+
 // 通讯录同步源（v3.5.36）
 const dirSourceStmts = {
   bySubject: db.prepare('SELECT * FROM dir_sync_sources WHERE subject_id=? ORDER BY created_at'),
@@ -1393,6 +1413,7 @@ module.exports = {
   oauthSubjects: oauthSubjectStmts,
   orgMembers: orgMemberStmts,
   dirSources: dirSourceStmts,
+  orgFolders: orgFolderStmts,
   appOrgs: appOrgStmts,
   appIcons: appIconStmts,
   appFolders: appFolderStmts,
