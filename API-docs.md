@@ -1516,7 +1516,7 @@ PUT /api/v1/watermark     scope: config:write
 
 ---
 
-### 6.18 企业微信通讯录同步（v3.5.35；v3.5.36 起一个组织可有多个同步源；v3.5.37 起可多选部门、默认凭证）
+### 6.18 企业微信通讯录同步（v3.5.35；v3.5.36 起一个组织可有多个同步源；v3.5.37 起可多选部门、默认凭证；v3.5.39 起支持接收事件服务器）
 
 企业微信没有标准 SCIM，本系统用它自己的通讯录 API **拉取**所选部门（可多选，含子部门）的成员，同步成某组织的成员。
 一个组织可以配置**多个同步源**（如多家企业微信），每个同步源像登录凭证一样单独启停、编辑、同步；配置入口在管理端「组织管理」的组织卡片（「+ 通讯录同步」）或组织成员弹窗（系统管理员或该组织的组织管理员），需要企业微信后台「管理工具 → 通讯录同步」的 Secret，并把本服务器出口 IP 加进可信 IP。
@@ -1539,6 +1539,16 @@ POST /api/v1/orgs/:sid/dir-sync/run      scope: org:sync    # 依次跑该组织
 - UserId 映射按同步源隔离：两家企业里同名的 UserId 不会被当成同一个人。
 - 组织内 UID 默认取企业微信 UserId（冲突则不设），也可改为按本组织 UID 规则生成或不设置。
 - 可设自动同步间隔（1/6/24 小时）；每次同步写审计存证 `org.dir_synced`。
+
+**用哪个 Secret**（v3.5.39）：推荐**自建应用**的 Secret（应用可见范围设为要同步的部门，并把本服务器出口 IP 加进该应用的可信 IP）。「管理工具 → 通讯录同步」的 Secret 自 2022-08-15 起在新 IP 上被企业微信禁止读取通讯录详情（`48009 api forbidden for contact assistant`），只能读到 UserId 和部门 ID。用它时本系统自动降级到 `department/simplelist` + `user/list_id`：已关联过的成员照常同步、离开照常移出，**没关联过的人因为认不出是谁不会建号**（结果里 `limited: true`、`unmatched` 计数、`warning` 提示改用自建应用 Secret）。常见错误码（40001 / 40013 / 48009 / 60011 / 60020）的报错会带中文处理建议。
+
+**接收事件服务器**（v3.5.39，实时同步，可选）：同步源配置里填 `cb_token`（1~32 位字母数字）+ `cb_aes_key`（43 位 EncodingAESKey，读取时打码；`cb_clear: true` 关闭），回调地址为
+
+```
+GET/POST /api/public/dirsync/wecom/:source_id      # 公开，无需鉴权；靠企业微信签名 + 加密校验
+```
+
+在企业微信后台「通讯录同步 → 设置接收事件服务器」（或自建应用的「接收消息」）填入 URL / Token / EncodingAESKey。GET 为保存时的地址校验（验签 + 解密 echostr 原样返回）；POST 为事件推送：验签（sha1）+ AES-256-CBC 解密 + 校验企业 ID，`change_contact` 事件**防抖约 10 秒后对该同步源跑一次全量同步**（一阵批量变动只同步一次，范围、移出、单独修改不覆盖等规则与手动同步一致；环境变量 `DIRSYNC_EVENT_DELAY_MS` 可调），`update_user` 带 `NewUserID` 时先就地改 UserId 映射 / 登录绑定 / 组织内 UID。签名错或企业不符 403；同步源停用或非通讯录事件只记录不同步。同步源视图多回 `callback_path`、`callback_ready`、`event_state`（最近校验时间、最近事件、累计条数）。
 
 管理端接口（v3.5.36）：`GET/POST /api/admin/orgs/:sid/dir-sources`（列表 / 新增；`secret` 读取时打码；列表另回 `bind_choices` 可选登录凭证、`force_confirm` 确认口令）、`POST /api/admin/orgs/:sid/dir-sources/scope-tree`（v3.5.37，`{corp_id, secret}` 或 `{source_id}` 用已存 secret → 该 Secret 能看到的部门 `nodes[{id,name,parent,order}]`）、`PATCH /api/admin/dir-sources/:id`（编辑，或只传 `{enabled}` 启停；打码串/留空不覆盖 secret）、`DELETE /api/admin/dir-sources/:id`（删除同步源，已同步成员保留）、`POST /api/admin/dir-sources/:id/run`（立即同步，停用的源 400，同组织并发 409）。
 

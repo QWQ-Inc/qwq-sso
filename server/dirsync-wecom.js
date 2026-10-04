@@ -40,6 +40,15 @@ const appliedSet = db.prepare(`INSERT INTO dir_sync_applied (source_id,user_id,k
 
 function apiBase() { return String(process.env.WECOM_API_BASE || 'https://qyapi.weixin.qq.com').replace(/\/+$/, ''); }
 
+// 常见错误码的处理建议（附在报错后面，管理端「上次同步」里能直接看到）
+const ERR_HINT = {
+  40001: 'Secret 不对，或不是这个企业的',
+  40013: '企业 ID（corpid）不对',
+  48009: '这个 Secret 无权读取通讯录详情：「通讯录同步」Secret 已被企业微信限制，请改用「自建应用」Secret',
+  60011: '这个 Secret 没有该部门的权限：在企业微信里把应用可见范围设到要同步的部门，或在「同步范围」里只选它能看到的部门',
+  60020: '本服务器出口 IP 不在企业微信可信 IP 里：到企业微信后台把报错里的 from ip 加进该应用（或通讯录同步）的可信 IP',
+};
+
 async function call(method, path, params, body) {
   const url = new URL(apiBase() + path);
   Object.entries(params || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) url.searchParams.set(k, String(v)); });
@@ -50,7 +59,10 @@ async function call(method, path, params, body) {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(`企业微信接口 HTTP ${r.status}`), { errcode: -1 });
-  if (j.errcode) throw Object.assign(new Error(`企业微信 ${path} 失败：${j.errcode} ${j.errmsg || ''}`.trim()), { errcode: j.errcode });
+  if (j.errcode) {
+    const hint = ERR_HINT[j.errcode];
+    throw Object.assign(new Error(`企业微信 ${path} 失败：${j.errcode} ${j.errmsg || ''}`.trim() + (hint ? `（${hint}）` : '')), { errcode: j.errcode });
+  }
   return j;
 }
 
@@ -65,49 +77,84 @@ async function token(cfg) {
 }
 
 /** 这个 Secret 能看到的部门（不带 id = 应用可见范围内的全部部门），给管理端挑同步范围用 */
-async function fetchScopeTree(cfg) {
-  const access_token = await token(cfg);
-  const depts = (await call('GET', '/cgi-bin/department/list', { access_token })).department || [];
-  return depts.map(d => ({ id: d.id, name: d.name, parent: d.parentid ?? null, order: d.order ?? 0 }));
+// 「通讯录同步」Secret 自 2022-08-15 起在新 IP 上被禁止读通讯录详情（48009 api forbidden for contact assistant），
+// 只能调「获取部门 ID 列表」(department/simplelist) 和「获取成员 ID 列表」(user/list_id)，且只返回 ID。
+// 企业微信官方建议读通讯录改用「自建应用」Secret。这里遇到 48009 自动降级到 ID 接口，保证同步还能按 UserId 跑通。
+const FORBIDDEN = 48009;
+const LIMITED_HINT = '当前 Secret 是「通讯录同步」Secret，企业微信已限制它读取姓名 / 部门名 / 联系方式（48009），本次只拿到了 UserId 和部门 ID。要同步姓名等信息，请改填「自建应用」的 Secret（应用可见范围设为要同步的部门，并把本服务器出口 IP 加进应用的可信 IP）。';
+
+async function deptList(access_token, id) {
+  try {
+    const depts = (await call('GET', '/cgi-bin/department/list', { access_token, id })).department || [];
+    return { depts: depts.map(d => ({ id: d.id, name: d.name || '', parentid: d.parentid ?? null, order: d.order ?? 0 })), limited: false };
+  } catch (e) {
+    if (e.errcode !== FORBIDDEN) throw e;
+    const ids = (await call('GET', '/cgi-bin/department/simplelist', { access_token, id })).department_id || [];
+    return { depts: ids.map(d => ({ id: d.id, name: '', parentid: d.parentid ?? null, order: d.order ?? 0 })), limited: true };
+  }
 }
 
-/** 从企业微信拉取：所选各部门（含子部门）的成员，合并去重 */
+/** 这个 Secret 能看到的部门（不带 id = 应用可见范围内的全部部门），给管理端挑同步范围用 */
+async function fetchScopeTree(cfg) {
+  const access_token = await token(cfg);
+  const { depts, limited } = await deptList(access_token);
+  const nodes = depts.map(d => ({ id: d.id, name: d.name, parent: d.parentid, order: d.order }));
+  nodes.limited = limited;
+  return nodes;
+}
+
+/** 从企业微信拉取：所选各部门（含子部门）的成员，合并去重。limited=true 表示只拿到了 ID（通讯录同步 Secret 受限） */
 async function fetchDirectory(cfg) {
   const access_token = await token(cfg);
   const roots = deptIdsOf(cfg);
   const deptName = new Map();
   const inScope = new Set();
+  let limited = false;
   for (const root of roots) {
-    const depts = (await call('GET', '/cgi-bin/department/list', { access_token, id: root })).department || [];
-    depts.forEach(d => { deptName.set(d.id, d.name); inScope.add(d.id); });
+    const r = await deptList(access_token, root);
+    limited = limited || r.limited;
+    r.depts.forEach(d => { if (d.name) deptName.set(d.id, d.name); inScope.add(d.id); });
     inScope.add(root);
   }
   let members = [];
   try {
+    if (limited) throw Object.assign(new Error('limited'), { errcode: FORBIDDEN });
     for (const root of roots) {
       members.push(...((await call('GET', '/cgi-bin/user/list', { access_token, department_id: root, fetch_child: 1 })).userlist || []));
     }
   } catch (e) {
-    // 新建的自建应用拿不到 user/list：退回 list_id 分页 + user/get
-    const ids = [];
+    // user/list 拿不到（新建自建应用受限 / 通讯录同步 Secret 受限）：退回 list_id 分页拿 userid + 所在部门
+    const deptsOf = new Map();
     let cursor = '';
     for (let guard = 0; guard < 100; guard++) {
       const j = await call('POST', '/cgi-bin/user/list_id', { access_token }, { cursor, limit: 10000 });
-      for (const du of j.dept_user || []) if (inScope.has(du.department)) ids.push(du.userid);
+      for (const du of j.dept_user || []) {
+        if (!inScope.has(du.department)) continue;
+        if (!deptsOf.has(du.userid)) deptsOf.set(du.userid, []);
+        deptsOf.get(du.userid).push(du.department);
+      }
       if (!j.next_cursor) break;
       cursor = j.next_cursor;
     }
-    const uniq = [...new Set(ids)].slice(0, 5000);
+    const uniq = [...deptsOf.keys()].slice(0, 5000);
     members = [];
+    let idOnly = limited;
     for (let i = 0; i < uniq.length; i += 5) {
-      const batch = await Promise.all(uniq.slice(i, i + 5).map(uid => call('GET', '/cgi-bin/user/get', { access_token, userid: uid }).catch(() => null)));
-      batch.forEach(u => { if (u) members.push(u); });
+      const chunk = uniq.slice(i, i + 5);
+      if (!idOnly) {
+        const batch = await Promise.all(chunk.map(uid => call('GET', '/cgi-bin/user/get', { access_token, userid: uid })
+          .catch(err => { if (err.errcode === FORBIDDEN) idOnly = true; return null; })));
+        if (!idOnly) { batch.forEach(u => { if (u) members.push(u); }); continue; }
+      }
+      // 只有 ID：姓名先用 UserId 占位（只用于新建账号；已有账号不改名），视为在职
+      chunk.forEach(uid => members.push({ userid: uid, name: uid, department: deptsOf.get(uid), status: 1, _idOnly: true }));
     }
+    if (idOnly) limited = true;
   }
   // 同一个人在多个部门（或选了父子两个部门）会出现多次，按 userid 去重
   const byId = new Map();
   for (const m of members) if (m && m.userid && !byId.has(m.userid)) byId.set(m.userid, m);
-  return { members: [...byId.values()], deptName };
+  return { members: [...byId.values()], deptName, limited };
 }
 
 /** 这家企业微信在本系统的「登录凭证」provider key（同 corp），用于绑定 UserId；没配企业微信登录则返回 null */
@@ -150,14 +197,14 @@ const ACTIVE = new Set([1, 4]);   // 1 已激活 / 4 未激活（还没加入企
  */
 async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory, opts = {}) {
   const force = !!opts.force;
-  const { members, deptName } = await fetcher(cfg);
+  const { members, deptName, limited } = await fetcher(cfg);
   const bindProviders = bindProvidersFor(subject, cfg);
   const bindProvider = bindProviders[0] || null;   // 匹配用：先按第一个绑定凭证找人
   const uidMode = cfg.uid_mode || 'userid';
   const pwHash = cfg.default_pw_hash || null;
   const out = { total: 0, created: 0, linked: 0, added: 0, removed: 0, skipped: 0, errors: [],
     bind_provider: bindProvider, bind_providers: bindProviders,
-    bound: 0, pw_set: 0, kept: 0, conflicts: 0, force };
+    bound: 0, pw_set: 0, kept: 0, conflicts: 0, unmatched: 0, force, limited: !!limited, warning: limited ? LIMITED_HINT : undefined };
   const seenUsers = new Set();
   const seenExt = new Set();
 
@@ -207,6 +254,8 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
       if (!user && phone && helpers.isPhone(phone)) user = users.findByPhone.get(phone) || null;
       if (user && user.is_public) { out.errors.push({ userid: extId, error: '命中公共账号，跳过' }); continue; }
+      // 只拿到 UserId（通讯录同步 Secret 受限）：没有邮箱手机，无法确认是不是已有账号——不建号，免得给已有用户造重复账号
+      if (!user && m._idOnly) { out.unmatched++; continue; }
       if (!user) {
         user = users.create({
           name,
@@ -255,4 +304,73 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
   return out;
 }
 
-module.exports = { syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+// ══════════════════════════════════════════
+// 接收事件服务器（v3.5.39）：企业微信「通讯录同步 → 设置接收事件服务器」的回调
+//   企业微信后台填 URL + Token + EncodingAESKey；成员/部门变动时推送加密 XML 事件。
+//   签名：sha1(字典序拼接 [token, timestamp, nonce, encrypt])
+//   加密：AES-256-CBC，key = base64(EncodingAESKey + '=')（32 字节），iv = key 前 16 字节，PKCS#7（块 32）
+//   明文：16 字节随机 + 4 字节消息长度（大端）+ 消息 + receiveid（即企业 ID）
+// ══════════════════════════════════════════
+function cbKey(aesKey) {
+  const key = Buffer.from(String(aesKey || '') + '=', 'base64');
+  if (key.length !== 32) throw new Error('EncodingAESKey 应为 43 位');
+  return key;
+}
+function cbSignature(token, timestamp, nonce, encrypt) {
+  return crypto.createHash('sha1').update([String(token), String(timestamp), String(nonce), String(encrypt)].sort().join('')).digest('hex');
+}
+function cbVerify(token, q, encrypt) {
+  const want = cbSignature(token, q.timestamp, q.nonce, encrypt);
+  const got = String(q.msg_signature || '');
+  return got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
+}
+function cbDecrypt(aesKey, encrypt) {
+  const key = cbKey(aesKey);
+  const d = crypto.createDecipheriv('aes-256-cbc', key, key.subarray(0, 16));
+  d.setAutoPadding(false);
+  let buf = Buffer.concat([d.update(Buffer.from(String(encrypt), 'base64')), d.final()]);
+  const pad = buf[buf.length - 1];
+  if (pad < 1 || pad > 32) throw new Error('解密失败（填充错误）');
+  buf = buf.subarray(0, buf.length - pad);
+  const len = buf.readUInt32BE(16);
+  if (20 + len > buf.length) throw new Error('解密失败（长度错误）');
+  return { msg: buf.subarray(20, 20 + len).toString('utf8'), receiveid: buf.subarray(20 + len).toString('utf8') };
+}
+// 加密（企业微信那一侧做的事；这里给测试和自检用）
+function cbEncrypt(aesKey, msg, receiveid) {
+  const key = cbKey(aesKey);
+  const body = Buffer.from(String(msg), 'utf8');
+  const len = Buffer.alloc(4); len.writeUInt32BE(body.length);
+  let buf = Buffer.concat([crypto.randomBytes(16), len, body, Buffer.from(String(receiveid), 'utf8')]);
+  const pad = 32 - (buf.length % 32);
+  buf = Buffer.concat([buf, Buffer.alloc(pad, pad)]);
+  const c = crypto.createCipheriv('aes-256-cbc', key, key.subarray(0, 16));
+  c.setAutoPadding(false);
+  return Buffer.concat([c.update(buf), c.final()]).toString('base64');
+}
+// 极简 XML 取字段（企业微信事件是扁平 XML，值多为 CDATA）
+function xmlField(xml, tag) {
+  const m = String(xml || '').match(new RegExp('<' + tag + '>\\s*(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([^<]*))\\s*</' + tag + '>'));
+  return m ? (m[1] !== undefined ? m[1] : m[2]).trim() : '';
+}
+// 成员改了 UserId（update_user 带 NewUserID）：把本源映射、该源绑定过的登录凭证、「同步设过什么」记录、
+// 组织内 UID（还等于旧 UserId 时）一起改过去——否则下次全量同步会把他当成「离开 + 新人」
+function renameExtId(source, subject, cfg, oldId, newId) {
+  oldId = String(oldId || ''); newId = String(newId || '');
+  if (!oldId || !newId || oldId === newId) return { renamed: false };
+  const link = linkGet.get(source.id, oldId);
+  if (!link || linkGet.get(source.id, newId)) return { renamed: false };
+  db.transaction(() => {
+    db.prepare('UPDATE dir_source_links SET ext_id=?, updated_at=datetime(\'now\') WHERE source_id=? AND ext_id=?').run(newId, source.id, oldId);
+    for (const p of bindProvidersFor(subject, cfg)) {
+      const owner = oauth.findByProvider.get(p, newId);
+      if (!owner) db.prepare('UPDATE user_oauth SET open_id=? WHERE user_id=? AND provider=? AND open_id=?').run(newId, link.user_id, p, oldId);
+    }
+    db.prepare("UPDATE dir_sync_applied SET value=? WHERE source_id=? AND user_id=? AND kind='bind' AND value=?").run(newId, source.id, link.user_id, oldId);
+    const mem = orgMembers.get.get(subject.id, link.user_id);
+    if (mem && mem.org_uid === oldId && !orgMembers.orgUidTaken.get(subject.id, newId, link.user_id)) orgMembers.setOrgUid.run(newId, subject.id, link.user_id);
+  })();
+  return { renamed: true, user_id: link.user_id };
+}
+
+module.exports = { LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

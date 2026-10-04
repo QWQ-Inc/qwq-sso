@@ -1817,12 +1817,17 @@ const parseJ = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { ret
 const FORCE_CONFIRM = '全部覆盖';                 // 强确认「全部覆盖同步」要求原样输入的口令
 function dirSourceView(src, subject) {
   const cfg = parseJ(src.config) || {};
-  const { default_pw_hash, ...pub } = cfg;     // 默认组织密码只存哈希，也不下发
+  const { default_pw_hash, cb_aes_key, ...pub } = cfg;     // 默认组织密码只存哈希、回调 EncodingAESKey 打码，都不下发
   const bindProviders = subject && cfg.corp_id ? dirsyncWecom.bindProvidersFor(subject, cfg) : [];
   return { id: src.id, subject_id: src.subject_id, type: src.type, type_label: DIR_TYPES[src.type] || src.type,
     label: src.label || DIR_TYPES[src.type] || src.type, enabled: !!src.enabled,
     config: { ...pub, secret: cfg.secret ? SECRET_MASK : '', dept_ids: dirsyncWecom.deptIdsOf(cfg),
-      bind_mode: cfg.bind_mode || 'auto', has_default_pw: !!default_pw_hash },
+      bind_mode: cfg.bind_mode || 'auto', has_default_pw: !!default_pw_hash,
+      cb_token: cfg.cb_token || '', cb_aes_key: cb_aes_key ? SECRET_MASK : '' },
+    // 接收事件服务器（v3.5.39）：企业微信后台「通讯录同步 → 设置接收事件服务器」填这个地址（前面拼上本站域名）
+    callback_path: '/api/public/dirsync/wecom/' + src.id,
+    callback_ready: !!(cfg.cb_token && cb_aes_key),
+    event_state: parseJ(src.event_state),
     state: parseJ(src.state),
     bind_provider: bindProviders[0] || null, bind_providers: bindProviders,
     running: _dirSyncRunning.has(src.subject_id), created_at: src.created_at };
@@ -1854,6 +1859,17 @@ async function buildDirSourceCfg(b, old, subject) {
     cfg.bind_providers = [...new Set(list.map(String))].filter(k => valid.has(k));
     if (!cfg.bind_providers.length) return { error: '请至少勾选一个要绑定的登录凭证，或改为「不绑定」' };
   } else delete cfg.bind_providers;
+  // 接收事件服务器（v3.5.39）：Token（≤32 位字母数字）+ EncodingAESKey（43 位）；AESKey 打码串/留空 = 不改，cb_clear = 关闭
+  if (b.cb_clear) { delete cfg.cb_token; delete cfg.cb_aes_key; }
+  else {
+    const tok = b.cb_token !== undefined ? String(b.cb_token).trim() : (old.cb_token || '');
+    let aes = String(b.cb_aes_key ?? '').trim();
+    if (!aes || /^•+$/.test(aes)) aes = old.cb_aes_key || '';
+    if (tok && !/^[A-Za-z0-9]{1,32}$/.test(tok)) return { error: '回调 Token 应为 1~32 位英文字母或数字' };
+    if (aes && !/^[A-Za-z0-9]{43}$/.test(aes)) return { error: 'EncodingAESKey 应为 43 位英文字母或数字' };
+    if (!!tok !== !!aes) return { error: '接收事件服务器的 Token 和 EncodingAESKey 要一起填（或都留空）' };
+    if (tok) { cfg.cb_token = tok; cfg.cb_aes_key = aes; } else { delete cfg.cb_token; delete cfg.cb_aes_key; }
+  }
   // 默认组织密码：只存 bcrypt 哈希；留空 = 不改，clear_default_password = 清除
   if (b.clear_default_password) delete cfg.default_pw_hash;
   else if (b.default_password) {
@@ -1891,6 +1907,7 @@ async function runDirSource(src, actor, opts = {}) {
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
       removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, bind_providers: out.bind_providers,
       bound: out.bound, pw_set: out.pw_set, kept: out.kept, conflicts: out.conflicts, force: out.force,
+      limited: out.limited, unmatched: out.unmatched, warning: out.warning,
       errors: out.errors.slice(0, 20) };
     dirSources.setState.run(JSON.stringify(state), src.id);
     audit('org.dir_synced', { subject: subject.id, actor, detail: { source: src.type, source_id: src.id, label: src.label, force: out.force, total: out.total, created: out.created, added: out.added, removed: out.removed, bound: out.bound, pw_set: out.pw_set, kept: out.kept, errors: out.errors.length } });
@@ -1934,7 +1951,7 @@ router.post('/admin/orgs/:sid/dir-sources/scope-tree', requireAuth, async (req, 
   let secret = String(b.secret || '').trim();
   if (!secret || /^•+$/.test(secret)) secret = old.secret || '';
   if (!corp_id || !secret) return res.status(400).json({ error: '请先填写企业 ID 与通讯录 Secret' });
-  try { res.json({ success: true, nodes: await dirsyncWecom.fetchScopeTree({ corp_id, secret }) }); }
+  try { const nodes = await dirsyncWecom.fetchScopeTree({ corp_id, secret }); res.json({ success: true, nodes, limited: !!nodes.limited, warning: nodes.limited ? dirsyncWecom.LIMITED_HINT : undefined }); }
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 router.post('/admin/orgs/:sid/dir-sources', requireAuth, async (req, res) => {
@@ -1999,6 +2016,79 @@ router.post('/v1/orgs/:sid/dir-sync/run', requireApiKey('org:sync'), async (req,
   }
   res.json({ success: results.some(r => r.state), results });
 });
+// ── 接收事件服务器（v3.5.39）：企业微信通讯录变更实时回调 ──
+// GET = 企业微信后台保存 URL 时的校验（验签 + 解密 echostr 原样返回）；POST = 事件推送（5 秒内回 success）。
+// 收到成员/部门变更后不逐条改库，而是「防抖」后对该同步源跑一次全量同步：一阵批量变动只同步一次，
+// 范围（所选部门）、移出、单独修改不覆盖等规则全部和手动/定时同步一致。改 UserId 的事件先就地改映射，免得被当成离开 + 新人。
+const DIR_EVENT_DELAY = () => Math.min(600000, Math.max(200, parseInt(process.env.DIRSYNC_EVENT_DELAY_MS, 10) || 10000));
+const _dirEventTimers = new Map();
+function scheduleEventSync(sourceId, delay = DIR_EVENT_DELAY()) {
+  clearTimeout(_dirEventTimers.get(sourceId));
+  const t = setTimeout(() => {
+    _dirEventTimers.delete(sourceId);
+    const src = dirSources.get.get(sourceId);
+    if (!src || !src.enabled) return;
+    if (_dirSyncRunning.has(src.subject_id)) return scheduleEventSync(sourceId);   // 本组织正在同步，稍后再跑
+    runDirSource(src, 'wecom:event').catch(e => console.warn('[通讯录事件同步]', src.label, e.message));
+  }, delay);
+  if (t.unref) t.unref();
+  _dirEventTimers.set(sourceId, t);
+}
+function dirEventSource(req) {
+  const src = dirSources.get.get(req.params.id);
+  if (!src || src.type !== 'wecom') return null;
+  const cfg = parseJ(src.config) || {};
+  if (!cfg.cb_token || !cfg.cb_aes_key) return null;
+  return { src, cfg };
+}
+router.get('/public/dirsync/wecom/:id', (req, res) => {
+  const ctx = dirEventSource(req);
+  if (!ctx) return res.status(404).type('text').send('not configured');
+  const echostr = String(req.query.echostr || '');
+  try {
+    if (!echostr || !dirsyncWecom.cbVerify(ctx.cfg.cb_token, req.query, echostr)) return res.status(403).type('text').send('bad signature');
+    const { msg, receiveid } = dirsyncWecom.cbDecrypt(ctx.cfg.cb_aes_key, echostr);
+    if (receiveid !== ctx.cfg.corp_id) return res.status(403).type('text').send('corp mismatch');
+    dirSources.setEventState.run(JSON.stringify({ ...(parseJ(ctx.src.event_state) || {}), verified_at: new Date().toISOString() }), ctx.src.id);
+    res.type('text').send(msg);
+  } catch (e) { res.status(400).type('text').send('decrypt failed'); }
+});
+router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit: '256kb' }), (req, res) => {
+  const ctx = dirEventSource(req);
+  if (!ctx) return res.status(404).type('text').send('not configured');
+  const encrypt = dirsyncWecom.xmlField(typeof req.body === 'string' ? req.body : '', 'Encrypt');
+  let msg;
+  try {
+    if (!encrypt || !dirsyncWecom.cbVerify(ctx.cfg.cb_token, req.query, encrypt)) return res.status(403).type('text').send('bad signature');
+    const d = dirsyncWecom.cbDecrypt(ctx.cfg.cb_aes_key, encrypt);
+    if (d.receiveid !== ctx.cfg.corp_id) return res.status(403).type('text').send('corp mismatch');
+    msg = d.msg;
+  } catch (e) { return res.status(400).type('text').send('decrypt failed'); }
+  // 企业微信要求 5 秒内回 success：这里只做轻量的本地改动（改 UserId 映射、记事件），全量同步交给防抖定时器异步跑
+  const ev = dirsyncWecom.xmlField(msg, 'Event');
+  const change = dirsyncWecom.xmlField(msg, 'ChangeType');
+  const prev = parseJ(dirSources.get.get(ctx.src.id)?.event_state) || {};
+  const state = { ...prev, at: new Date().toISOString(), event: ev, change_type: change, count: (prev.count || 0) + 1, ignored: false };
+  if (ev !== 'change_contact' || !ctx.src.enabled) {
+    state.ignored = true;   // 不是通讯录变更 / 同步源已停用：只记录不同步
+  } else {
+    if (change === 'update_user') {
+      try {
+        const subject = oauthSubjects.get.get(ctx.src.subject_id);
+        const oldId = dirsyncWecom.xmlField(msg, 'UserID'), newId = dirsyncWecom.xmlField(msg, 'NewUserID');
+        if (subject && newId) {
+          const r = dirsyncWecom.renameExtId(ctx.src, subject, ctx.cfg, oldId, newId);
+          if (r.renamed) state.renamed = { from: oldId, to: newId };
+        }
+      } catch (e) { console.warn('[通讯录事件] 改 UserId 失败：', e.message); state.error = String(e.message).slice(0, 200); }
+    }
+    state.queued = true;
+    scheduleEventSync(ctx.src.id);
+  }
+  dirSources.setEventState.run(JSON.stringify(state), ctx.src.id);
+  res.type('text').send('success');
+});
+
 // 定时同步：每 10 分钟看一眼，到点（interval_hours）的启用同步源跑一次。0 = 只手动。
 function runDueDirSyncs() {
   for (const src of dirSources.dueList.all()) {

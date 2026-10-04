@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.38**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.39**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.38，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.39，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -199,7 +199,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.38）
+## 数据库表清单（截至 v3.5.39）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
@@ -208,7 +208,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -432,6 +432,29 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.39 企业微信接收事件服务器（实时同步）+「通讯录同步」Secret 受限（48009）降级（用户反馈）
+
+三级版本。用户：①「企业微信通讯录同步有个叫『接收事件服务器』的东西，这个似乎还没做」②线上报 `department/list 失败：48009 api forbidden for contact assistant ... from ip: 118.25.149.17`。
+
+### ① 接收事件服务器
+- `dirsync-wecom.js`：`cbSignature`（sha1 字典序拼 token/timestamp/nonce/encrypt）/ `cbVerify`（timingSafeEqual）/ `cbDecrypt`（AES-256-CBC，key=base64(AESKey+'=')、iv=key 前 16 字节、PKCS#7 块 32；明文=16 随机+4 字节大端长度+消息+receiveid）/ `cbEncrypt`（测试/自检用）/ `xmlField`（扁平 XML 取 CDATA）/ `renameExtId`（改 UserId：本源映射、该源绑定的登录凭证 open_id、`dir_sync_applied` bind 值、组织内 UID 还等于旧 UserId 时，一个事务里一起改）。
+- 配置：同步源 config 加 `cb_token`（≤32 位字母数字）/ `cb_aes_key`（43 位，视图打码，打码串/留空不改，`cb_clear` 关闭；两者须同时有或同时无）。视图加 `callback_path`、`callback_ready`、`event_state`。新列 `dir_sync_sources.event_state`。
+- 公开路由 `GET/POST /api/public/dirsync/wecom/:id`（api.js）：GET 验签+解密 echostr 原样返回（记 `verified_at`）；POST `express.text` 收 XML → 验签 → 解密 → receiveid 必须 = corp_id（否则 403）→ `change_contact` 且源启用：`update_user`+`NewUserID` 先 `renameExtId`，再 `scheduleEventSync`（**防抖** `DIRSYNC_EVENT_DELAY_MS` 默认 10 秒，200ms~10 分钟；同组织正在同步则顺延；actor `wecom:event`）→ 记 `event_state` → 回 `success`。**刻意不逐条增量改库**：防抖后跑全量同步，范围/移出/单独修改不覆盖等规则与手动同步完全一致。轻量本地改动做完再回 success（先回再改会被测试抓到时序问题）；事件处理异常也回 success 免得企业微信重试。
+- 前端同步源弹窗「⚡ 接收事件服务器」区：URL（`location.origin + callback_path`，复制）、Token / EncodingAESKey（随机生成 + 复制；AESKey 保存后打码不再显示）、关闭勾选、步骤说明、最近校验/事件状态（`_dirEventText`）；行上「⚡ 实时」标记。
+- ⚠️ 回调地址用的是浏览器当前域名，必须是企业微信能访问到的公网 HTTPS 地址。
+
+### ② 48009 降级
+- 企业微信 2022-08-15 起：「通讯录同步」Secret 在新 IP 上不能调 读取成员 / 获取部门成员(详情) / 获取部门列表 / 单个部门详情 / 导出，只能调 `department/simplelist` + `user/list_id`，只返回 ID；官方建议读通讯录用**自建应用** Secret。
+- `deptList()`：department/list 报 48009 → 降级 simplelist（无部门名）；`fetchScopeTree` 回 `limited`；`fetchDirectory`：受限或 user/list 失败 → list_id（按范围收集每人所在部门）→ user/get，user/get 也 48009 → **只有 UserId 的成员**（`_idOnly`，name=UserId）。`syncWecom`：`_idOnly` 且通过映射/登录绑定都认不出 → **不建号**（`unmatched++`，防止给已有用户造重复账号）；已关联的照常在册、离开照常移出。state 带 `limited` / `unmatched` / `warning`（`LIMITED_HINT`）。
+- `ERR_HINT`：40001/40013/48009/60011/60020 报错附中文处理建议（60020 = 出口 IP 不在可信 IP，提示把报错里的 from ip 加进去）。
+- 前端：Secret 标签改为推荐自建应用 + 48009 警示；部门树受限时显示「部门 #id」占位（不存成部门名）+ 提示；行上「⚠ 受限 Secret」、弹窗显示 warning 与未建号人数。
+
+### 测试
+- run12（接收事件服务器）25 项：Token/AESKey 格式、AESKey 打码不泄露、URL 校验成功/签名错/别的企业/未配置 404、记校验时间、事件验签解密回 success、防抖期间未同步→防抖后同步、三条事件只同步一次、删除成员事件移出、改 UserId 映射立即改名且同账号/绑定/组织内 UID 跟着改、事件状态、事件签名错/别的企业 403、非通讯录事件与停用源不同步、编辑打码不覆盖、关闭后 404。连跑 3 次稳定。
+- run13（48009 降级）10 项：受限 Secret 拉部门降级、完整 Secret 建号后换受限 Secret 不重复建号、未关联 2 人不建号计 unmatched、已有成员不被移出、受限下离开照常移出、错 Secret / 无部门权限中文提示。mock `mock-wecom3.js` 加 `assistsecret`（详情接口 48009、simplelist/list_id 可用）。
+- 回归 run10 36 / run9 26 / run8 20 / run11 15 / run 35 全过；playwright：受限 Secret 加载部门树（占位 + 提示）→ 生成 Token/AESKey → 保存 → 同步 → 行显示「⚡ 实时」「⚠ 受限 Secret」、弹窗回填 URL 与打码，零 JS 报错。
+- ⚠️ 真实企业微信未联调；加解密按官方协议实现、用自写加密往返验证，未用官方测试向量。
 
 ## v3.5.38 组织文件夹（管理端把组织归类）（用户反馈）
 

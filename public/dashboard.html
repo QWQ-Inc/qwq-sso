@@ -4951,8 +4951,8 @@ function _dirStateText(st) {
   if (!st) return '<span style="color:var(--txd);">未同步</span>';
   const at = esc(String(st.at || '').replace('T', ' ').slice(5, 16));
   if (!st.ok) return `<span style="color:var(--err);" title="${esc(st.error || '')}">✗ ${at} 失败</span>`;
-  const extra = (st.bound ? ' · 绑定 ' + st.bound : '') + (st.pw_set ? ' · 设密码 ' + st.pw_set : '') + (st.kept ? ' · 保留单独修改 ' + st.kept : '') + (st.conflicts ? ' · UserId 冲突 ' + st.conflicts : '');
-  return `<span style="color:#1F7A3A;" title="${st.force ? '【全部覆盖同步】' : ''}新建 ${st.created} · 关联 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${extra}${(st.errors||[]).length ? ' · 异常 ' + st.errors.length : ''}">✓ ${at}${st.force ? ' · 全部覆盖' : ''} · 在册 ${st.total}${st.removed ? ' · 移出 ' + st.removed : ''}${st.kept ? ' · 保留 ' + st.kept : ''}${(st.errors||[]).length ? ' · ⚠' + st.errors.length : ''}</span>`;
+  const extra = (st.unmatched ? ' · 只有 UserId 未建号 ' + st.unmatched : '') + (st.bound ? ' · 绑定 ' + st.bound : '') + (st.pw_set ? ' · 设密码 ' + st.pw_set : '') + (st.kept ? ' · 保留单独修改 ' + st.kept : '') + (st.conflicts ? ' · UserId 冲突 ' + st.conflicts : '');
+  return `<span style="color:#1F7A3A;" title="${st.force ? '【全部覆盖同步】' : ''}新建 ${st.created} · 关联 ${st.linked} · 新加入 ${st.added} · 移出 ${st.removed}${extra}${(st.errors||[]).length ? ' · 异常 ' + st.errors.length : ''}">✓ ${at}${st.force ? ' · 全部覆盖' : ''} · 在册 ${st.total}${st.removed ? ' · 移出 ' + st.removed : ''}${st.kept ? ' · 保留 ' + st.kept : ''}${(st.errors||[]).length ? ' · ⚠' + st.errors.length : ''}${st.limited ? ' · <span style="color:var(--warn);">⚠ 受限 Secret</span>' : ''}</span>`;
 }
 // 同步范围展示：部门名（没有名字就显示 ID）
 function _dirScopeText(c) {
@@ -4967,7 +4967,7 @@ function dirSourceRowsHtml(sid, sources, indent) {
   if (!(sources || []).length) return indent ? '' : '<div style="color:var(--txd);padding:8px 4px;font-size:12px;">还没有同步源，点「+ 添加同步源」。</div>';
   return sources.map(x => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${pad}">
     <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
-    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · 🔑 默认密码' : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
+    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · 🔑 默认密码' : ''}${x.callback_ready ? ' · <span title="已配置接收事件服务器：企业微信通讯录变动会实时触发同步" style="color:#1F7A3A;">⚡ 实时</span>' : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
     <span style="font-size:11px;">${_dirStateText(x.state)}</span>
     ${_credBadge(x.enabled)}
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" onclick="runDirSource('${x.id}','${esc(sid)}')">立即同步</button>` : ''}
@@ -5009,7 +5009,8 @@ async function openDirSourceModal(sid, srcId) {
     ${lab('类型')}<select id="dsm-type" ${src ? 'disabled' : ''} style="${inp}"><option value="wecom">企业微信</option><option disabled>飞书（即将支持）</option><option disabled>钉钉（即将支持）</option></select>
     ${lab('名称（如「A 公司企业微信」）')}<input id="dsm-label" value="${esc(src ? src.label : '')}" placeholder="企业微信" style="${inp}">
     ${lab('企业 ID（corpid）')}<input id="dsm-corp" value="${esc(c.corp_id || '')}" placeholder="ww 开头" style="${inp}">
-    ${lab('通讯录 Secret（企业微信后台「管理工具 → 通讯录同步」，并把本服务器出口 IP 加进可信 IP）')}<input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
+    ${lab('读取通讯录用的 Secret（推荐填<b>自建应用</b>的 Secret：应用管理 → 自建应用 → Secret，应用可见范围设为要同步的部门，并把本服务器出口 IP 加进该应用的可信 IP）')}
+    <div style="font-size:11px;color:var(--warn);margin:-2px 0 4px;line-height:1.6;">⚠️「管理工具 → 通讯录同步」的 Secret 已被企业微信限制（报 48009）：只能读到 UserId 和部门 ID，读不到姓名 / 部门名 / 联系方式。用它也能跑，但只会同步已关联过的人，新的人不会建号。</div><input id="dsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
 
     ${lab('同步范围（部门，可多选；用总公司账号但只开了某几个部门权限时，只勾那几个）')}
     <div style="display:flex;gap:8px;align-items:flex-start;">
@@ -5039,10 +5040,24 @@ async function openDirSourceModal(sid, srcId) {
       ${c.has_default_pw ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dsm-pwclear"> 清除默认组织密码（已给成员设的不受影响）</label>' : ''}
     </div>
 
+    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
+      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 接收事件服务器（实时同步 · 可选）</div>
+      <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">企业微信里成员 / 部门一有变动就推送过来，约 10 秒后自动同步一次（一阵批量变动只同步一次）；不配置则只靠定时 / 手动同步。<br>
+        步骤：① 在下面生成 Token 和 EncodingAESKey，<b>先复制</b>再保存本页 ② 企业微信后台「管理工具 → 通讯录同步 → 设置接收事件服务器」填入 URL、Token、EncodingAESKey 并保存（企业微信会立即校验这个地址，需要公网可访问）。</div>
+      ${lab('URL（填到企业微信）')}
+      <div style="display:flex;gap:6px;"><input id="dsm-cb-url" readonly value="${src ? esc(location.origin + src.callback_path) : ''}" placeholder="保存同步源后生成" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" ${src ? '' : 'disabled'} onclick="_dsmCopy('dsm-cb-url')">复制</button></div>
+      ${lab('Token')}
+      <div style="display:flex;gap:6px;"><input id="dsm-cb-token" value="${esc(c.cb_token || '')}" placeholder="1~32 位字母数字" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmRand('dsm-cb-token',16)">随机生成</button><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmCopy('dsm-cb-token')">复制</button></div>
+      ${lab('EncodingAESKey')}
+      <div style="display:flex;gap:6px;"><input id="dsm-cb-aes" value="" placeholder="${c.cb_aes_key ? '已设置，留空不修改（保存后不再显示）' : '43 位字母数字'}" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmRand('dsm-cb-aes',43)">随机生成</button><button class="btn" style="flex:none;font-size:12px;" onclick="_dsmCopy('dsm-cb-aes')">复制</button></div>
+      ${c.cb_token ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dsm-cb-clear"> 关闭接收事件服务器（清除 Token / EncodingAESKey）</label>' : ''}
+      ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:6px;">${_dirEventText(src)}</div>` : ''}
+    </div>
     <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
     ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? '🔐 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : 'ℹ️ 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
-      <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>` : ''}
+      <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>
+      ${src.state && src.state.warning ? '<div style="font-size:11px;color:var(--warn);margin-top:4px;line-height:1.6;">⚠️ ' + esc(src.state.warning) + (src.state.unmatched ? `（本次有 ${src.state.unmatched} 人只拿到 UserId、认不出是谁，没有建号）` : '') + '</div>' : ''}` : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
       <button class="btn" id="dsm-cancel">取消</button><button class="btn primary" id="dsm-save">保存</button>
     </div>
@@ -5066,13 +5081,15 @@ async function openDirSourceModal(sid, srcId) {
       nodes = data.nodes || [];
     }
     if (!nodes.length) { box.innerHTML = '<span style="color:var(--txd);">这个 Secret 看不到任何部门（检查应用的通讯录可见范围）。</span>'; return; }
+    nodes.forEach(n => { if (!n.name) { n.name = '部门 #' + n.id; n._ph = true; } });   // 受限 Secret 拿不到部门名：显示占位，但不存成部门名
+    const limitedNote = nodes.some(n => n._ph) ? '<div style="font-size:11px;color:var(--warn);margin-bottom:4px;">⚠️ 这个 Secret 只能读到部门 ID、读不到部门名（「通讯录同步」Secret 受限）。换成自建应用 Secret 就能显示部门名。</div>' : '';
     // 按父子关系缩进排出树；看不到父部门的（权限只开到子部门）当作顶层
     const ids = new Set(nodes.map(n => n.id)), kids = {};
     visibleIds = ids;
     nodes.forEach(n => { const p = ids.has(n.parent) ? n.parent : 'top'; (kids[p] = kids[p] || []).push(n); });
     const rows = []; const walk = (p, d) => (kids[p] || []).sort((a, b) => (a.order || 0) - (b.order || 0) || a.id - b.id).forEach(n => { rows.push([n, d]); walk(n.id, d + 1); });
     walk('top', 0);
-    box.innerHTML = '<div style="font-size:11px;color:var(--txd);margin-bottom:4px;">勾选父部门即包含其全部子部门。</div>' + rows.map(([n, d]) => `<label style="display:block;padding:2px 0 2px ${d * 18}px;color:var(--tx);"><input type="checkbox" class="dsm-deptcb" value="${n.id}" data-name="${esc(n.name)}"> ${esc(n.name)} <span style="color:var(--txd);font-size:11px;">#${n.id}</span></label>`).join('');
+    box.innerHTML = limitedNote + '<div style="font-size:11px;color:var(--txd);margin-bottom:4px;">勾选父部门即包含其全部子部门。</div>' + rows.map(([n, d]) => `<label style="display:block;padding:2px 0 2px ${d * 18}px;color:var(--tx);"><input type="checkbox" class="dsm-deptcb" value="${n.id}" data-name="${n._ph ? '' : esc(n.name)}"> ${esc(n.name)}${n._ph ? '' : ` <span style="color:var(--txd);font-size:11px;">#${n.id}</span>`}</label>`).join('');
     ov.querySelectorAll('.dsm-deptcb').forEach(cb => {
       if (picked.has(Number(cb.value)) && !picked.get(Number(cb.value))) picked.set(Number(cb.value), cb.dataset.name);
       cb.onchange = () => { const id = Number(cb.value); if (cb.checked) picked.set(id, cb.dataset.name); else picked.delete(id); renderChips(); };
@@ -5091,6 +5108,11 @@ async function openDirSourceModal(sid, srcId) {
       uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, enabled: $('#dsm-enabled').checked,
       bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
+    body.cb_token = $('#dsm-cb-token').value.trim();
+    const cbAes = $('#dsm-cb-aes').value.trim();
+    if (cbAes) body.cb_aes_key = cbAes;
+    else if (body.cb_token && !c.cb_aes_key) { showToast('请同时填写 EncodingAESKey（可点「随机生成」）'); return; }
+    if ($('#dsm-cb-clear')?.checked) { body.cb_clear = true; delete body.cb_token; delete body.cb_aes_key; }
     const pw = $('#dsm-pw').value;
     if (pw) { if (pw.length < 6) { showToast('默认组织密码至少 6 位'); return; } body.default_password = pw; }
     if ($('#dsm-pwclear')?.checked) body.clear_default_password = true;
@@ -5099,6 +5121,25 @@ async function openDirSourceModal(sid, srcId) {
     if (!ok) { showToast(data.error || '保存失败'); return; }
     ov.remove(); showToast('已保存'); refreshDirSourceViews(sid);
   };
+}
+// 接收事件服务器：最近一次校验 / 事件
+function _dirEventText(src) {
+  if (!src.callback_ready) return 'ℹ️ 未配置接收事件服务器。';
+  const ev = src.event_state || {};
+  const t = v => esc(String(v || '').replace('T', ' ').slice(5, 16));
+  const parts = [ev.verified_at ? `✓ 企业微信已校验地址（${t(ev.verified_at)}）` : '⏳ 还没收到企业微信的地址校验——去企业微信后台填好 URL / Token / EncodingAESKey 并保存'];
+  if (ev.at) parts.push(`最近事件 ${t(ev.at)} · ${esc(ev.change_type || ev.event || '')}${ev.ignored ? '（已忽略）' : ''}${ev.renamed ? ` · UserId ${esc(ev.renamed.from)} → ${esc(ev.renamed.to)}` : ''} · 累计 ${ev.count || 0} 条`);
+  return parts.join('<br>');
+}
+function _dsmRand(id, n) {
+  const cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const a = new Uint32Array(n); crypto.getRandomValues(a);
+  document.getElementById(id).value = Array.from(a, x => cs[x % cs.length]).join('');
+}
+function _dsmCopy(id) {
+  const v = document.getElementById(id).value;
+  if (!v) { showToast('没有可复制的内容'); return; }
+  (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => showToast('已复制'), () => { document.getElementById(id).select(); document.execCommand('copy'); showToast('已复制'); });
 }
 async function toggleDirSource(id, sid, enabled) {
   const { ok, data } = await api('PATCH', '/admin/dir-sources/' + id, { enabled });

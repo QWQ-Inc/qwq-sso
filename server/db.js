@@ -420,6 +420,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_sources (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.39：接收事件服务器（企业微信通讯录变更回调）最近一次事件的状态
+try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN event_state TEXT'); } catch(_) {}
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
   source_id  TEXT NOT NULL,
   ext_id     TEXT NOT NULL,
@@ -1393,6 +1395,7 @@ const dirSourceStmts = {
   insert:    db.prepare('INSERT INTO dir_sync_sources (id,subject_id,type,label,config,enabled) VALUES (?,?,?,?,?,?)'),
   update:    db.prepare("UPDATE dir_sync_sources SET label=?, config=?, enabled=?, updated_at=datetime('now') WHERE id=?"),
   setState:  db.prepare('UPDATE dir_sync_sources SET state=? WHERE id=?'),
+  setEventState: db.prepare('UPDATE dir_sync_sources SET event_state=? WHERE id=?'),
   remove:    db.prepare('DELETE FROM dir_sync_sources WHERE id=?'),
   removeBySubject: db.prepare('DELETE FROM dir_sync_sources WHERE subject_id=?'),
   dueList:   db.prepare(`SELECT d.* FROM dir_sync_sources d JOIN oauth_subjects s ON s.id=d.subject_id WHERE d.enabled=1 AND s.enabled=1`),
