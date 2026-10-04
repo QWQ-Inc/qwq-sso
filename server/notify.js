@@ -64,6 +64,14 @@ function notify(cat, title, lines) {
   return true;
 }
 
+/** 不看类别开关、只要配好了分组就推（公告弹窗里勾了「推送到 Webhook」时用） */
+function notifyForce(cat, title, lines) {
+  if (!ready()) return false;
+  send(cat, title, lines).catch(e => console.warn('[通知推送失败]', cat, e.message));
+  return true;
+}
+function status() { return { ready: ready(), group: group(), categories: [...enabledCats()] }; }
+
 // ── 存证事件 → 通知 ──
 const userBySeq = (seq) => { try { return db.prepare('SELECT name, uid_code, uid_seq FROM users WHERE uid_seq=?').get(Number(seq)); } catch (_) { return null; } };
 const who = (seq) => {
@@ -128,4 +136,4 @@ async function testNotify(actor) {
   return send('test', '测试通知', [`这是一条测试通知，说明 Webhook / 群机器人已接通。`, `操作：${actor || '管理员'}`, `已开启推送：${cats.join('、') || '（没有开启任何类别）'}`]);
 }
 
-module.exports = { notify, fromAudit, testNotify, CATEGORIES, enabledCats, ready };
+module.exports = { notify, notifyForce, status, fromAudit, testNotify, CATEGORIES, enabledCats, ready };

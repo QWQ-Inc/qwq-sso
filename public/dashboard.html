@@ -8688,10 +8688,12 @@ async function saveOrgAdmins(sid) {
   else showToast('⚠️ ' + (data.error||'保存失败'));
 }
 
+let _annWebhook = { ready: false, default_on: false };
 async function loadAdmAnnouncements() {
   const tbody = document.getElementById('adm-announce-tbody');
   if (!tbody) return;
   const { ok, data } = await api('GET', '/admin/announcements');
+  if (ok) _annWebhook = data.webhook || { ready: false, default_on: false };
   if (!ok) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--err);padding:20px;">加载失败</td></tr>'; return; }
   if (!data.announcements.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--txd);padding:20px;">暂无公告</td></tr>'; return; }
   tbody.innerHTML = data.announcements.map(a => {
@@ -8746,6 +8748,12 @@ function openAnnounceModal(a) {
           <input type="checkbox" id="an-email"> 同时邮件群发给所有绑定邮箱的用户
         </label>
         <div style="font-size:11px;color:var(--txd);margin-top:2px;">通过 QWQ Message 分发中心发送（未配置则不发）。用户量大时为后台异步发送。</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:${_annWebhook.ready ? 'var(--txt)' : 'var(--txd)'};margin-top:10px;">
+          <input type="checkbox" id="an-webhook" ${_annWebhook.ready ? '' : 'disabled'} ${_annWebhook.ready && !edit && _annWebhook.default_on ? 'checked' : ''}> 同时推送到 Webhook / 群机器人${edit ? '（作为「公告更新」）' : ''}
+        </label>
+        <div style="font-size:11px;color:var(--txd);margin-top:2px;">${_annWebhook.ready
+          ? '推到「环境变量 → 消息通知 → 系统通知（Webhook / 群机器人）」里填的通知分组（飞书 / 钉钉 / 企业微信群机器人或自定义 Webhook）。'
+          : '还没配置通知分组：先在 QWQ Message 分发中心建一个 Webhook 或群机器人分组，再到左侧「环境变量 → 消息通知 → 系统通知（Webhook / 群机器人）」填分组编号。'}</div>
       </div>
       <div style="padding:12px 20px;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:8px;background:var(--bg);">
         <button class="btn" onclick="document.getElementById('bind-modal').classList.remove('show')">取消</button>
@@ -8763,6 +8771,7 @@ async function submitAnnounce(id) {
     level: document.getElementById('an-level').value,
     active: document.getElementById('an-active').value === '1',
     send_email: document.getElementById('an-email')?.checked || false,
+    send_webhook: document.getElementById('an-webhook')?.checked || false,
   };
   if (!body.title) { showToast('⚠️ 标题必填'); return; }
   const { ok, data } = id
@@ -8772,6 +8781,7 @@ async function submitAnnounce(id) {
   if (ok) {
     let m = id ? '✓ 已保存' : '✓ 已发布';
     if (body.send_email) m += data.email_configured ? `，已向 ${data.emailed} 位用户群发邮件` : '（未配置邮件分发，跳过群发）';
+    if (body.send_webhook) m += data.webhook_pushed ? '，已推送到 Webhook / 群机器人' : (body.active ? '（Webhook 未配置，没有推送）' : '（停用的公告不推送）');
     showToast(m); loadAdmAnnouncements();
   }
   else showToast('⚠️ ' + (data.error||'操作失败'));

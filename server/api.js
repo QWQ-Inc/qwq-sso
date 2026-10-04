@@ -2790,10 +2790,20 @@ function broadcastAnnouncementEmail(a) {
 
 // 管理端 CRUD（Lv.2 可管理）
 router.get('/admin/announcements', requireAdmin(3), (req, res) => {
-  res.json({ success: true, announcements: announcements.findAll.all() });
+  const st = notifyHub.status();
+  res.json({ success: true, announcements: announcements.findAll.all(),
+    webhook: { ready: st.ready, default_on: st.ready && st.categories.includes('announcement') }, email_configured: hasMessageHub() });
 });
+// 公告推到 Webhook / 群机器人：send_webhook true = 推（不看类别开关）/ false = 不推 / 不传 = 按「推送类别」里是否开了公告（v3.5.56）
+function pushAnnouncement(ann, sendWebhook, updated) {
+  if (!ann.active || sendWebhook === false) return false;
+  const plain = String(ann.content || '').replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\n{2,}/g, '\n').trim();
+  const args = ['announcement', `${updated ? '公告更新' : '公告'}：${ann.title}`, [plain.length > 300 ? plain.slice(0, 300) + '…' : plain, ann.link ? `详情：${ann.link}` : '']];
+  return sendWebhook === true ? notifyHub.notifyForce(...args) : (!updated && notifyHub.notify(...args));
+}
 router.post('/admin/announcements', requireAdmin(2), (req, res) => {
-  const { title, content = '', level = 'info', active = true, link, send_email } = req.body;
+  const { title, content = '', level = 'info', active = true, link, send_email, send_webhook } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: '标题必填' });
   const lv = ['info', 'warn', 'urgent'].includes(level) ? level : 'info';
   const id = uuidv4();
@@ -2802,13 +2812,8 @@ router.post('/admin/announcements', requireAdmin(2), (req, res) => {
   const ann = announcements.findById.get(id);
   let emailed = 0;
   if (send_email) emailed = broadcastAnnouncementEmail(ann);
-  // 新公告推到 Webhook / 群机器人（v3.5.52；通知类别里开了 announcement 才推）
-  if (ann.active) {
-    const plain = String(ann.content || '').replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ')
-      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\n{2,}/g, '\n').trim();
-    notifyHub.notify('announcement', `公告：${ann.title}`, [plain.length > 300 ? plain.slice(0, 300) + '…' : plain, ann.link ? `详情：${ann.link}` : '']);
-  }
-  res.json({ success: true, announcement: ann, emailed, email_configured: hasMessageHub() });
+  const pushed = pushAnnouncement(ann, send_webhook === undefined ? undefined : !!send_webhook, false);
+  res.json({ success: true, announcement: ann, emailed, email_configured: hasMessageHub(), webhook_pushed: !!pushed, webhook_ready: notifyHub.ready() });
 });
 // 系统通知（Webhook / 群机器人）发一条测试（v3.5.52）
 router.post('/admin/notify/test', requireAdmin(1), async (req, res) => {
@@ -2818,7 +2823,7 @@ router.post('/admin/notify/test', requireAdmin(1), async (req, res) => {
 router.patch('/admin/announcements/:id', requireAdmin(2), (req, res) => {
   const a = announcements.findById.get(req.params.id);
   if (!a) return res.status(404).json({ error: '公告不存在' });
-  const { title, content, level, active, link, send_email } = req.body;
+  const { title, content, level, active, link, send_email, send_webhook } = req.body;
   const lv = ['info', 'warn', 'urgent'].includes(level) ? level : a.level;
   // 更新 updated_at → 已读过的用户会重新弹出（这是"更新后重弹"的机制）
   announcements.update.run({
@@ -2832,7 +2837,8 @@ router.patch('/admin/announcements/:id', requireAdmin(2), (req, res) => {
   const ann = announcements.findById.get(a.id);
   let emailed = 0;
   if (send_email) emailed = broadcastAnnouncementEmail(ann);
-  res.json({ success: true, announcement: ann, emailed, email_configured: hasMessageHub() });
+  const pushed = send_webhook === true ? pushAnnouncement(ann, true, true) : false;   // 编辑时只有勾了才推
+  res.json({ success: true, announcement: ann, emailed, email_configured: hasMessageHub(), webhook_pushed: !!pushed, webhook_ready: notifyHub.ready() });
 });
 
 // 管理端：对已有公告单独触发邮件群发
