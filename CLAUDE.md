@@ -6,18 +6,18 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.39.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.40**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.39，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.40，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
-- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新。
+- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
 - **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码（含主屏幕快捷操作）、商城、备忘录、应用中心（图标/文件夹/组织切换/管理工具磁贴：门禁·设备·用户·身份核验）、账号设定等；GitHub Actions 云编译）。
 
@@ -199,7 +199,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.39）
+## 数据库表清单（截至 v3.5.40）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`
@@ -214,7 +214,7 @@ KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id
 
 门禁 / 设备（v3.5.0+）：`access_doors`（+code_mode/sub_ttl/escort_required/blackout，v3.5.29）、`access_rules`（deny 优先 + valid_from/to/weekdays/time）、`access_logs`、`access_qr_used`、`access_cards`（v3.5.2）、`access_faces`（v3.5.3）、`visitor_passes`（v3.5.4，+escort_user_id/blackout）、`access_escort_pending`（陪同待带入，v3.5.29）、`federation_peers`（v3.5.5）、`fed_oidc_codes`/`fed_oidc_tokens`、`fed_apps`（v3.5.7）、`devices`（设备管理，v3.5.21）
 
-内容 / 其他：`memos`/`memo_attachments`（备忘录）、`twofa_recovery_codes`（2FA 恢复码）、`announcements`/`announcement_reads`（公告）、`site_documents`（登录协议）、`webauthn_credentials`（Passkey）、`provider_stats`（服务商调用统计）、`api_call_logs`（入站/出站调用日志）
+内容 / 其他：`memos`/`memo_attachments`（备忘录）、`twofa_recovery_codes`（2FA 恢复码）、`announcements`/`announcement_reads`（公告）、`site_documents`（登录协议）、`site_verify_files`（域名验证文件，v3.5.40）、`webauthn_credentials`（Passkey）、`provider_stats`（服务商调用统计）、`api_call_logs`（入站/出站调用日志）
 
 OIDC 相关（v3.3.0 新增）：`oauth_auth_codes`（授权码，10 分钟单次使用）、`oauth_access_tokens`（访问令牌，只存 sha256）、`user_app_auth.scope`（用户对该应用实际授权了哪些 scope）
 
@@ -432,6 +432,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.40 域名验证文件（企业微信可信域名等的根目录验证文件，到期自动删除）（用户反馈）
+
+三级版本。用户：「企业微信会有可信域名校验的关卡，要求在域名根目录（比如 sso.xubainet.cn/verification.txt）下，做个验证文件放置功能（过了多少时间自动删除，默认 72 小时）。」
+- 数据：`site_verify_files(name PK, content, expires_at NULL=永久, note, created_by, created_at, updated_at)`；`db.verifyFiles`（all/get/active/upsert/setExpiry/remove/purgeExpired）。
+- 接口（`api.js`，**Lv.1 超管**——根目录文件能向任何平台证明域名归属）：`GET/POST /admin/verify-files`、`GET/PATCH/DELETE /admin/verify-files/:name`。POST 同名即替换（`replaced`）；`ttl_hours` 0~8760、默认 72、0=永久；PATCH = 从现在起重新计时。校验 `verifyFileNameError`：`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`、扩展名限 txt/html/htm/xml/json、**不得与 public/ 里已有文件重名**；内容 ≤64KB。审计 `site.verify_file_added|replaced|extended|removed`。每小时 `purgeExpired`。
+- 对外提供：`api.js` 导出 `router.serveVerifyFile` 中间件，`index.js` 挂在 providerRoutes / static **之前**（`app.use(apiRoutes.serveVerifyFile)`）：只认单段文件名 + 白名单扩展名，查 `active`（未过期）才下发，否则 next。头：`no-store` + `nosniff`；**.html/.htm 也按 text/plain 下发**（防根域存储型 XSS）。HTML 注入中间件只处理 public/ 里真实存在的 .html，不会拦。
+- 前端：管理端菜单「域名验证文件」（`ni-adm-verify-files` / `page-adm-verify-files`，加入 `SUPERADMIN_ONLY`）：列表（文件名 · 大小 · 备注 · 完整地址链接 · 剩余时间「X 天 Y 小时后删除」/永久/已过期 · 复制地址 / 延期(prompt 小时数) / 删除）；添加弹窗 `openVerifyFileModal`（选文件 FileReader 自动带出文件名 + 内容 / 手填；有效期 1h/24h/72h默认/7天/30天/永久/自定义；备注）。通讯录同步源弹窗的接收事件服务器说明里加了「要先验证可信域名就到『域名验证文件』上传」。AUDIT 标签补四项；dev mock（`window._devVF`）。
+- ⚠️ 测试：run15 22 项（Lv.2 管理员 403、6 种非法文件名、空内容、超 64KB、默认 72h、根路径原样下发 + text/plain + no-store + nosniff、.html 按纯文本、站内页面不受影响、未上传 404、同名替换 + 永久、过期即 404、列表清理过期、延期重新计时、越界 400、删除后 404、审计四项）；回归 run 35 / run11 15 / run12 25 / run14 5 / run9 26；playwright：选文件自动带出 → 保存 → 列表显示地址与剩余时间 → 根路径取到内容 → 延期 7 天 → 删除后 404，零 JS 报错。
 
 ## v3.5.39.1 修「openapi回调地址请求不通过」（接收事件服务器地址校验失败）（用户反馈）
 

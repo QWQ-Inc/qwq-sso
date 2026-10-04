@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const wmBurn = require('./watermark-burn');
@@ -1222,6 +1222,86 @@ router.post('/admin/oauth-subjects', requireAdmin(2), (req, res) => {
   if (folder) orgFolders.setSubject.run(folder, id);
   res.json({ success: true, id });
 });
+
+// ── 域名验证文件（v3.5.40）──
+// 企业微信「可信域名」、微信公众号业务域名等，要求把平台给的验证文件放在域名根目录（如 /WW_verify_xxxx.txt）。
+// 管理员在这里上传 / 粘贴，index.js 在根路径下对外提供；到期自动删除（默认 72 小时，0 = 永久）。
+// ⚠️ 根目录文件能向任何平台「证明域名归属」，所以只给超级管理员（Lv.1），并写审计。
+const VERIFY_FILE_EXTS = { txt: 'text/plain', html: 'text/plain', htm: 'text/plain', xml: 'application/xml', json: 'application/json' };
+const VERIFY_FILE_MAX = 64 * 1024;
+function verifyFileNameError(name) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name)) return '文件名只能用字母、数字、点、下划线、横线，不能带目录';
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (!name.includes('.') || !VERIFY_FILE_EXTS[ext]) return '只支持 .txt / .html / .htm / .xml / .json 文件';
+  if (require('fs').existsSync(require('path').join(__dirname, '../public', name))) return '这个文件名和本站自带的页面重名了';
+  return null;
+}
+function verifyFileView(f) {
+  return { name: f.name, size: f.size ?? (f.content || '').length, expires_at: f.expires_at || null, note: f.note || '', created_at: f.created_at, updated_at: f.updated_at,
+    expired: !!(f.expires_at && Date.parse(f.expires_at.replace(' ', 'T') + 'Z') <= Date.now()) };
+}
+function sqlTimeAfterHours(h) { return new Date(Date.now() + h * 3600e3).toISOString().slice(0, 19).replace('T', ' '); }
+function ttlFromBody(v) {
+  if (v === undefined || v === null || v === '') return 72;
+  const h = Number(v);
+  if (!Number.isFinite(h) || h < 0 || h > 8760) return null;
+  return Math.round(h * 100) / 100;
+}
+router.get('/admin/verify-files', requireAdmin(1), (req, res) => {
+  verifyFiles.purgeExpired.run();
+  res.json({ success: true, files: verifyFiles.all.all().map(verifyFileView) });
+});
+router.get('/admin/verify-files/:name', requireAdmin(1), (req, res) => {
+  const f = verifyFiles.get.get(req.params.name);
+  if (!f) return res.status(404).json({ error: '文件不存在' });
+  res.json({ success: true, file: { ...verifyFileView(f), content: f.content } });
+});
+router.post('/admin/verify-files', requireAdmin(1), (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const err = verifyFileNameError(name);
+  if (err) return res.status(400).json({ error: err });
+  const content = String(req.body?.content ?? '');
+  if (!content.trim()) return res.status(400).json({ error: '文件内容不能为空' });
+  if (Buffer.byteLength(content, 'utf8') > VERIFY_FILE_MAX) return res.status(400).json({ error: '文件太大了（上限 64KB）' });
+  const ttl = ttlFromBody(req.body?.ttl_hours);
+  if (ttl === null) return res.status(400).json({ error: '有效期应为 0~8760 小时（0 = 永久）' });
+  const existed = !!verifyFiles.get.get(name);
+  verifyFiles.upsert.run(name, content, ttl > 0 ? sqlTimeAfterHours(ttl) : null, String(req.body?.note || '').slice(0, 100), req.user.uid);
+  audit('site.verify_file_' + (existed ? 'replaced' : 'added'), { actor: actorOf(req), detail: { name, ttl_hours: ttl, size: Buffer.byteLength(content, 'utf8') } });
+  res.json({ success: true, file: verifyFileView(verifyFiles.get.get(name)), replaced: existed });
+});
+router.patch('/admin/verify-files/:name', requireAdmin(1), (req, res) => {
+  const f = verifyFiles.get.get(req.params.name);
+  if (!f) return res.status(404).json({ error: '文件不存在' });
+  const ttl = ttlFromBody(req.body?.ttl_hours);
+  if (ttl === null) return res.status(400).json({ error: '有效期应为 0~8760 小时（0 = 永久）' });
+  verifyFiles.setExpiry.run(ttl > 0 ? sqlTimeAfterHours(ttl) : null, f.name);   // 从现在起重新计时
+  audit('site.verify_file_extended', { actor: actorOf(req), detail: { name: f.name, ttl_hours: ttl } });
+  res.json({ success: true, file: verifyFileView(verifyFiles.get.get(f.name)) });
+});
+router.delete('/admin/verify-files/:name', requireAdmin(1), (req, res) => {
+  const f = verifyFiles.get.get(req.params.name);
+  if (!f) return res.status(404).json({ error: '文件不存在' });
+  verifyFiles.remove.run(f.name);
+  audit('site.verify_file_removed', { actor: actorOf(req), detail: { name: f.name } });
+  res.json({ success: true });
+});
+// 到期清理：每小时一次（读取时也会过滤掉过期的，这里只是把行删掉）
+setInterval(() => { try { verifyFiles.purgeExpired.run(); } catch (_) {} }, 3600e3).unref();
+// 给 index.js 在根路径下提供文件用
+router.serveVerifyFile = (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const name = req.path.slice(1);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name) || !name.includes('.')) return next();
+  const ext = name.split('.').pop().toLowerCase();
+  if (!VERIFY_FILE_EXTS[ext]) return next();
+  let f;
+  try { f = verifyFiles.active.get(name); } catch (_) { return next(); }
+  if (!f) return next();
+  res.set('Cache-Control', 'no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.type(VERIFY_FILE_EXTS[ext] + '; charset=utf-8').send(f.content);   // .html 也按纯文本下发，免得根目录被当成可执行页面
+};
 
 // ── 组织文件夹（v3.5.38）：管理端把组织归类。一级、不嵌套；一个组织最多在一个文件夹 ──
 function orgFolderList() {

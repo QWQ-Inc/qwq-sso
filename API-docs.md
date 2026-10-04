@@ -1808,6 +1808,27 @@ POST /api/admin/env         # 批量保存环境变量
 
 ---
 
+### 7.12.1 域名验证文件（v3.5.40）
+
+企业微信「可信域名」、微信公众号业务域名等会要求把验证文件放在**域名根目录**。管理员上传后，本站在根路径下提供，到期自动删除。
+
+```
+GET    /api/admin/verify-files            # 列表 { files:[{name,size,expires_at,note,created_at,updated_at,expired}] }（顺带清理已过期的）
+GET    /api/admin/verify-files/:name      # 单个（含 content）
+POST   /api/admin/verify-files            # 添加 / 同名替换 { name, content, ttl_hours?=72, note? } → { file, replaced }
+PATCH  /api/admin/verify-files/:name      # 延期 { ttl_hours }（从现在起重新计时；0 = 永久）
+DELETE /api/admin/verify-files/:name      # 删除
+
+GET    /<name>                            # 公开：返回文件内容（到期或不存在 404）
+```
+
+**所需等级**：Lv.1（超级管理员）——根目录文件能向任何平台证明域名归属。
+
+- 文件名：字母 / 数字 / `.` / `_` / `-`，不能带目录、不能以点开头，扩展名限 `.txt` `.html` `.htm` `.xml` `.json`，不能和本站自带页面重名。内容 ≤ 64KB。
+- `ttl_hours`：0~8760，默认 72；0 = 永久。到期后立即访问不到，每小时清理一次。
+- 下发头：`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`；`.html` 也按 `text/plain` 下发（不会被当成网页执行）。
+- 添加 / 替换 / 延期 / 删除写审计存证 `site.verify_file_added|replaced|extended|removed`。
+
 ### 7.13 三方登录「多主体」管理（v3.4.15）
 
 一个渠道（如微信）可挂多套登录凭证，适配多组织 / 多架构。模型为**两级**：

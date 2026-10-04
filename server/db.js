@@ -390,6 +390,16 @@ try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_subjects_org_code ON 
 // 外部通讯录同步（v3.5.35，先做企业微信）：dir_sync=配置 JSON（含通讯录 secret），dir_sync_state=上次同步结果 JSON
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync_state TEXT'); } catch(_) {}
+// v3.5.40：域名验证文件——企业微信「可信域名」等要求把验证文件放在域名根目录（/WW_verify_xxx.txt），到期自动删除
+try { db.exec(`CREATE TABLE IF NOT EXISTS site_verify_files (
+  name        TEXT PRIMARY KEY,
+  content     TEXT NOT NULL,
+  expires_at  TEXT,
+  note        TEXT,
+  created_by  TEXT,
+  created_at  TEXT DEFAULT (datetime('now')),
+  updated_at  TEXT DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // v3.5.38：组织文件夹——管理端把组织归类（一级，不嵌套；一个组织最多在一个文件夹，NULL = 未归类）
 try { db.exec(`CREATE TABLE IF NOT EXISTS org_folders (
   id          TEXT PRIMARY KEY,
@@ -1376,6 +1386,18 @@ const deviceStmts = {
   remove: db.prepare('DELETE FROM devices WHERE id=?'),
 };
 
+// 域名验证文件（v3.5.40）；expires_at 为 NULL = 永久
+const verifyFileStmts = {
+  all:    db.prepare('SELECT name, length(content) AS size, expires_at, note, created_by, created_at, updated_at FROM site_verify_files ORDER BY created_at DESC'),
+  get:    db.prepare('SELECT * FROM site_verify_files WHERE name=?'),
+  active: db.prepare("SELECT * FROM site_verify_files WHERE name=? AND (expires_at IS NULL OR expires_at > datetime('now'))"),
+  upsert: db.prepare(`INSERT INTO site_verify_files (name, content, expires_at, note, created_by) VALUES (?,?,?,?,?)
+    ON CONFLICT(name) DO UPDATE SET content=excluded.content, expires_at=excluded.expires_at, note=excluded.note, created_by=excluded.created_by, updated_at=datetime('now')`),
+  setExpiry: db.prepare("UPDATE site_verify_files SET expires_at=?, updated_at=datetime('now') WHERE name=?"),
+  remove: db.prepare('DELETE FROM site_verify_files WHERE name=?'),
+  purgeExpired: db.prepare("DELETE FROM site_verify_files WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')"),
+};
+
 // 组织文件夹（v3.5.38）
 const orgFolderStmts = {
   all:    db.prepare(`SELECT f.*, (SELECT COUNT(*) FROM oauth_subjects s WHERE s.folder_id=f.id) AS org_count
@@ -1417,6 +1439,7 @@ module.exports = {
   orgMembers: orgMemberStmts,
   dirSources: dirSourceStmts,
   orgFolders: orgFolderStmts,
+  verifyFiles: verifyFileStmts,
   appOrgs: appOrgStmts,
   appIcons: appIconStmts,
   appFolders: appFolderStmts,
