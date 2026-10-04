@@ -944,6 +944,7 @@ function fmtTime(s) {
 let ME = null;
 // 备忘录管理所需的最低管理员等级（默认仅超管 Lv.1，由后端 /user/me 下发，可经 MEMO_ADMIN_LEVEL 放宽）
 let _MEMO_ADMIN_LEVEL = 1;
+let _KYC_USER_DELETE = false;   // 管理端是否开放用户自行删除实名（KYC_ALLOW_DELETE，默认否）
 function canMemoAdmin() { return !!(ME && ME.role === 'admin' && (ME.admin_level || 99) <= _MEMO_ADMIN_LEVEL); }
 
 // ── 防截图水印（策略由后端下发；显示范围/样式管理员可配，也可经 /v1/watermark 改）──
@@ -996,6 +997,7 @@ async function loadMe() {
   if (!ok) return;
   ME = data.user;
   _MEMO_ADMIN_LEVEL = Number.isInteger(data.memo_admin_level) ? data.memo_admin_level : 1;
+  _KYC_USER_DELETE = !!data.kyc_user_delete;
   document.getElementById('nav-avatar').textContent = (ME.name||'?').charAt(0).toUpperCase();
   document.getElementById('nav-uname').textContent = ME.name || ME.email || '用户';
   // 公共账号：只保留基础功能。以账号本身的 is_public 为准（更可靠），隐藏商城/签到/积分/管理端/实名/登录方式绑定
@@ -1164,6 +1166,10 @@ async function loadMe() {
       <button class="nav-item" onclick="goto('adm-env')" id="ni-adm-env">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M6 7l3 3-3 3M11 13h3"/></svg>
         环境变量
+      </button>
+      <button class="nav-item" onclick="goto('adm-grants')" id="ni-adm-grants">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l6 3v5c0 4-3 6.5-6 8-3-1.5-6-4-6-8V5z"/><path d="M7.5 10l2 2 3-3.5"/></svg>
+        权限授权
       </button>
       <button class="nav-item" onclick="goto('adm-verify-files')" id="ni-adm-verify-files">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 2h7l4 4v12H5zM12 2v4h4"/><path d="M7.5 12l2 2 3.5-4"/></svg>
@@ -2514,6 +2520,18 @@ async function loadMe() {
       </div>
 
       <!-- ▸ 管理端：域名验证文件（v3.5.40） -->
+      <div class="page" id="page-adm-grants">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>权限授权</h3>
+            <button class="btn primary" style="font-size:11px;" onclick="openGrantModal()">+ 授权</button>
+          </div>
+          <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
+            清除实名、删除 / 注销账号等高危操作默认只有超级管理员能做。在这里把权限授给某个人，并限定范围：全部用户、某个组织的成员、某个分组、某个标签，或某个组织文件夹下各组织的成员。授权与撤销都记入审计存证。
+          </div>
+          <div class="card-body"><div id="grant-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+      </div>
       <div class="page" id="page-adm-verify-files">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -3067,7 +3085,7 @@ let checkedIn = false;
 let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
-const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files'];
+const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants'];
 
 function setMode(mode, targetPage) {
   // 普通用户不允许进管理端
@@ -3204,7 +3222,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3216,6 +3234,7 @@ function goto(page) {
   if(page === 'adm-audit') { loadAuditChain(); }
   if(page === 'adm-devices') loadDevices('adm');
   if(page === 'adm-verify-files') loadVerifyFiles();
+  if(page === 'adm-grants') loadGrants();
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
   if(page === 'adm-env')   { renderEnvPage(); loadEnvPollStrategy(); loadFooterItems(); }
@@ -3253,7 +3272,7 @@ function showLockedPage(page) {
   const ni = document.getElementById('ni-' + page);
   if (ni) ni.classList.add('active');
 
-  const titles = { 'adm-levels':'等级管理', 'adm-env':'环境变量', 'adm-memo':'备忘录管理', 'adm-verify-files':'域名验证文件' };
+  const titles = { 'adm-levels':'等级管理', 'adm-env':'环境变量', 'adm-memo':'备忘录管理', 'adm-verify-files':'域名验证文件', 'adm-grants':'权限授权' };
   document.getElementById('page-title').textContent = titles[page] || page;
   document.getElementById('locked-feature-name').textContent = titles[page] || page;
 }
@@ -4431,7 +4450,7 @@ async function renderKycCard() {
           <div class="rn-name">${u.kyc_name||'—'}</div>
           <div class="rn-info">证件尾号 ${u.kyc_id_tail||'—'} · 已完成实名认证</div>
         </div>
-        <button class="btn" style="color:var(--err);border-color:var(--err);font-size:11px;" onclick="deleteKyc()">删除实名信息</button>
+        ${_KYC_USER_DELETE ? '<button class="btn" style="color:var(--err);border-color:var(--err);font-size:11px;" onclick="deleteKyc()">删除实名信息</button>' : ''}
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bd);border-radius:2px;background:var(--sf2);font-size:11px;">
@@ -4570,9 +4589,11 @@ function searchAdmUsers(q) {
   _searchTimer = setTimeout(() => loadAdmUsers(q.trim()), 300);
 }
 
+let _udCan = {};
 async function loadAdmUserDetail(uid) {
   const { ok, data } = await api('GET', `/admin/users/${uid}`);
   if (!ok) return;
+  _udCan = data.can || {};
   renderUserDetailFromData(data.user);
 }
 
@@ -4582,39 +4603,65 @@ function selectUserById(el, uid) {
   loadAdmUserDetail(uid);
 }
 
+function _udTable(head, rows) {
+  return `<table style="width:100%;font-size:12px;border-collapse:collapse;"><thead><tr>${head.map(h => `<th style="text-align:left;padding:4px 6px;color:var(--txd);font-weight:500;border-bottom:1px solid var(--bd);">${h}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${r.map(c => `<td style="padding:5px 6px;border-bottom:1px solid var(--bd);color:var(--txt);word-break:break-all;">${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function _udOrgsHtml(u) {
+  const list = u.orgs || [];
+  if (!list.length) return '<div style="font-size:12px;color:var(--txd);">不属于任何组织</div>';
+  const src = { manual: '手动加入', import: '批量导入', auto: '自动编号', wecom: '企业微信同步' };
+  return _udTable(['组织', '文件夹', '组织内 UID', '来源', ''], list.map(o => [
+    esc(o.name), esc(o.folder_name || '未归类'), esc(o.org_uid || '—'), esc(src[o.source] || o.source || '—'),
+    (o.is_admin ? '<span class="badge ac" style="font-size:10px;">组织管理员</span> ' : '') + (o.has_pw ? '<span class="badge grey" style="font-size:10px;">已设组织密码</span>' : '')]));
+}
+function _udBindingsHtml(u) {
+  const list = u.bindings || [];
+  if (!list.length) return '';
+  return _udTable(['平台', '凭证 / 组织', '三方 UID', '绑定时间'], list.map(b => [
+    esc(b.platform_name), esc(b.subject_name ? b.subject_name + (b.credential ? ' · ' + b.credential : '') : b.credential),
+    `<code style="font-size:11px;">${esc(b.open_id)}</code>${b.union_id ? `<div style="font-size:10px;color:var(--txd);">unionid ${esc(b.union_id)}</div>` : ''}`, esc(fmtTime(b.bound_at))]));
+}
+function _udExtHtml(u) {
+  return _udTable(['组织 · 同步源', '外部 UID', '应用内姓名', '部门'], (u.ext_accounts || []).map(x => [
+    esc((x.org_name || '—') + ' · ' + (x.source_label || x.type)), `<code style="font-size:11px;">${esc(x.ext_id)}</code>`,
+    esc(x.ext_name || '（未取到）'), esc(x.depts || '—')]));
+}
 function renderUserDetailFromData(u) {
   const panel = document.getElementById('user-detail-panel');
   if (!panel) return;
   const statusBadge = u.status==='active' ? '<span class="badge ok">正常</span>' : '<span class="badge err">已停用</span>';
   const rnHtml = u.kyc_verified
     ? `<div class="rn-box"><div style="font-size:18px;">🪪</div>
-        <div style="flex:1"><div class="rn-name">${u.kyc_name||'—'}</div><div class="rn-info">尾号 ${u.kyc_id_tail||'—'} · 已实名 via ${u.kyc_provider||'—'}</div></div>
-        <button class="btn" style="color:var(--err);border-color:var(--err);font-size:11px;padding:3px 8px;" onclick="admDeleteKyc('${u.id}')">删除</button></div>`
+        <div style="flex:1"><div class="rn-name">${esc(u.kyc_name||'—')}</div><div class="rn-info">尾号 ${esc(u.kyc_id_tail||'—')} · 已实名 via ${esc(u.kyc_provider||'—')}</div></div>
+        ${_udCan.kyc_clear ? `<button class="btn" style="color:var(--err);border-color:var(--err);font-size:11px;padding:3px 8px;" onclick="admDeleteKyc('${u.id}')">清除实名</button>` : ''}</div>`
     : `<div style="color:var(--txd);font-size:12px;padding:6px 0;">未完成实名认证</div>
        <button class="btn" style="font-size:11px;margin-top:4px;" onclick="sendKycLinkToUser('${u.id}')">发送认证链接</button>`;
   panel.innerHTML = `
     <div class="detail-section"><h4>基本信息</h4>
       <div class="kv-grid">
-        <div class="kv"><div class="k">姓名</div><div class="v">${u.name||'—'}</div></div>
+        <div class="kv"><div class="k">显示名</div><div class="v">${esc(u.name||'—')}</div></div>
+        <div class="kv"><div class="k">真实姓名 <span style="color:var(--txd);font-weight:400;">（以实名认证为准）</span></div><div class="v">${u.kyc_verified ? esc(u.kyc_name||'—') + ' <span class="badge ok" style="font-size:10px;">已实名</span>' : '<span style="color:var(--txd);">未实名</span>'}</div></div>
         <div class="kv"><div class="k">用户编号</div><div class="v">${uidOf(u)}</div></div>
         <div class="kv"><div class="k">状态</div><div class="v">${statusBadge}</div></div>
         <div class="kv"><div class="k">积分</div><div class="v">${u.points} pts</div></div>
-        <div class="kv"><div class="k">邮箱</div><div class="v">${u.email||'—'}</div></div>
-        <div class="kv"><div class="k">手机</div><div class="v">${u.phone||'—'}</div></div>
+        <div class="kv"><div class="k">邮箱</div><div class="v">${esc(u.email||'—')}</div></div>
+        <div class="kv"><div class="k">手机</div><div class="v">${esc(u.phone||'—')}</div></div>
         <div class="kv"><div class="k">用户等级</div><div class="v">Lv.${u.user_level} ${u.role==='admin'?'[管理员 Lv.'+u.admin_level+']':''} <span class="badge grey" style="font-size:10px;margin-left:4px;" title="API 请求标识符">${u.role==='admin'?'A'+(u.admin_level||9):'U'+(u.user_level||9)}</span></div></div>
         <div class="kv"><div class="k">注册时间</div><div class="v">${fmtTime(u.created_at)}</div></div>
       </div>
     </div>
     <div class="detail-section"><h4>实名认证</h4>${rnHtml}</div>
+    <div class="detail-section"><h4>所属组织</h4>${_udOrgsHtml(u)}</div>
     <div class="detail-section"><h4>登录方式</h4>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        ${u.password_hash ? '' : ''}
-        ${(u.oauthBinds||[]).map(o=>`<span class="badge ac">${o.provider}</span>`).join('')}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:${(u.bindings||[]).length ? '8px' : '0'};">
         ${u.email ? '<span class="badge ac">邮箱</span>' : ''}
         ${u.phone ? '<span class="badge ac">手机号</span>' : ''}
-        ${!u.email && !u.phone && !(u.oauthBinds||[]).length ? '<span style="font-size:12px;color:var(--txd);">—</span>' : ''}
+        ${!u.email && !u.phone && !(u.bindings||[]).length ? '<span style="font-size:12px;color:var(--txd);">—</span>' : ''}
       </div>
+      ${_udBindingsHtml(u)}
     </div>
+    ${(u.ext_accounts||[]).length ? `<div class="detail-section"><h4>外部通讯录账号 <span style="font-size:10px;color:var(--txd);font-weight:400;">（应用内姓名来自外部系统，仅供参考；真实姓名以实名认证为准）</span></h4>${_udExtHtml(u)}</div>` : ''}
     <div class="detail-section"><h4>授权应用</h4>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         ${(u.apps||[]).map(a=>`<span class="badge grey">${a.name}</span>`).join('')||'<span style="font-size:12px;color:var(--txd);">暂无</span>'}
@@ -4690,9 +4737,74 @@ async function admEnableUser(uid) {
   if (ok) { showToast('✓ 账号已恢复'); loadAdmUsers(); }
 }
 async function admDeleteKyc(uid) {
-  if (!confirm('确认删除该用户实名信息？')) return;
-  const { ok } = await api('DELETE', `/admin/users/${uid}/kyc`);
-  if (ok) { showToast('⚠️ 实名信息已删除'); loadAdmUsers(); }
+  if (!confirm('确认清除该用户的实名信息？清除后需重新认证。')) return;
+  const { ok, data } = await api('DELETE', `/admin/users/${uid}/kyc`);
+  if (ok) { showToast('⚠️ 实名信息已清除'); loadAdmUserDetail(uid); }
+  else showToast('清除失败：' + (data?.error || '未知错误'));
+}
+
+// ── 权限授权（v3.5.43）──
+async function loadGrants() {
+  const box = document.getElementById('grant-list');
+  const { ok, data } = await api('GET', '/admin/grants');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  const rows = data.grants || [];
+  box.innerHTML = rows.length ? _udTable(['被授权人', '权限', '范围', '授权时间', ''], rows.map(g => [
+    esc(g.user_name || '—') + ' <span style="color:var(--txd);">' + esc(g.uid_code || ('#' + String(g.uid_seq || '').padStart(5, '0'))) + '</span>',
+    esc(g.perm_name), esc(g.scope_name), esc(fmtTime(g.created_at)),
+    `<button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delGrant(${JSON.stringify(g.id)})'>撤销</button>`]))
+    : '<div style="padding:8px 0;">还没有授权。除超级管理员外，没有人能清除实名或删除账号。</div>';
+}
+async function delGrant(id) {
+  if (!confirm('撤销这条授权？')) return;
+  const { ok, data } = await api('DELETE', '/admin/grants/' + id);
+  if (ok) { showToast('已撤销'); loadGrants(); } else showToast('撤销失败：' + (data?.error || '未知错误'));
+}
+let _grantScopeOpts = {};
+async function openGrantModal() {
+  const [g, t, o] = await Promise.all([api('GET', '/admin/groups'), api('GET', '/admin/tags'), api('GET', '/admin/oauth-subjects')]);
+  _grantScopeOpts = {
+    org: ((o.data && o.data.data) || []).map(x => ({ id: x.id, name: x.name })),
+    folder: ((o.data && o.data.folders) || []).map(x => ({ id: x.id, name: x.name })),
+    group: ((g.data && g.data.groups) || []).map(x => ({ id: x.id, name: x.name })),
+    tag: ((t.data && t.data.tags) || []).map(x => ({ id: x.id, name: x.name })),
+  };
+  document.getElementById('grant-modal')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-mask show'; m.id = 'grant-modal';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:13px;';
+  m.innerHTML = `<div class="modal" style="min-width:420px;text-align:left;">
+    <h3 style="margin-bottom:12px;">授权</h3>
+    <div style="font-size:12px;color:var(--txm);margin-bottom:4px;">授给谁</div>
+    <input id="gr-account" placeholder="邮箱 / 手机 / UID / 用户名" style="${inp}">
+    <div style="font-size:12px;color:var(--txm);margin:10px 0 4px;">权限</div>
+    <select id="gr-perm" style="${inp}"><option value="kyc.clear">清除实名认证</option><option value="user.delete">删除 / 注销账号</option></select>
+    <div style="font-size:12px;color:var(--txm);margin:10px 0 4px;">范围</div>
+    <select id="gr-scope" style="${inp}" onchange="_grantScopeChanged()">
+      <option value="all">全部用户</option><option value="org">某个组织的成员</option><option value="folder">某个组织文件夹下的成员</option>
+      <option value="group">某个分组</option><option value="tag">某个标签</option></select>
+    <select id="gr-scope-id" style="${inp}margin-top:6px;display:none;"></select>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+      <button class="btn" onclick="document.getElementById('grant-modal').remove()">取消</button>
+      <button class="btn primary" onclick="saveGrant()">授权</button>
+    </div></div>`;
+  document.body.appendChild(m);
+}
+function _grantScopeChanged() {
+  const type = document.getElementById('gr-scope').value;
+  const sel = document.getElementById('gr-scope-id');
+  if (type === 'all') { sel.style.display = 'none'; return; }
+  const list = _grantScopeOpts[type] || [];
+  sel.innerHTML = list.length ? list.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('') : '<option value="">（没有可选的）</option>';
+  sel.style.display = '';
+}
+async function saveGrant() {
+  const body = { account: document.getElementById('gr-account').value.trim(), perm: document.getElementById('gr-perm').value,
+    scope_type: document.getElementById('gr-scope').value, scope_id: document.getElementById('gr-scope-id').value };
+  if (!body.account) { showToast('请填写被授权人'); return; }
+  const { ok, data } = await api('POST', '/admin/grants', body);
+  if (ok) { showToast('已授权'); document.getElementById('grant-modal').remove(); loadGrants(); }
+  else showToast('授权失败：' + (data?.error || '未知错误'));
 }
 
 async function sendKycLinkToUser(uid) {
@@ -5504,6 +5616,7 @@ async function openSubjectApps(sid, name) {
 // 审计存证链（防篡改）
 // ══════════════════════════════════════════
 const AUDIT_EVENT_LABEL = {
+  'admin.grant_added':'授予管理权限', 'admin.grant_removed':'撤销管理权限', 'user.merged':'合并账号',
   'site.verify_file_added':'添加域名验证文件', 'site.verify_file_replaced':'替换域名验证文件', 'site.verify_file_extended':'域名验证文件延期', 'site.verify_file_removed':'删除域名验证文件',
   'kyc.verified':'实名认证通过', 'kyc.reverified':'二次实名通过', 'kyc.session_started':'发起实名会话',
   'kyc.reverify_requested':'发起二次核验', 'kyc.realname_deleted':'清除实名信息',
@@ -8525,7 +8638,7 @@ const ENV_GROUPS = [
     vars: [
       { key: 'KYC_PROVIDER',     label: '当前 KYC 服务商', desc: '填写 didit / stripe / volcengine / aliyun / tencent，多个用逗号分隔参与轮询', required: false, secret: false, placeholder: 'didit', value: '' },
       { key: 'KYC_ENABLED',      label: '是否启用实名认证', desc: 'true 启用 / false 关闭（关闭后用户端不显示实名入口）',      required: false, secret: false, placeholder: 'true',    value: '' },
-      { key: 'KYC_ALLOW_DELETE', label: '允许用户删除实名', desc: 'true 则用户可自助删除实名信息后重新认证，false 则禁止',     required: false, secret: false, placeholder: 'true',    value: '' },
+      { key: 'KYC_ALLOW_DELETE', label: '允许用户删除实名', desc: '填 true 才允许用户自己删除实名信息（之后可重新认证）；默认不允许。管理端清除实名只有超级管理员或被授权「清除实名认证」的人能做',     required: false, secret: false, placeholder: 'false',    value: '' },
     ]
   },
   {

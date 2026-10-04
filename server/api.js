@@ -2417,7 +2417,7 @@ router.get('/user/me', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const oauthBinds = oauth.findByUser.all(user.id);
-  res.json({ success: true, user: { ...safeUser(user), oauthBinds }, memo_admin_level: memoAdminLevel() });
+  res.json({ success: true, user: { ...safeUser(user), oauthBinds }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed() });
 });
 
 router.post('/user/profile', requireAuth, noPublic, (req, res) => {
@@ -2572,7 +2572,10 @@ router.post('/user/checkin', requireAuth, noPublic, (req, res) => {
   res.json({ success: true, points: pts, streak: updated.checkin_streak, total: updated.points });
 });
 
+// 用户自己删除实名：默认不允许（KYC_ALLOW_DELETE=true/on 才开放）——实名是账号与真人的深度绑定，删了再认证会被滥用来换绑身份
+const kycUserDeleteAllowed = () => ['on', '1', 'true', 'yes'].includes(String(process.env.KYC_ALLOW_DELETE || '').trim().toLowerCase());
 router.delete('/user/kyc', requireAuth, noPublic, (req, res) => {
+  if (!kycUserDeleteAllowed()) return res.status(403).json({ error: '管理员未开放自行删除实名认证，如需删除请联系管理员' });
   const user = users.findById.get(req.user.uid);
   if (!user || !user.kyc_verified) return res.status(400).json({ error: '未实名认证' });
   users.clearKyc.run(user.id);
@@ -2710,13 +2713,34 @@ router.get('/admin/users', requireAdmin(3), (req, res) => {
   }) });
 });
 
+// 账号详情补充（v3.5.43）：所属组织、登录凭证（平台 · 主体 · 三方 UID）、外部通讯录账号（含应用内姓名）
+function userDetailExtras(user) {
+  const orgs = db.prepare(`SELECT m.subject_id, s.name, m.org_uid, m.source, (m.password_hash IS NOT NULL) AS has_pw, s.folder_id,
+      f.name AS folder_name, EXISTS(SELECT 1 FROM oauth_subject_admins a WHERE a.subject_id=m.subject_id AND a.user_id=m.user_id) AS is_admin
+    FROM org_members m JOIN oauth_subjects s ON s.id=m.subject_id LEFT JOIN org_folders f ON f.id=s.folder_id
+    WHERE m.user_id=? ORDER BY s.name`).all(user.id);
+  const bindings = oauth.findByUser.all(user.id).map(o => {
+    const [platform, credId] = String(o.provider).split(':');
+    let cred = null;
+    if (credId) cred = db.prepare(`SELECT p.label, p.subject_id, s.name AS subject_name FROM oauth_providers p LEFT JOIN oauth_subjects s ON s.id=p.subject_id WHERE p.id=?`).get(credId) || null;
+    return { provider: o.provider, platform, platform_name: OAUTH_META[platform]?.label || platform,
+      credential: credId ? (cred ? (cred.label || '') : '（已删除的凭证）') : '本站默认', subject_name: cred?.subject_name || null,
+      open_id: o.open_id, union_id: o.union_id || null, bound_at: o.bound_at };
+  });
+  const ext_accounts = db.prepare(`SELECT l.ext_id, l.ext_name, l.depts, l.updated_at, d.label AS source_label, d.type, s.name AS org_name
+    FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id LEFT JOIN oauth_subjects s ON s.id=d.subject_id
+    WHERE l.user_id=? ORDER BY s.name, l.ext_id`).all(user.id);
+  return { orgs, bindings, ext_accounts, merged_into: user.merged_into || null };
+}
 router.get('/admin/users/:id', requireAdmin(3), (req, res) => {
   const user = users.findById.get(req.params.id);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   res.json({ success: true, user: { ...safeUser(user),
     group: user.group_id ? groups.get.get(user.group_id) : null,
     tags: tags.ofUser.all(user.id),
-    oauthBinds: oauth.findByUser.all(user.id), apps: apps.getUserApps.all(user.id), loginLogs: logs.findByUser.all(user.id, 10) } });
+    oauthBinds: oauth.findByUser.all(user.id), apps: apps.getUserApps.all(user.id), loginLogs: logs.findByUser.all(user.id, 10),
+    ...userDetailExtras(user) },
+    can: { kyc_clear: hasGrant(req, 'kyc.clear', user), delete: hasGrant(req, 'user.delete', user) } });
 });
 
 router.patch('/admin/users/:id', requireAdmin(2), (req, res) => {
@@ -2766,9 +2790,12 @@ router.post('/admin/users/:id/reset-password', requireAdmin(2), async (req, res)
   users.updatePassword.run(await bcrypt.hash(password, 12), req.params.id);
   res.json({ success: true });
 });
-router.delete('/admin/users/:id/kyc', requireAdmin(2), (req, res) => {
-  users.clearKyc.run(req.params.id);
+// 清除实名（v3.5.43 收紧）：只有超级管理员，或被授予「清除实名认证」且对象在授权范围内的人
+router.delete('/admin/users/:id/kyc', requireAuth, (req, res) => {
   const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  if (!hasGrant(req, 'kyc.clear', u)) return res.status(403).json({ error: '清除实名需要超级管理员，或被授予「清除实名认证」权限' });
+  users.clearKyc.run(req.params.id);
   audit('kyc.realname_deleted', { subject: u ? u.uid_seq : req.params.id, actor: actorOf(req) });
   res.json({ success: true });
 });
@@ -2962,6 +2989,67 @@ router.put('/admin/users/:id/tags', requireAdmin(2), (req, res) => {
 const { publicAccounts } = require('./db');
 const safePubUser = p => ({ id: p.id, name: p.name, uid_code: p.uid_code || null, uid_seq: p.uid_seq,
   owner_group_id: p.owner_group_id, member_count: p.member_count });
+
+// ══════════════════════════════════════════
+// 管理权限授权（v3.5.43）：高危操作默认只有超级管理员（Lv.1）能做，其他人需超管授权，
+// 授权可限定范围：全部 / 某组织（是其成员）/ 某分组 / 某标签 / 某组织文件夹（在该文件夹下任一组织）
+// ══════════════════════════════════════════
+const GRANT_PERMS = { 'kyc.clear': '清除实名认证', 'user.delete': '删除 / 注销账号' };
+const GRANT_SCOPES = ['all', 'org', 'group', 'tag', 'folder'];
+function grantCovers(g, target) {
+  if (g.scope_type === 'all') return true;
+  if (g.scope_type === 'org') return !!db.prepare('SELECT 1 FROM org_members WHERE subject_id=? AND user_id=?').get(g.scope_id, target.id);
+  if (g.scope_type === 'group') return target.group_id === g.scope_id;
+  if (g.scope_type === 'tag') return !!db.prepare('SELECT 1 FROM user_tag_map WHERE tag_id=? AND user_id=?').get(g.scope_id, target.id);
+  if (g.scope_type === 'folder') return !!db.prepare(`SELECT 1 FROM org_members m JOIN oauth_subjects s ON s.id=m.subject_id
+    WHERE s.folder_id=? AND m.user_id=?`).get(g.scope_id, target.id);
+  return false;
+}
+function hasGrant(req, perm, target) {
+  if (!req.user || req.user.org_scoped) return false;
+  if (req.user.role === 'admin' && (req.user.adminLevel || 9) <= 1) return true;   // 超级管理员
+  if (!target) return false;
+  return db.prepare('SELECT * FROM admin_grants WHERE user_id=? AND perm=?').all(req.user.uid, perm).some(g => grantCovers(g, target));
+}
+function grantScopeName(g) {
+  try {
+    if (g.scope_type === 'all') return '全部用户';
+    if (g.scope_type === 'org') return '组织：' + (oauthSubjects.get.get(g.scope_id)?.name || g.scope_id);
+    if (g.scope_type === 'group') return '分组：' + (groups.get.get(g.scope_id)?.name || g.scope_id);
+    if (g.scope_type === 'tag') return '标签：' + (tags.get.get(g.scope_id)?.name || g.scope_id);
+    if (g.scope_type === 'folder') return '组织文件夹：' + (db.prepare('SELECT name FROM org_folders WHERE id=?').get(g.scope_id)?.name || g.scope_id);
+  } catch (_) {}
+  return g.scope_type;
+}
+router.get('/admin/grants', requireAdmin(1), (req, res) => {
+  const rows = db.prepare(`SELECT g.*, u.name AS user_name, u.uid_seq, u.uid_code FROM admin_grants g LEFT JOIN users u ON u.id=g.user_id ORDER BY g.created_at DESC`).all();
+  res.json({ success: true, perms: GRANT_PERMS, grants: rows.map(g => ({ ...g, perm_name: GRANT_PERMS[g.perm] || g.perm, scope_name: grantScopeName(g) })) });
+});
+router.post('/admin/grants', requireAdmin(1), (req, res) => {
+  const perm = String(req.body?.perm || '');
+  const scope_type = String(req.body?.scope_type || 'all');
+  const scope_id = scope_type === 'all' ? null : String(req.body?.scope_id || '');
+  if (!GRANT_PERMS[perm]) return res.status(400).json({ error: '未知权限' });
+  if (!GRANT_SCOPES.includes(scope_type)) return res.status(400).json({ error: '未知范围' });
+  const exists = { org: () => oauthSubjects.get.get(scope_id), group: () => groups.get.get(scope_id), tag: () => tags.get.get(scope_id),
+    folder: () => db.prepare('SELECT 1 FROM org_folders WHERE id=?').get(scope_id) };
+  if (scope_type !== 'all' && (!scope_id || !exists[scope_type]())) return res.status(400).json({ error: '范围对象不存在' });
+  const u = resolveUser(String(req.body?.account || '').trim());
+  if (u === 'AMBIGUOUS') return res.status(400).json({ error: '账号有重名，请改用邮箱/手机号/UID' });
+  if (!u || u.is_public) return res.status(404).json({ error: '用户不存在' });
+  const id = uuidv4();
+  db.prepare('INSERT INTO admin_grants (id,user_id,perm,scope_type,scope_id,granted_by) VALUES (?,?,?,?,?,?)').run(id, u.id, perm, scope_type, scope_id, req.user.uid);
+  audit('admin.grant_added', { subject: String(u.uid_seq), actor: actorOf(req), detail: { perm, scope_type, scope_id } });
+  res.json({ success: true, id });
+});
+router.delete('/admin/grants/:id', requireAdmin(1), (req, res) => {
+  const g = db.prepare('SELECT * FROM admin_grants WHERE id=?').get(req.params.id);
+  if (!g) return res.status(404).json({ error: '授权不存在' });
+  db.prepare('DELETE FROM admin_grants WHERE id=?').run(g.id);
+  const u = users.findById.get(g.user_id);
+  audit('admin.grant_removed', { subject: String(u ? u.uid_seq : g.user_id), actor: actorOf(req), detail: { perm: g.perm, scope_type: g.scope_type, scope_id: g.scope_id } });
+  res.json({ success: true });
+});
 
 // 系统管理员判定（按等级）
 const isSysAdmin = (req, maxLevel = 2) => !req.user.org_scoped && req.user.role === 'admin' && (req.user.adminLevel || 9) <= maxLevel;

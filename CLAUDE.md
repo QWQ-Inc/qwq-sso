@@ -6,14 +6,14 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.42.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.43**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.42，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.43，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
@@ -200,7 +200,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.41）
+## 数据库表清单（截至 v3.5.43）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
 - `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）
@@ -209,7 +209,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -433,6 +433,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.43 账号详情补全 + 实名清除权限收紧 + 权限授权（用户反馈）
+
+三级版本。用户：「账号详情看不到所属组织或已绑定的三方凭证（只显示 wecom，没有组织、三方 uid）」「企业微信传回来的姓名不可靠，应加应用内姓名字段，真实姓名从 KYC 深度绑定」「用户能否自删 kyc 取决于管理端是否开放，默认不允许；最高管理员可清除，其他只能授权或有权限」。
+- `GET /admin/users/:id` 多回 `userDetailExtras(user)`：`orgs`（组织名 / 组织内 UID / 来源 / 文件夹 / is_admin / has_pw）、`bindings`（`provider` 拆成平台 + 凭证 id → 平台中文名、凭证名、所属组织名，默认凭证标「本站默认」，`open_id` / `union_id` 即三方 UID）、`ext_accounts`（dir_source_links JOIN 同步源 / 组织：外部 UID、`ext_name` 应用内姓名、部门）、`merged_into`；以及 `can:{kyc_clear, delete}`。前端 `_udTable` 渲染三个表；「姓名」→「显示名」+「真实姓名（以实名认证为准）」= `kyc_name`（库里本就只存脱敏名）。详情里的 name/email/phone 改为 esc（原来裸插）。
+- **权限授权**：`admin_grants(id,user_id,perm,scope_type,scope_id,granted_by)`；`GRANT_PERMS = kyc.clear / user.delete`；`hasGrant(req, perm, target)`：超管（Lv.1，非 org_scoped）恒真，否则看授权范围是否覆盖对象（`grantCovers`：all / org 成员 / group_id / 标签 / 文件夹下任一组织成员）。`GET/POST/DELETE /admin/grants`（requireAdmin(1)，审计 `admin.grant_added/removed`）。前端「权限授权」页（`adm-grants`，SUPERADMIN_ONLY）。
+- 实名清除：`DELETE /admin/users/:id/kyc` 从 `requireAdmin(2)` 改为 `requireAuth + hasGrant('kyc.clear')`；`DELETE /user/kyc` 只有 `KYC_ALLOW_DELETE` 为 true/on/1/yes 才放行（**这个配置项早就在系统配置里但服务端从没读过**，默认改为不允许）；`/user/me` 回 `kyc_user_delete`，用户端按它显示删除按钮。⚠️ 开放 API `DELETE /v1/users/:uid/realname`（API Key + scope）未改。
+- ⚠️ 测试：run18 19 项（详情三块数据、can 标志、Lv.2 未授权 403、非超管不能授权、范围对象不存在 400、组织范围内可清 / 范围外 403、列表名称、撤销后 403、审计、用户自删默认 403 / 配置开后 200、超管可清）；playwright：详情三表 + 授权页按组织授权，零 JS 报错。
 
 ## v3.5.42.1 修企业微信绑定绑不上 + 受限 Secret 同步不建号（用户反馈）
 

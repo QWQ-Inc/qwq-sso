@@ -442,6 +442,16 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
   updated_at TEXT DEFAULT (datetime('now')),
   PRIMARY KEY (source_id, ext_id)
 )`); } catch(_) {}
+// v3.5.43：管理权限授权——超级管理员把「清除实名」「删除账号」等高危权限授给某人，限定在某组织 / 分组 / 标签 / 组织文件夹（或全部）
+try { db.exec(`CREATE TABLE IF NOT EXISTS admin_grants (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  perm       TEXT NOT NULL,                 -- kyc.clear | user.delete
+  scope_type TEXT NOT NULL DEFAULT 'all',   -- all | org | group | tag | folder
+  scope_id   TEXT,
+  granted_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // v3.5.43：外部系统里的姓名（「应用内姓名」，不可靠，只展示；真实姓名以实名认证为准）
 try { db.exec('ALTER TABLE dir_source_links ADD COLUMN ext_name TEXT'); } catch(_) {}
 // v3.5.37：同步给成员设过什么（kind=bind/key=provider/value=UserId；kind=pw/key=''/value=密码哈希）。
