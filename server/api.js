@@ -2034,6 +2034,28 @@ function scheduleEventSync(sourceId, delay = DIR_EVENT_DELAY()) {
   if (t.unref) t.unref();
   _dirEventTimers.set(sourceId, t);
 }
+// 企业微信回调的 query 自己解析：Express（qs）会把「+」当空格，而 echostr / 签名参数是 base64，
+// 企业微信不一定把 + 编码成 %2B——被改成空格后验签和解密全失败（企业微信后台报「openapi回调地址请求不通过」）。
+function wecomQuery(req) {
+  const out = {};
+  const qs = String(req.originalUrl || '').split('?')[1] || '';
+  for (const kv of qs.split('&')) {
+    if (!kv) continue;
+    const i = kv.indexOf('=');
+    const k = i < 0 ? kv : kv.slice(0, i), v = i < 0 ? '' : kv.slice(i + 1);
+    try { out[decodeURIComponent(k)] = decodeURIComponent(v); } catch (_) { out[k] = v; }
+  }
+  return out;
+}
+// 记录最近一次企业微信「保存接收事件服务器」时的地址校验结果（成功/失败原因），方便排查
+function noteVerifyAttempt(src, ok, reason, req) {
+  try {
+    const prev = parseJ(dirSources.get.get(src.id)?.event_state) || {};
+    const next = { ...prev, last_verify: { at: new Date().toISOString(), ok, reason: reason || '', ip: req.ip || '' } };
+    if (ok) next.verified_at = next.last_verify.at;
+    dirSources.setEventState.run(JSON.stringify(next), src.id);
+  } catch (_) {}
+}
 function dirEventSource(req) {
   const src = dirSources.get.get(req.params.id);
   if (!src || src.type !== 'wecom') return null;
@@ -2042,16 +2064,31 @@ function dirEventSource(req) {
   return { src, cfg };
 }
 router.get('/public/dirsync/wecom/:id', (req, res) => {
+  const src = dirSources.get.get(req.params.id);
   const ctx = dirEventSource(req);
-  if (!ctx) return res.status(404).type('text').send('not configured');
-  const echostr = String(req.query.echostr || '');
+  if (!ctx) {
+    if (src) noteVerifyAttempt(src, false, '本同步源还没保存 Token / EncodingAESKey（先在本系统保存，再去企业微信后台保存）', req);
+    return res.status(404).type('text').send('not configured');
+  }
+  const q = wecomQuery(req);
+  const echostr = String(q.echostr || '');
   try {
-    if (!echostr || !dirsyncWecom.cbVerify(ctx.cfg.cb_token, req.query, echostr)) return res.status(403).type('text').send('bad signature');
+    if (!echostr) { noteVerifyAttempt(ctx.src, false, '请求里没有 echostr', req); return res.status(400).type('text').send('missing echostr'); }
+    if (!dirsyncWecom.cbVerify(ctx.cfg.cb_token, q, echostr)) {
+      noteVerifyAttempt(ctx.src, false, '签名不对：企业微信后台填的 Token 和本系统保存的不一致', req);
+      return res.status(403).type('text').send('bad signature');
+    }
     const { msg, receiveid } = dirsyncWecom.cbDecrypt(ctx.cfg.cb_aes_key, echostr);
-    if (receiveid !== ctx.cfg.corp_id) return res.status(403).type('text').send('corp mismatch');
-    dirSources.setEventState.run(JSON.stringify({ ...(parseJ(ctx.src.event_state) || {}), verified_at: new Date().toISOString() }), ctx.src.id);
+    if (receiveid !== ctx.cfg.corp_id) {
+      noteVerifyAttempt(ctx.src, false, `企业 ID 不符：请求来自 ${receiveid}，本同步源填的是 ${ctx.cfg.corp_id}`, req);
+      return res.status(403).type('text').send('corp mismatch');
+    }
+    noteVerifyAttempt(ctx.src, true, '', req);
     res.type('text').send(msg);
-  } catch (e) { res.status(400).type('text').send('decrypt failed'); }
+  } catch (e) {
+    noteVerifyAttempt(ctx.src, false, '解密失败：企业微信后台填的 EncodingAESKey 和本系统保存的不一致', req);
+    res.status(400).type('text').send('decrypt failed');
+  }
 });
 router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit: '256kb' }), (req, res) => {
   const ctx = dirEventSource(req);
@@ -2059,7 +2096,7 @@ router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit:
   const encrypt = dirsyncWecom.xmlField(typeof req.body === 'string' ? req.body : '', 'Encrypt');
   let msg;
   try {
-    if (!encrypt || !dirsyncWecom.cbVerify(ctx.cfg.cb_token, req.query, encrypt)) return res.status(403).type('text').send('bad signature');
+    if (!encrypt || !dirsyncWecom.cbVerify(ctx.cfg.cb_token, wecomQuery(req), encrypt)) return res.status(403).type('text').send('bad signature');
     const d = dirsyncWecom.cbDecrypt(ctx.cfg.cb_aes_key, encrypt);
     if (d.receiveid !== ctx.cfg.corp_id) return res.status(403).type('text').send('corp mismatch');
     msg = d.msg;

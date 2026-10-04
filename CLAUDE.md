@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.39**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.39.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -432,6 +432,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.39.1 修「openapi回调地址请求不通过」（接收事件服务器地址校验失败）（用户反馈）
+
+四级补丁。用户在企业微信后台保存接收事件服务器时报「openapi回调地址请求不通过」。线上已是 v3.5.39、路由可达（未配置的 id 回 404 not configured）。
+- 🐛 根因：echostr 是 base64，常含 `+`；企业微信不一定把它编码成 `%2B`，而 Express 的 qs 会把 `+` 解成空格 → 验签 / 解密全失败。本地复现：33 个含 `+` 的 echostr 未编码时 0 个通过、编码后全通过。
+- 修：`wecomQuery(req)` 从 `req.originalUrl` 自己解析 query（只用 decodeURIComponent，不做 + → 空格），GET 校验与 POST 事件验签都改用它。**以后处理企业微信 / 微信这类 base64 签名参数一律别用 `req.query`。**
+- 诊断：`noteVerifyAttempt` 把每次地址校验的结果写进 `event_state.last_verify {at, ok, reason, ip}`（源未配 Token、缺 echostr、签名不对=Token 不一致、解密失败=AESKey 不一致、企业 ID 不符）；弹窗 `_dirEventText` 显示最近一次失败原因；一直没有记录 = 企业微信访问不到这个地址（域名 / HTTPS / 网络）。
+- ⚠️ 测试：plus-test（含 + 的 echostr 未编码 / 编码都通过）、run14 5 项（未配置记原因、Token 错、AESKey 错、企业 ID 错、未编码 + 通过）、run12 25 项回归全过。
 
 ## v3.5.39 企业微信接收事件服务器（实时同步）+「通讯录同步」Secret 受限（48009）降级（用户反馈）
 

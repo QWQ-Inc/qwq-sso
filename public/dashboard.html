@@ -5127,9 +5127,12 @@ function _dirEventText(src) {
   if (!src.callback_ready) return 'ℹ️ 未配置接收事件服务器。';
   const ev = src.event_state || {};
   const t = v => esc(String(v || '').replace('T', ' ').slice(5, 16));
-  const parts = [ev.verified_at ? `✓ 企业微信已校验地址（${t(ev.verified_at)}）` : '⏳ 还没收到企业微信的地址校验——去企业微信后台填好 URL / Token / EncodingAESKey 并保存'];
+  const lv = ev.last_verify;
+  const parts = [];
+  if (lv && !lv.ok) parts.push(`<span style="color:var(--err);">✗ 最近一次企业微信校验失败（${t(lv.at)}）：${esc(lv.reason || '')}</span>`);
+  parts.push(ev.verified_at ? `✓ 企业微信已校验地址（${t(ev.verified_at)}）` : (lv ? '' : '⏳ 还没收到企业微信的校验请求——去企业微信后台填好 URL / Token / EncodingAESKey 并保存；若保存时报错且这里一直没有记录，说明企业微信访问不到这个地址（域名 / HTTPS / 网络）'));
   if (ev.at) parts.push(`最近事件 ${t(ev.at)} · ${esc(ev.change_type || ev.event || '')}${ev.ignored ? '（已忽略）' : ''}${ev.renamed ? ` · UserId ${esc(ev.renamed.from)} → ${esc(ev.renamed.to)}` : ''} · 累计 ${ev.count || 0} 条`);
-  return parts.join('<br>');
+  return parts.filter(Boolean).join('<br>');
 }
 function _dsmRand(id, n) {
   const cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

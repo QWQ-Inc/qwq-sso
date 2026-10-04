@@ -1548,7 +1548,7 @@ POST /api/v1/orgs/:sid/dir-sync/run      scope: org:sync    # 依次跑该组织
 GET/POST /api/public/dirsync/wecom/:source_id      # 公开，无需鉴权；靠企业微信签名 + 加密校验
 ```
 
-在企业微信后台「通讯录同步 → 设置接收事件服务器」（或自建应用的「接收消息」）填入 URL / Token / EncodingAESKey。GET 为保存时的地址校验（验签 + 解密 echostr 原样返回）；POST 为事件推送：验签（sha1）+ AES-256-CBC 解密 + 校验企业 ID，`change_contact` 事件**防抖约 10 秒后对该同步源跑一次全量同步**（一阵批量变动只同步一次，范围、移出、单独修改不覆盖等规则与手动同步一致；环境变量 `DIRSYNC_EVENT_DELAY_MS` 可调），`update_user` 带 `NewUserID` 时先就地改 UserId 映射 / 登录绑定 / 组织内 UID。签名错或企业不符 403；同步源停用或非通讯录事件只记录不同步。同步源视图多回 `callback_path`、`callback_ready`、`event_state`（最近校验时间、最近事件、累计条数）。
+在企业微信后台「通讯录同步 → 设置接收事件服务器」（或自建应用的「接收消息」）填入 URL / Token / EncodingAESKey。GET 为保存时的地址校验（验签 + 解密 echostr 原样返回；v3.5.39.1 起 query 自行解析，echostr 里未编码的 `+` 不会被当成空格；每次校验的结果与失败原因记入 `event_state.last_verify`）；POST 为事件推送：验签（sha1）+ AES-256-CBC 解密 + 校验企业 ID，`change_contact` 事件**防抖约 10 秒后对该同步源跑一次全量同步**（一阵批量变动只同步一次，范围、移出、单独修改不覆盖等规则与手动同步一致；环境变量 `DIRSYNC_EVENT_DELAY_MS` 可调），`update_user` 带 `NewUserID` 时先就地改 UserId 映射 / 登录绑定 / 组织内 UID。签名错或企业不符 403；同步源停用或非通讯录事件只记录不同步。同步源视图多回 `callback_path`、`callback_ready`、`event_state`（最近校验时间、最近事件、累计条数）。
 
 管理端接口（v3.5.36）：`GET/POST /api/admin/orgs/:sid/dir-sources`（列表 / 新增；`secret` 读取时打码；列表另回 `bind_choices` 可选登录凭证、`force_confirm` 确认口令）、`POST /api/admin/orgs/:sid/dir-sources/scope-tree`（v3.5.37，`{corp_id, secret}` 或 `{source_id}` 用已存 secret → 该 Secret 能看到的部门 `nodes[{id,name,parent,order}]`）、`PATCH /api/admin/dir-sources/:id`（编辑，或只传 `{enabled}` 启停；打码串/留空不覆盖 secret）、`DELETE /api/admin/dir-sources/:id`（删除同步源，已同步成员保留）、`POST /api/admin/dir-sources/:id/run`（立即同步，停用的源 400，同组织并发 409）。
 
