@@ -452,6 +452,29 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS admin_grants (
   granted_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.44：账号注销 / 删除生命周期
+//   users.deletion_state：NULL | pending（申请中：冷静期 / 等交接 / 等审批，账号照常可用）| deleted（已删除：停用，保留期内可恢复）
+//   保留期满（purge_at）后彻底清除，账号行与个人数据一并删除。
+for (const col of ['deletion_state TEXT', 'deleted_at TEXT', 'purge_at TEXT']) {
+  try { db.exec('ALTER TABLE users ADD COLUMN ' + col); } catch(_) {}
+}
+try { db.exec(`CREATE TABLE IF NOT EXISTS account_deletions (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL,
+  kind         TEXT NOT NULL,                 -- self（本人注销）| admin（管理员删除）
+  requested_by TEXT,
+  reason       TEXT,
+  status       TEXT NOT NULL,                 -- pending（等冷静期 / 交接 / 审批）| done | cancelled | rejected | restored
+  needs_approval INTEGER NOT NULL DEFAULT 0,  -- 发起人权限不足：等上级审批，或等待期满自动执行
+  approved_by  TEXT,
+  checklist    TEXT,                          -- JSON [{key,label,done,done_by,done_at}]：重要应用交接，全部完成才执行
+  execute_at   TEXT NOT NULL,                 -- 最早执行时间（冷静期 / 等待期满）
+  executed_at  TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+// 应用是否「重要、注销前须交接」（v3.5.44）
+try { db.exec('ALTER TABLE apps ADD COLUMN handover_required INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // v3.5.43：外部系统里的姓名（「应用内姓名」，不可靠，只展示；真实姓名以实名认证为准）
 try { db.exec('ALTER TABLE dir_source_links ADD COLUMN ext_name TEXT'); } catch(_) {}
 // v3.5.37：同步给成员设过什么（kind=bind/key=provider/value=UserId；kind=pw/key=''/value=密码哈希）。

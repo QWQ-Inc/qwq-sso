@@ -6,18 +6,18 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.43**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.44**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.43，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.44，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
-- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、域名验证文件（根目录验证文件，到期自动删除）。
+- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接预检 + 审批）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
 - **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码（含主屏幕快捷操作）、商城、备忘录、应用中心（图标/文件夹/组织切换/管理工具磁贴：门禁·设备·用户·身份核验）、账号设定等；GitHub Actions 云编译）。
 
@@ -55,6 +55,7 @@ server/
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
 ├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉所选部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId + 默认组织密码（v3.5.37，单独改过的不覆盖）
+├── account-lifecycle.js # 账号注销 / 删除（v3.5.44）：request/setChecklist/approve/cancel/reject/restore/purge/tick，交接预检 preflight
 ├── user-merge.js # 同一人多个账号合并（v3.5.41）：mergeUsers/checkMerge/isShellAccount，组织成员合并 + 自助绑定时并入空壳账号
 ├── org-policy.js # 组织登录策略判定（IP 白名单/登录时段，v3.5.24）：三方登录与「登录到组织」两条通道共用
 ├── updater.js    # 系统版本更新（v3.5.6）：checkUpdate 查 GitHub tag + applyUpdate 自托管一键拉取（默认关）
@@ -200,16 +201,16 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 ---
 
-## 数据库表清单（截至 v3.5.43）
+## 数据库表清单（截至 v3.5.44）
 
 核心表：`users`、`user_oauth`、`otp_store`、`oauth_states`、`login_logs`、`apps`、`user_app_auth`、`api_keys`、`env_config`、`points_log`、`uid_seq`
-- `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）
+- `users` 关键增补列：`uid_code`（自定义 UID）、`is_public`/`owner_group_id`（公共账号）、`group_id`、`twofa_enabled`/`twofa_secret`、`kyc_*`（kyc_verified/kyc_name/kyc_id_tail/kyc_provider/kyc_verified_at/kyc_pseudonym/kyc_name_hash）、`checkin_streak`/`last_checkin`、`merged_into`（一人多号合并后被并入的账号，v3.5.41）、`deletion_state`/`deleted_at`/`purge_at`（注销删除，v3.5.44）
 - `apps` 关键增补列：`client_id`/`client_secret`/`callback_url`、`launch_url`、`required_scopes`、`category`、`deprovision_url`、`backchannel_logout_uri`、`icon_url`
 - 应用图片 / 文件夹（v3.5.28）：`app_icons`（图片 BLOB 独立存，**不进 apps**）、`app_folders`/`app_folder_items`（个人文件夹，一应用一夹）
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -433,6 +434,21 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.44 账号注销 / 删除 + 停用时同步暂停应用权限（用户反馈）
+
+三级版本。用户：「现在只能增加不能删除」——要用户端注销（默认 30 天等待，之后注销但保留一段时间再清除，管理端 90 天内可恢复，过了就完全删除，时间可在环境变量改）、管理端删除（强确认；最高管理员直接删，其他管理员等上级审批或等待期后删，或被授权于某组织/分组/标签/文件夹）、删除前预检重要应用（如企业微信）须先标记交接完成；「账号权限被暂停，其应用权限（包括企业微信）也同步暂停」。
+- 新 `server/account-lifecycle.js`：`users.deletion_state`（NULL / pending / deleted）+ `deleted_at` / `purge_at`；申请表 `account_deletions`（kind self/admin、status pending/done/cancelled/rejected/restored、needs_approval、approved_by、checklist JSON、execute_at）。时间都存成与 SQLite `datetime('now')` 同格式的 UTC 字符串，直接字符串比较。
+  - `request()`：同一账号只能有一个 pending；self → execute_at = 冷静期后；admin 直接 → now；admin 需审批 → 等待期后。执行条件 `tryExecute`：execute_at ≤ now 且清单全勾。审批 = `approve()` 把 execute_at 拉到现在。
+  - 执行 = `status='disabled'` + `deletion_state='deleted'` + `purge_at`（**沿用 disabled 状态，所以所有登录 / 会话拦截天然生效**），钩子 `onDeleted` → `onAccountSuspended(u,'user.deleted')`。
+  - `restore()`：保留期内恢复为 active；`purge()`：遍历 sqlite_master 所有表，`user_id`/`owner_id` 列删行，`owner_user_id/created_by/granted_by/requested_by/approved_by/issued_by/escort_user_id/done_by` 置 NULL（NOT NULL 列则删行），删 memos 附件，最后删 users 行（外键 CASCADE 收尾）；万一还有外键挡住就退化成抹掉个人信息的墓碑（`deletion_state='purged'`）。`audit_chain` 不动（只有脱敏摘要）。
+  - `preflight(user)`：外部通讯录账号（dir_source_links）、企业微信/飞书/钉钉登录绑定（不和通讯录重复的）、组织管理员、分组管理员、授权过的 `apps.handover_required=1` 应用（新列，应用编辑勾选）、名下设备。
+  - `tick()` 每小时（启动 5 秒后先跑一次）：执行到期申请、清除过保留期的账号。
+- 配置：`ACCOUNT_DELETE_COOLDOWN_DAYS`（30，0~365）/ `ACCOUNT_DELETE_RETAIN_DAYS`（90，0~3650）/ `ACCOUNT_DELETE_ADMIN_WAIT_DAYS`（7，0~365），ENV_GROUPS `acctdel` + init.js。
+- 接口：本人 `GET/POST/DELETE /user/account/deletion`（POST 需 `confirm:'注销账号'` + 有密码则验密码；唯一超管不能注销；org_scoped 会话不能注销）、`POST /user/account/deletion/checklist`（只能勾自己发起的）。管理端 `GET /admin/users/:id/deletion`（预检 + mode + can_restore/can_purge）、`POST /admin/users/:id/delete`（`confirm` 必须 = 对方 UID 显示值）、`GET /admin/deletions?status=`、`POST /admin/deletions/:id/approve|reject|cancel|checklist`、`POST /admin/users/:id/restore`（hasGrant user.delete）、`POST /admin/users/:id/purge`（Lv.1 + `confirm:'彻底清除'`）。分级 `deleteMode`：不能删自己 / 同级或更高管理员；`hasGrant('user.delete')`（超管或授权范围内）直接；其他系统管理员需审批；都不是 403。审批人 `canDecideDeletion`：超管 / 被授权者 / 级别比发起人高的管理员（发起人自己不行）。审计 `account.deletion_requested/approved/cancelled/rejected`、`account.deleted/restored/purged`。
+- **停用 = 同步暂停**：`onAccountSuspended`（停用 / 删除）作废 `oauth_access_tokens` / `oauth_auth_codes` + 原有 `deprovisionUserAllApps` + `pushExternalSuspend(false)`；`onAccountResumed`（启用 / 恢复）`pushExternalSuspend(true)`。同步源 config `push_suspend`（默认关）→ `dirsync-wecom.setMemberEnabled` 调企业微信 `user/update {enable:0/1}`（需有写权限的通讯录同步 Secret）。⚠️ **`requireAuth` 现在每个请求查一次 `users.status`**，disabled（含已删除 / 已合并）的令牌立即 401——之前停用后已签发的 JWT 要等过期。启用接口拒绝已删除 / 已合并账号（要用恢复）。
+- 前端：账号设定「注销账号」卡（`loadAcctDeletion`，进行中显示截止日期 + 自己勾交接清单 + 撤销）；用户详情状态徽章（已删除 / 已合并 / 注销中）+ `renderUserDeletionSection`（删除… / 进行中清单 / 恢复 / 立即彻底清除）；新页「注销与删除」（`adm-deletions`，筛选、批准 / 驳回 / 撤回、清单）；用户列表状态文字；同步源弹窗「停用时同步禁用企业微信成员」；应用编辑「重要应用」。
+- ⚠️ 测试：run19 34 项（确认词 / 密码、30 天冷静期且账号可用、不能重复申请、可撤销、到期删除 + 令牌 401 + 不能登录 + 不能直接启用、Lv.2 不能恢复 / 超管可恢复、预检三类、UID 强确认、清单未完不执行 / 完成即删、删除与恢复推送企业微信 enable 0/1、停用作废令牌 + 禁用成员、Lv.3 发起需审批 / 自己不能批 / 上级批即删、Lv.2 发起等待期满自动删、不能删更高级管理员与自己、保留期满彻底删除含备忘录与申请记录、立即清除仅超管、审计）；回归 run 35 / run9 26 / run10 36 / run16 21 / run17 9 / run18 19；playwright：本人注销卡申请后显示清单与截止、管理员详情删除 → 已删除状态、注销与删除页两条记录，零 JS 报错。mock-wecom3 加了 `user/update` 与 `/__updates`。
 
 ## v3.5.43 账号详情补全 + 实名清除权限收紧 + 权限授权（用户反馈）
 

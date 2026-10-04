@@ -1183,6 +1183,10 @@ async function loadMe() {
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h12M4 10h8M4 14h10"/></svg>
         调用日志
       </button>
+      <button class="nav-item" onclick="goto('adm-deletions')" id="ni-adm-deletions">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11"/></svg>
+        注销与删除
+      </button>
       <button class="nav-item" onclick="goto('adm-audit')" id="ni-adm-audit">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h8l2 3v13H4V5z"/><path d="M7 9h6M7 12h6M7 15h4"/></svg>
         审计存证
@@ -1663,6 +1667,10 @@ async function loadMe() {
               <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">你可切换到下列公共账号（整会话切换，本人退出登录态，可随时切回）。公共账号仅用于第三方登录等基础功能。</div>
               <div id="pub-acct-list"></div>
             </div>
+          </div>
+          <div class="card" id="acct-del-card" style="display:none;">
+            <div class="card-header"><h3>注销账号</h3></div>
+            <div class="card-body" id="acct-del-body" style="font-size:12px;color:var(--txd);">加载中…</div>
           </div>
         </div>
 
@@ -2520,6 +2528,17 @@ async function loadMe() {
       </div>
 
       <!-- ▸ 管理端：域名验证文件（v3.5.40） -->
+      <div class="page" id="page-adm-deletions">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>注销与删除</h3>
+            <select id="del-filter" onchange="loadDeletions()" style="padding:5px 8px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:12px;">
+              <option value="pending">进行中</option><option value="done">已删除</option><option value="">全部</option></select>
+          </div>
+          <div id="del-config" style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;"></div>
+          <div class="card-body"><div id="del-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+      </div>
       <div class="page" id="page-adm-grants">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -3222,7 +3241,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3235,6 +3254,7 @@ function goto(page) {
   if(page === 'adm-devices') loadDevices('adm');
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
+  if(page === 'adm-deletions') loadDeletions();
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
   if(page === 'adm-env')   { renderEnvPage(); loadEnvPollStrategy(); loadFooterItems(); }
@@ -3989,6 +4009,7 @@ async function loadProfile() {
   const { ok, data } = await api('GET', '/user/me');
   if (!ok) return;
   const u = data.user;
+  loadAcctDeletion(u);
   const el = document.getElementById('profile-form-body');
   if (!el) return;
   const tzOptions = TIMEZONES.map(t =>
@@ -4578,7 +4599,7 @@ async function loadAdmUsers(q) {
   list.innerHTML = data.users.map((u,i) => `
     <div class="detail-list-item ${i===0?'active':''}" onclick="selectUserById(this,'${u.id}')">
       <div class="din">${esc(u.name||u.email||'—')}${u.group?`<span style="font-size:10px;font-weight:500;color:${u.group.color};margin-left:6px;">●${esc(u.group.name)}</span>`:''}</div>
-      <div class="did">${uidOf(u)} · ${u.status==='active'?'正常':'已停用'}${(u.tags&&u.tags.length)?' · '+u.tags.map(t=>`<span style="color:${t.color};">${esc(t.name)}</span>`).join(' '):''}</div>
+      <div class="did">${uidOf(u)} · ${u.deletion_state==='deleted'?'<span style="color:var(--err);">已删除</span>':u.merged_into?'已合并':u.deletion_state==='pending'?'<span style="color:var(--warn);">注销中</span>':u.status==='active'?'正常':'已停用'}${(u.tags&&u.tags.length)?' · '+u.tags.map(t=>`<span style="color:${t.color};">${esc(t.name)}</span>`).join(' '):''}</div>
     </div>`).join('');
   if (data.users.length) loadAdmUserDetail(data.users[0].id);
 }
@@ -4630,7 +4651,10 @@ function _udExtHtml(u) {
 function renderUserDetailFromData(u) {
   const panel = document.getElementById('user-detail-panel');
   if (!panel) return;
-  const statusBadge = u.status==='active' ? '<span class="badge ok">正常</span>' : '<span class="badge err">已停用</span>';
+  const statusBadge = u.deletion_state==='deleted' ? '<span class="badge err">已删除</span>'
+    : u.merged_into ? '<span class="badge grey">已合并</span>'
+    : u.status==='active' ? ('<span class="badge ok">正常</span>' + (u.deletion_state==='pending' ? ' <span class="badge" style="background:rgba(232,194,106,.2);color:#9a6b00;">注销 / 删除中</span>' : ''))
+    : '<span class="badge err">已停用</span>';
   const rnHtml = u.kyc_verified
     ? `<div class="rn-box"><div style="font-size:18px;">🪪</div>
         <div style="flex:1"><div class="rn-name">${esc(u.kyc_name||'—')}</div><div class="rn-info">尾号 ${esc(u.kyc_id_tail||'—')} · 已实名 via ${esc(u.kyc_provider||'—')}</div></div>
@@ -4670,14 +4694,16 @@ function renderUserDetailFromData(u) {
     <div class="detail-section"><h4>分组 / 标签 <span style="font-size:10px;color:var(--txd);font-weight:400;">（组织维度，与等级无关）</span></h4>
       <div id="ud-gt-${u.id}" style="font-size:12px;color:var(--txd);">加载中…</div>
     </div>
+    <div id="ud-del-${u.id}"></div>
     <div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">
       <button class="btn" style="font-size:11px;" onclick="admResetPassword('${u.id}')">重置密码</button>
       <button class="btn" style="font-size:11px;color:var(--ac);border-color:var(--ac);" onclick="admTransferPoints('${u.id}','${u.name}',${u.points})">划转积分</button>
-      ${u.status==='active'
+      ${u.deletion_state==='deleted' || u.merged_into ? '' : u.status==='active'
         ? `<button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="admDisableUser('${u.id}')">停用账号</button>`
-        : `<button class="btn primary" style="font-size:11px;" onclick="admEnableUser('${u.id}')">恢复账号</button>`}
+        : `<button class="btn primary" style="font-size:11px;" onclick="admEnableUser('${u.id}')">启用账号</button>`}
     </div>`;
   renderUserGtSection(u);
+  renderUserDeletionSection(u);
 }
 
 // ── 分组 / 标签：全局缓存 + 用户详情内的分配 UI ──
@@ -4741,6 +4767,148 @@ async function admDeleteKyc(uid) {
   const { ok, data } = await api('DELETE', `/admin/users/${uid}/kyc`);
   if (ok) { showToast('⚠️ 实名信息已清除'); loadAdmUserDetail(uid); }
   else showToast('清除失败：' + (data?.error || '未知错误'));
+}
+
+// ── 账号注销 / 删除（v3.5.44）──
+function _delChecklistHtml(list, onToggle) {
+  if (!list || !list.length) return '<div style="color:var(--txd);">没有需要交接的重要应用。</div>';
+  return list.map(i => `<label style="display:flex;gap:6px;align-items:flex-start;padding:3px 0;color:var(--txt);cursor:pointer;">
+    <input type="checkbox" ${i.done ? 'checked' : ''} ${onToggle ? `onchange='${onToggle}(${JSON.stringify(i.key)}, this.checked)'` : 'disabled'} style="margin-top:2px;">
+    <span>${esc(i.label)}${i.done && i.done_at ? ` <span style="color:var(--txd);font-size:10px;">（${esc(fmtTime(i.done_at))} 标记完成）</span>` : ''}</span></label>`).join('');
+}
+const _fmtDay = t => t ? esc(String(fmtTime(t)).slice(0, 16)) : '—';
+// 本人：账号设定里的「注销账号」
+async function loadAcctDeletion(u) {
+  const card = document.getElementById('acct-del-card');
+  if (!card) return;
+  if (u.is_public || _isOrgScoped()) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const body = document.getElementById('acct-del-body');
+  const { ok, data } = await api('GET', '/user/account/deletion');
+  if (!ok) { body.innerHTML = '<span style="color:var(--err);">加载失败</span>'; return; }
+  const c = data.config, p = data.pending;
+  if (p) {
+    const waiting = !p.checklist_done;
+    body.innerHTML = `<div style="padding:10px;border:1px solid #E8C26A;background:rgba(232,194,106,.12);border-radius:6px;color:var(--txt);line-height:1.8;">
+        ${p.kind === 'self' ? '你已申请注销账号' : '管理员已发起删除你的账号'}，${waiting ? '交接清单完成后' : ''}将于 <b>${_fmtDay(p.execute_at)}</b> ${waiting ? '起' : ''}执行。
+        执行后账号停用，${c.retain_days} 天内可联系管理员恢复，之后彻底删除。</div>
+      ${p.checklist.length ? `<div style="margin:10px 0 4px;color:var(--txm);font-weight:600;">交接清单（全部完成才会执行）</div>${_delChecklistHtml(p.checklist, p.kind === 'self' ? 'toggleMyDelItem' : null)}` : ''}
+      ${p.kind === 'self' ? '<div style="margin-top:10px;"><button class="btn primary" style="font-size:12px;" onclick="cancelMyDeletion()">撤销注销</button></div>' : ''}`;
+    return;
+  }
+  body.innerHTML = `<div style="line-height:1.8;">注销后有 <b>${c.cooldown_days} 天</b>冷静期，期间账号照常可用、可随时撤销；冷静期满后账号停用，<b>${c.retain_days} 天</b>内可联系管理员恢复，之后账号和个人数据彻底删除、无法找回。</div>
+    ${data.preflight.length ? `<div style="margin:8px 0 4px;color:var(--txm);font-weight:600;">注销前需要交接：</div>${_delChecklistHtml(data.preflight.map(i => ({ ...i, done: false })), null)}<div style="margin-top:4px;">申请后可在这里逐项标记完成。</div>` : ''}
+    <div style="margin-top:10px;"><button class="btn" style="font-size:12px;color:var(--err);border-color:var(--err);" onclick="openMyDeletion()">注销账号…</button></div>`;
+}
+async function openMyDeletion() {
+  const confirmTxt = prompt('注销账号：请输入「注销账号」四个字确认');
+  if (confirmTxt == null) return;
+  if (confirmTxt.trim() !== '注销账号') { showToast('输入不正确，已取消'); return; }
+  const password = ME && ME.has_password === false ? '' : (prompt('请输入登录密码（没有设置密码直接确定）：') || '');
+  const { ok, data } = await api('POST', '/user/account/deletion', { confirm: '注销账号', password });
+  if (ok) { showToast('已申请注销，冷静期内可撤销'); loadProfile(); } else showToast('申请失败：' + (data?.error || '未知错误'));
+}
+async function cancelMyDeletion() {
+  if (!confirm('撤销注销申请？')) return;
+  const { ok, data } = await api('DELETE', '/user/account/deletion');
+  if (ok) { showToast('已撤销注销'); loadProfile(); } else showToast('撤销失败：' + (data?.error || '未知错误'));
+}
+async function toggleMyDelItem(key, done) {
+  const { ok, data } = await api('POST', '/user/account/deletion/checklist', { key, done });
+  if (!ok) showToast('操作失败：' + (data?.error || '未知错误'));
+  loadProfile();
+}
+// 管理端：用户详情里的删除区
+async function renderUserDeletionSection(u) {
+  const box = document.getElementById('ud-del-' + u.id);
+  if (!box) return;
+  const { ok, data } = await api('GET', `/admin/users/${u.id}/deletion`);
+  if (!ok) return;
+  const p = data.pending, cfg = data.config;
+  let html = '';
+  if (data.state === 'deleted') {
+    html = `<div style="padding:10px;border:1px solid var(--err);border-radius:6px;margin-bottom:10px;line-height:1.8;color:var(--txt);">
+      账号已于 ${_fmtDay(data.deleted_at)} 删除，<b>${_fmtDay(data.purge_at)}</b> 将彻底清除（之前可恢复）。
+      <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+        ${data.can_restore ? `<button class="btn primary" style="font-size:11px;" onclick="admRestoreUser('${u.id}')">恢复账号</button>` : ''}
+        ${data.can_purge ? `<button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="admPurgeUser('${u.id}')">立即彻底清除…</button>` : ''}
+      </div></div>`;
+  } else if (p) {
+    html = `<div style="padding:10px;border:1px solid #E8C26A;background:rgba(232,194,106,.12);border-radius:6px;margin-bottom:10px;line-height:1.8;color:var(--txt);">
+      ${p.kind === 'self' ? '用户本人申请注销' : `管理员 ${esc(p.requested_by_name || '')} 发起删除`}${p.reason ? '（' + esc(p.reason) + '）' : ''}，
+      ${p.needs_approval && !p.approved_by ? `待上级审批，或 <b>${_fmtDay(p.execute_at)}</b> 等待期满后执行` : `最早 <b>${_fmtDay(p.execute_at)}</b> 执行`}${p.checklist_done ? '' : '，交接清单完成后才会执行'}。
+      ${p.checklist.length ? `<div style="margin-top:6px;font-weight:600;color:var(--txm);">交接清单</div>${_delChecklistHtml(p.checklist, `admDelItem_${p.id.replace(/-/g, '')}`)}` : ''}
+      <div style="margin-top:6px;"><button class="btn" style="font-size:11px;" onclick="goto('adm-deletions')">去审批 / 撤回</button></div></div>`;
+    window[`admDelItem_${p.id.replace(/-/g, '')}`] = async (key, done) => {
+      const r = await api('POST', `/admin/deletions/${p.id}/checklist`, { key, done });
+      if (!r.ok) showToast('操作失败：' + (r.data?.error || '未知错误'));
+      loadAdmUserDetail(u.id);
+    };
+  } else if (!data.mode.error && !u.merged_into) {
+    html = `<div style="margin-bottom:10px;"><button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick='admDeleteUser(${JSON.stringify(u.id)}, ${JSON.stringify(uidOf(u))}, ${data.mode.direct ? 'true' : 'false'})'>删除账号…</button>
+      <span style="font-size:11px;color:var(--txd);margin-left:6px;">${data.mode.direct ? `交接清单完成后立即删除，${cfg.retain_days} 天内可恢复` : `你的权限需要上级审批，或等待 ${cfg.admin_wait_days} 天后执行`}${data.preflight.length ? ` · 有 ${data.preflight.length} 项需交接` : ''}</span></div>`;
+  }
+  box.innerHTML = html;
+}
+async function admDeleteUser(uid, uidText, direct) {
+  const c = prompt(`删除账号：请原样输入对方 UID「${uidText}」确认${direct ? '' : '（你的权限需要上级审批，或等待期满后执行）'}`);
+  if (c == null) return;
+  const reason = prompt('删除原因（可选）：') || '';
+  const { ok, data } = await api('POST', `/admin/users/${uid}/delete`, { confirm: c.trim(), reason });
+  if (ok) { showToast(data.state === 'deleted' ? '账号已删除' : '已发起删除，等待交接 / 审批'); loadAdmUserDetail(uid); }
+  else showToast('删除失败：' + (data?.error || '未知错误'));
+}
+async function admRestoreUser(uid) {
+  if (!confirm('恢复这个账号？恢复后账号重新启用。')) return;
+  const { ok, data } = await api('POST', `/admin/users/${uid}/restore`);
+  if (ok) { showToast('账号已恢复'); loadAdmUserDetail(uid); } else showToast('恢复失败：' + (data?.error || '未知错误'));
+}
+async function admPurgeUser(uid) {
+  const c = prompt('立即彻底清除：账号和个人数据将被永久删除、无法恢复。请输入「彻底清除」确认');
+  if (c == null) return;
+  const { ok, data } = await api('POST', `/admin/users/${uid}/purge`, { confirm: c.trim() });
+  if (ok) { showToast('已彻底清除'); loadAdmUsers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
+}
+// 管理端：「注销与删除」页
+async function loadDeletions() {
+  const box = document.getElementById('del-list');
+  const st = document.getElementById('del-filter').value;
+  const { ok, data } = await api('GET', '/admin/deletions' + (st ? '?status=' + st : ''));
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  const c = data.config;
+  document.getElementById('del-config').innerHTML = `本人注销冷静期 <b>${c.cooldown_days}</b> 天 · 删除后保留 <b>${c.retain_days}</b> 天可恢复 · 无删除权限的管理员发起后等待 <b>${c.admin_wait_days}</b> 天（或上级审批）· 可在「系统配置 → 账号注销」修改。`;
+  const ST = { pending: '进行中', done: '已删除', cancelled: '已撤回', rejected: '已驳回', restored: '已恢复' };
+  const rows = data.deletions || [];
+  box.innerHTML = rows.length ? rows.map(r => {
+    const done = r.checklist.filter(i => i.done).length;
+    return `<div style="border:1px solid var(--bd);border-radius:6px;padding:10px 12px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span style="color:var(--txt);font-weight:600;">${esc(r.user?.name || '（已清除）')} <span style="color:var(--txd);font-weight:400;">${esc(r.user?.uid || '')}</span></span>
+        <span class="badge ${r.status === 'pending' ? '' : r.status === 'done' ? 'err' : 'grey'}">${ST[r.status] || r.status}</span>
+      </div>
+      <div style="margin-top:4px;line-height:1.8;">${r.kind === 'self' ? '本人申请注销' : '管理员删除：' + esc(r.requested_by_name || '')}${r.reason ? ' · ' + esc(r.reason) : ''} · 发起 ${_fmtDay(r.created_at)}
+        ${r.status === 'pending' ? ` · ${r.needs_approval && !r.approved_by ? '待审批 / ' : ''}最早 ${_fmtDay(r.execute_at)} 执行 · 交接 ${done}/${r.checklist.length}` : ''}
+        ${r.approved_by_name ? ' · 审批人 ' + esc(r.approved_by_name) : ''}${r.status === 'done' && r.user?.purge_at ? ' · ' + _fmtDay(r.user.purge_at) + ' 彻底清除' : ''}</div>
+      ${r.status === 'pending' && r.checklist.length ? `<details style="margin-top:4px;"><summary style="cursor:pointer;">交接清单</summary>${_delChecklistHtml(r.checklist, `delItem_${r.id.replace(/-/g, '')}`)}</details>` : ''}
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+        ${r.can_decide ? `<button class="btn primary" style="font-size:11px;" onclick="decideDeletion('${r.id}','approve')">批准</button><button class="btn" style="font-size:11px;" onclick="decideDeletion('${r.id}','reject')">驳回</button>` : ''}
+        ${r.status === 'pending' ? `<button class="btn" style="font-size:11px;" onclick="decideDeletion('${r.id}','cancel')">撤回</button>` : ''}
+        ${r.user ? `<button class="btn" style="font-size:11px;" onclick="goto('adm-users');setTimeout(()=>loadAdmUserDetail('${r.user.id}'),300)">查看账号</button>` : ''}
+      </div></div>`;
+  }).join('') : '<div style="padding:8px 0;">没有记录。</div>';
+  rows.filter(r => r.status === 'pending').forEach(r => {
+    window[`delItem_${r.id.replace(/-/g, '')}`] = async (key, done) => {
+      const x = await api('POST', `/admin/deletions/${r.id}/checklist`, { key, done });
+      if (!x.ok) showToast('操作失败：' + (x.data?.error || '未知错误'));
+      loadDeletions();
+    };
+  });
+}
+async function decideDeletion(id, act) {
+  const label = { approve: '批准（交接完成后立即删除）', reject: '驳回', cancel: '撤回' }[act];
+  if (!confirm(label + '这条申请？')) return;
+  const { ok, data } = await api('POST', `/admin/deletions/${id}/${act}`);
+  if (ok) { showToast('已' + label.slice(0, 2)); loadDeletions(); } else showToast('操作失败：' + (data?.error || '未知错误'));
 }
 
 // ── 权限授权（v3.5.43）──
@@ -5206,6 +5374,7 @@ async function openDirSourceModal(sid, srcId) {
     </div>
     <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 禁用 / 移出部门的成员，同步时从本组织移出</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-idonly" ${c.idonly_create !== false ? 'checked' : ''}> 只拿到 UserId 的成员也建账号（Secret 受限时；姓名先用 UserId，拿到真名后自动替换）</label>
+    <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（恢复时再启用；需要能修改通讯录的「通讯录同步」Secret）</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
     ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? '🔐 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : 'ℹ️ 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
       <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>
@@ -5257,7 +5426,7 @@ async function openDirSourceModal(sid, srcId) {
       type: $('#dsm-type').value, label: $('#dsm-label').value.trim(),
       corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim(),
       dept_ids: dept_ids.length ? dept_ids : [1], dept_names, interval_hours: parseInt($('#dsm-interval').value, 10) || 0,
-      uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, idonly_create: $('#dsm-idonly').checked, enabled: $('#dsm-enabled').checked,
+      uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, idonly_create: $('#dsm-idonly').checked, push_suspend: $('#dsm-suspend').checked, enabled: $('#dsm-enabled').checked,
       bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
     body.cb_token = $('#dsm-cb-token').value.trim();
@@ -7888,6 +8057,7 @@ async function saveAppEdit() {
     callback_url: document.getElementById('ae-cb')?.value.trim(),
     launch_url: document.getElementById('ae-launch')?.value.trim(),
     deprovision_url: document.getElementById('ae-deprov')?.value.trim(),
+    handover_required: !!document.getElementById('ae-handover')?.checked,
     backchannel_logout_uri: document.getElementById('ae-bcl')?.value.trim(),
     required_scopes: collectReqScopes('ae'),
     visible: document.getElementById('ae-visible')?.value === 'true',
@@ -7999,6 +8169,7 @@ async function openAppEdit(id) {
           <div class="form-row full"><label>回调地址</label><input type="text" id="ae-cb" value="${a.callback_url}" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label>发起地址（可选，用户点「打开」跳这里；留空则由 SSO 用回调地址拼授权链接）</label><input type="text" id="ae-launch" value="${esc(a.launch_url||'')}" placeholder="https://yourapp.com/login" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label>账号撤销回调（可选，SSO 主动推停用/删除事件，应用据此停用本地账号。用 client_secret HMAC 签名于 X-QWQ-Signature）</label><input type="text" id="ae-deprov" value="${esc(a.deprovision_url||'')}" placeholder="https://yourapp.com/sso/deprovision" style="font-family:monospace;font-size:12px;"/></div>
+          <div class="form-row full"><label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="ae-handover" ${a.handover_required ? 'checked' : ''} style="width:auto;"> 重要应用：授权过它的用户注销 / 被删除前，必须先标记「已交接」</label></div>
           <div class="form-row full"><label>Back-Channel Logout 地址（可选，OIDC 标准登出通知；SSO 用 client_secret 签 logout_token 推来）</label><input type="text" id="ae-bcl" value="${esc(a.backchannel_logout_uri||'')}" placeholder="https://yourapp.com/oidc/backchannel-logout" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label>必传字段（用户授权时不可取消，openid 天然必传）</label>${reqScopeBoxes('ae', a.required_scopes)}</div>
           <div class="form-row full"><label>开放给组织（都不勾 = 全局通用应用；勾选后仅所选组织的成员可见可登）</label><div id="ae-orgs" style="display:flex;flex-wrap:wrap;gap:10px;font-size:13px;">加载中…</div></div>
@@ -8758,6 +8929,15 @@ const ENV_GROUPS = [
     vars: [
       { key: 'OIDC_LAUNCH_COUNTDOWN', label: '跳转倒计时（秒）', desc: '已授权应用直通时中转页「将在 N 秒后跳转」的秒数。默认 3，夹在 0~30；设为 0 则不倒计时、直接跳转', required: false, secret: false, placeholder: '3', value: '' },
       { key: 'INAPP_AUTO_LOGIN', label: '应用内自动登录', desc: '在企业微信 / 微信 / 飞书 / 钉钉里打开登录页时，直接用该平台已配置的登录凭证登录（如企业微信自建应用里打开 → 自动企业微信登录）。留空或 all = 四个平台都开；off = 关闭；也可填逗号列表，如 wecom,feishu', required: false, secret: false, placeholder: 'all', value: '' },
+    ]
+  },
+  {
+    key: 'acctdel', category: 'system', label: '账号注销', icon: '🗑️', color: '#C0392B',
+    desc: '本人注销与管理员删除账号的各段时间。注销 / 删除前若账号关联了重要应用（企业微信等），需先把交接清单逐项标记完成。',
+    vars: [
+      { key: 'ACCOUNT_DELETE_COOLDOWN_DAYS', label: '本人注销冷静期（天）', desc: '用户申请注销后多久才真正删除，期间账号照常可用、可撤销。默认 30，范围 0~365', required: false, secret: false, placeholder: '30', value: '' },
+      { key: 'ACCOUNT_DELETE_RETAIN_DAYS', label: '删除后保留期（天）', desc: '账号删除（停用）后保留多久，期间管理员可恢复；过后账号和个人数据彻底删除、找不回来。默认 90，范围 0~3650', required: false, secret: false, placeholder: '90', value: '' },
+      { key: 'ACCOUNT_DELETE_ADMIN_WAIT_DAYS', label: '无权限管理员的等待期（天）', desc: '没有「删除账号」权限的管理员发起删除后，需上级审批；没人审批则等这么多天后执行。默认 7，范围 0~365', required: false, secret: false, placeholder: '7', value: '' },
     ]
   },
   {

@@ -641,6 +641,37 @@ function deprovisionUserAllApps(user, event) {
   } catch (_) {}
 }
 
+// ══════════════════════════════════════════
+// 账号停用 / 删除时同步暂停应用权限（v3.5.44）
+//   · 作废本系统签给它的 OIDC 令牌与授权码（JWT 会话由 requireAuth 每次查账号状态拦下）
+//   · 推送撤销事件给授权过的应用（自定义 webhook + Back-Channel Logout）
+//   · 同步源开了「停用时同步暂停」的企业微信：把它对应的成员设为禁用（恢复时再启用）
+// ══════════════════════════════════════════
+function pushExternalSuspend(user, enabled) {
+  let rows = [];
+  try {
+    rows = db.prepare(`SELECT l.ext_id, d.id AS source_id, d.type, d.config FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
+      WHERE l.user_id=?`).all(user.id);
+  } catch (_) {}
+  for (const r of rows) {
+    let cfg = {};
+    try { cfg = JSON.parse(r.config || '{}'); } catch (_) {}
+    if (r.type !== 'wecom' || !cfg.push_suspend) continue;
+    require('./dirsync-wecom').setMemberEnabled(cfg, r.ext_id, enabled)
+      .then(() => audit(enabled ? 'account.external_resumed' : 'account.external_suspended', { subject: String(user.uid_seq), actor: 'system', detail: { source: r.source_id, ext_id: r.ext_id } }))
+      .catch(e => console.warn('[同步暂停企业微信成员失败]', r.ext_id, e.message));
+  }
+}
+function onAccountSuspended(user, event = 'user.disabled') {
+  try {
+    db.prepare('DELETE FROM oauth_access_tokens WHERE user_id=?').run(user.id);
+    db.prepare('DELETE FROM oauth_auth_codes WHERE user_id=?').run(user.id);
+  } catch (_) {}
+  deprovisionUserAllApps(user, event);
+  pushExternalSuspend(user, false);
+}
+function onAccountResumed(user) { pushExternalSuspend(user, true); }
+
 // 支付宝实人认证待确认记录：发起时存 certify_id + 姓名/尾号 + 身份哈希，用户核身回跳后查询落库
 try {
   db.exec(`CREATE TABLE IF NOT EXISTS kyc_pending (
@@ -2029,6 +2060,8 @@ function dirSourceCfgFromBody(b, old) {
     remove_missing: b.remove_missing !== undefined ? b.remove_missing !== false : old.remove_missing !== false,
     // 只拿到 UserId（通讯录 Secret 受限）的成员也建账号（姓名先用 UserId 占位，拿到真名后自动替换；一人多号可在成员列表合并）
     idonly_create: b.idonly_create !== undefined ? b.idonly_create !== false : old.idonly_create !== false,
+    // 本系统账号停用 / 删除时，同步把企业微信成员设为禁用（恢复时启用）。需有通讯录写权限的 Secret（v3.5.44，默认关）
+    push_suspend: b.push_suspend !== undefined ? b.push_suspend === true : !!old.push_suspend,
     interval_hours: Math.min(168, Math.max(0, parseInt(b.interval_hours ?? old.interval_hours, 10) || 0)),
   } };
 }
@@ -2417,7 +2450,7 @@ router.get('/user/me', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const oauthBinds = oauth.findByUser.all(user.id);
-  res.json({ success: true, user: { ...safeUser(user), oauthBinds }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed() });
+  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed() });
 });
 
 router.post('/user/profile', requireAuth, noPublic, (req, res) => {
@@ -2777,13 +2810,170 @@ router.post('/admin/users/:id/disable', requireAdmin(2), (req, res) => {
     }
   }
   db.prepare("UPDATE users SET status='disabled',updated_at=datetime('now') WHERE id=?").run(target.id);
-  deprovisionUserAllApps(target, 'user.disabled');   // 主动推送停用给其授权应用
+  onAccountSuspended(target, 'user.disabled');
+  audit('user.disabled', { subject: String(target.uid_seq), actor: actorOf(req) });
   res.json({ success: true });
 });
 router.post('/admin/users/:id/enable', requireAdmin(2), (req, res) => {
+  const target = users.findById.get(req.params.id);
+  if (!target) return res.status(404).json({ error: '用户不存在' });
+  if (target.deletion_state === 'deleted') return res.status(400).json({ error: '该账号已删除，请用「恢复账号」' });
+  if (target.merged_into) return res.status(400).json({ error: '该账号已合并到别的账号，不能启用' });
   db.prepare("UPDATE users SET status='active',updated_at=datetime('now') WHERE id=?").run(req.params.id);
+  onAccountResumed(target);
+  audit('user.enabled', { subject: String(target.uid_seq), actor: actorOf(req) });
   res.json({ success: true });
 });
+// ══════════════════════════════════════════
+// 账号注销 / 删除（v3.5.44）—— 流程与状态见 account-lifecycle.js
+// ══════════════════════════════════════════
+const lifecycle = require('./account-lifecycle');
+lifecycle.init({
+  audit,
+  onDeleted: u => onAccountSuspended(u, 'user.deleted'),
+  onRestored: u => onAccountResumed(u),
+});
+setInterval(() => { try { lifecycle.tick(); } catch (e) { console.warn('[账号注销定时任务]', e.message); } }, 3600e3).unref();
+setTimeout(() => { try { lifecycle.tick(); } catch (_) {} }, 5000).unref();
+
+const uidShow = u => u.uid_code || '#' + String(u.uid_seq).padStart(5, '0');
+function deletionView(r) {
+  if (!r) return null;
+  const u = users.findById.get(r.user_id);
+  const by = r.requested_by ? users.findById.get(r.requested_by) : null;
+  const ap = r.approved_by ? users.findById.get(r.approved_by) : null;
+  return { ...r, user: u ? { id: u.id, name: u.name, uid: uidShow(u), uid_seq: u.uid_seq, deletion_state: u.deletion_state, purge_at: u.purge_at } : null,
+    requested_by_name: by ? `${by.name}（${uidShow(by)}）` : null, approved_by_name: ap ? `${ap.name}（${uidShow(ap)}）` : null };
+}
+// 删除的分级：超管 / 被授权「删除账号」的人（对象在授权范围）→ 直接执行；其他系统管理员 → 需审批（或等待期满）
+function deleteMode(req, target) {
+  if (target.id === req.user.uid) return { error: '不能用管理端删除自己的账号，请在账号设定里注销' };
+  if (target.role === 'admin') {
+    const opLevel = req.user.role === 'admin' ? (req.user.adminLevel || 9) : 99;
+    if ((target.admin_level || 99) <= opLevel) return { error: `不能删除同级或更高级别的管理员（对方 Lv.${target.admin_level}）` };
+  }
+  if (hasGrant(req, 'user.delete', target)) return { direct: true };
+  if (isSysAdmin(req, 3)) return { direct: false };
+  return { error: '删除账号需要超级管理员，或被授予「删除 / 注销账号」权限' };
+}
+// 能否审批 / 驳回某个待审批的删除：超管、被授权的人，或级别比发起人高的管理员
+function canDecideDeletion(req, r) {
+  const target = users.findById.get(r.user_id);
+  if (target && hasGrant(req, 'user.delete', target)) return true;
+  const requester = r.requested_by ? users.findById.get(r.requested_by) : null;
+  return isSysAdmin(req, 3) && requester && requester.role === 'admin' && (req.user.adminLevel || 9) < (requester.admin_level || 9);
+}
+
+// 本人：查看注销状态 / 预检
+router.get('/user/account/deletion', requireAuth, noPublic, (req, res) => {
+  const u = users.findById.get(req.user.uid);
+  const r = lifecycle.pendingOf(u.id);
+  res.json({ success: true, config: lifecycle.config(), pending: deletionView(r), preflight: r ? null : lifecycle.preflight(u) });
+});
+// 本人：申请注销（输入「注销账号」确认；设了密码的要再输一次密码）
+router.post('/user/account/deletion', requireAuth, noPublic, async (req, res) => {
+  const u = users.findById.get(req.user.uid);
+  if (req.user.org_scoped) return res.status(403).json({ error: '组织会话不能注销平台账号，请用个人账号登录' });
+  if (String(req.body?.confirm || '').trim() !== '注销账号') return res.status(400).json({ error: '请输入「注销账号」确认' });
+  if (u.password_hash && !(await bcrypt.compare(String(req.body?.password || ''), u.password_hash))) return res.status(400).json({ error: '密码不正确' });
+  if (u.role === 'admin' && (u.admin_level || 9) <= 1 && db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin' AND admin_level=1 AND status='active' AND id<>?").get(u.id).n === 0)
+    return res.status(400).json({ error: '你是唯一的超级管理员，不能注销' });
+  try {
+    const r = lifecycle.request(u, { kind: 'self', by: u.id, reason: req.body?.reason });
+    res.json({ success: true, pending: deletionView(r) });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+router.delete('/user/account/deletion', requireAuth, noPublic, (req, res) => {
+  const r = lifecycle.pendingOf(req.user.uid);
+  if (!r) return res.status(404).json({ error: '没有进行中的注销申请' });
+  if (r.kind !== 'self') return res.status(403).json({ error: '这是管理员发起的删除，请联系管理员' });
+  lifecycle.cancel(r.id, req.user.uid);
+  res.json({ success: true });
+});
+router.post('/user/account/deletion/checklist', requireAuth, noPublic, (req, res) => {
+  const r = lifecycle.pendingOf(req.user.uid);
+  if (!r || r.kind !== 'self') return res.status(404).json({ error: '没有进行中的注销申请' });
+  try { res.json({ success: true, pending: deletionView(lifecycle.setChecklist(r.id, String(req.body?.key || ''), !!req.body?.done, req.user.uid)) }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// 管理端：删除预检（交接清单 + 会直接执行还是要审批）
+router.get('/admin/users/:id/deletion', requireAuth, (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  if (!isSysAdmin(req, 3) && !hasGrant(req, 'user.delete', u)) return res.status(403).json({ error: '无权查看' });
+  const mode = deleteMode(req, u);
+  res.json({ success: true, config: lifecycle.config(), mode, pending: deletionView(lifecycle.pendingOf(u.id)),
+    preflight: lifecycle.preflight(u), state: u.deletion_state || null, deleted_at: u.deleted_at || null, purge_at: u.purge_at || null,
+    can_restore: u.deletion_state === 'deleted' && hasGrant(req, 'user.delete', u),
+    can_purge: u.deletion_state === 'deleted' && isSysAdmin(req, 1) });
+});
+// 管理端：删除账号（强确认：原样输入对方 UID）
+router.post('/admin/users/:id/delete', requireAuth, (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  const mode = deleteMode(req, u);
+  if (mode.error) return res.status(403).json({ error: mode.error });
+  if (String(req.body?.confirm || '').trim() !== uidShow(u)) return res.status(400).json({ error: `请原样输入对方 UID「${uidShow(u)}」确认` });
+  try {
+    const r = lifecycle.request(u, { kind: 'admin', by: req.user.uid, reason: req.body?.reason, needsApproval: !mode.direct, immediate: mode.direct });
+    res.json({ success: true, deletion: deletionView(r), state: users.findById.get(u.id).deletion_state });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+router.get('/admin/deletions', requireAuth, (req, res) => {
+  if (!isSysAdmin(req, 3) && !db.prepare("SELECT 1 FROM admin_grants WHERE user_id=? AND perm='user.delete'").get(req.user.uid)) return res.status(403).json({ error: '无权查看' });
+  const status = ['pending', 'done', 'cancelled', 'rejected', 'restored'].includes(req.query.status) ? req.query.status : null;
+  const rows = db.prepare(`SELECT * FROM account_deletions ${status ? 'WHERE status=?' : ''} ORDER BY created_at DESC LIMIT 200`).all(...(status ? [status] : []));
+  res.json({ success: true, config: lifecycle.config(), deletions: rows.map(r => {
+    const v = deletionView(lifecycle.getReq(r.id));
+    return { ...v, can_decide: v.status === 'pending' && !!v.needs_approval && !v.approved_by && canDecideDeletion(req, v) };
+  }) });
+});
+function deletionAction(fn) {
+  return (req, res) => {
+    const r = lifecycle.getReq(req.params.id);
+    if (!r) return res.status(404).json({ error: '申请不存在' });
+    try { res.json({ success: true, deletion: deletionView(fn(req, r)) }); }
+    catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  };
+}
+const deny = msg => { const e = new Error(msg); e.status = 403; throw e; };
+router.post('/admin/deletions/:id/approve', requireAuth, deletionAction((req, r) => {
+  if (!r.needs_approval) deny('这条申请不需要审批');
+  if (!canDecideDeletion(req, r)) deny('需要超级管理员、被授权的人，或比发起人级别更高的管理员来审批');
+  return lifecycle.approve(r.id, req.user.uid);
+}));
+router.post('/admin/deletions/:id/reject', requireAuth, deletionAction((req, r) => {
+  if (!canDecideDeletion(req, r)) deny('需要超级管理员、被授权的人，或比发起人级别更高的管理员来驳回');
+  return lifecycle.reject(r.id, req.user.uid);
+}));
+router.post('/admin/deletions/:id/cancel', requireAuth, deletionAction((req, r) => {
+  const target = users.findById.get(r.user_id);
+  if (r.requested_by !== req.user.uid && !hasGrant(req, 'user.delete', target)) deny('只有发起人、超级管理员或被授权的人能撤回');
+  return lifecycle.cancel(r.id, req.user.uid);
+}));
+router.post('/admin/deletions/:id/checklist', requireAuth, deletionAction((req, r) => {
+  const target = users.findById.get(r.user_id);
+  if (!isSysAdmin(req, 3) && !hasGrant(req, 'user.delete', target)) deny('无权操作');
+  return lifecycle.setChecklist(r.id, String(req.body?.key || ''), !!req.body?.done, req.user.uid);
+}));
+router.post('/admin/users/:id/restore', requireAuth, (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  if (!hasGrant(req, 'user.delete', u)) return res.status(403).json({ error: '恢复账号需要超级管理员，或被授予「删除 / 注销账号」权限' });
+  try { lifecycle.restore(u, req.user.uid); res.json({ success: true }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+// 超级管理员：已删除的账号不等保留期，立即彻底清除（强确认）
+router.post('/admin/users/:id/purge', requireAdmin(1), (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  if (u.deletion_state !== 'deleted') return res.status(400).json({ error: '只有「已删除」的账号才能彻底清除' });
+  if (String(req.body?.confirm || '').trim() !== '彻底清除') return res.status(400).json({ error: '请输入「彻底清除」确认' });
+  lifecycle.purge(u, req.user.uid);
+  res.json({ success: true });
+});
+
 router.post('/admin/users/:id/reset-password', requireAdmin(2), async (req, res) => {
   const { password } = req.body;
   if (!password || password.length < 6) return res.status(400).json({ error: '密码至少6位' });
@@ -3224,6 +3414,7 @@ router.patch('/admin/apps/:id', requireAdmin(2), (req, res) => {
   apps.update.run({ id: app.id, name:name??app.name, icon:icon??app.icon, icon_bg:icon_bg??app.icon_bg, description:description??app.description, callback_url:callback_url??app.callback_url, launch_url:launch_url!==undefined?safeLaunchUrl(launch_url):(app.launch_url||''), required_scopes:required_scopes!==undefined?safeRequiredScopes(required_scopes):(app.required_scopes||''), status:status??app.status, visible:visible!==undefined?(visible?1:0):app.visible });
   if (req.body.category !== undefined) db.prepare('UPDATE apps SET category=? WHERE id=?').run(String(req.body.category || '').trim(), app.id);
   if (req.body.deprovision_url !== undefined) db.prepare('UPDATE apps SET deprovision_url=? WHERE id=?').run(safeLaunchUrl(req.body.deprovision_url), app.id);
+  if (req.body.handover_required !== undefined) db.prepare('UPDATE apps SET handover_required=? WHERE id=?').run(req.body.handover_required ? 1 : 0, app.id);
   if (req.body.backchannel_logout_uri !== undefined) db.prepare('UPDATE apps SET backchannel_logout_uri=? WHERE id=?').run(safeLaunchUrl(req.body.backchannel_logout_uri), app.id);
   res.json({ success: true, app: apps.findById.get(app.id) });
 });
@@ -3538,13 +3729,16 @@ router.post('/v1/users/:uid/disable', requireApiKey('users:write'), (req, res) =
   if (req.isSandbox) return res.json({ success: true, _sandbox: true });
   db.prepare("UPDATE users SET status='disabled' WHERE uid_seq=? OR id=?").run(req.params.uid,req.params.uid);
   audit('user.disabled', { subject: req.params.uid, actor: actorOf(req) });
-  const du = findRealUserByUid(req.params.uid); if (du) deprovisionUserAllApps(du, 'user.disabled');
+  const du = findRealUserByUid(req.params.uid); if (du) onAccountSuspended(du, 'user.disabled');
   res.json({ success: true });
 });
 router.post('/v1/users/:uid/enable', requireApiKey('users:write'), (req, res) => {
   if (req.isSandbox) return res.json({ success: true, _sandbox: true });
+  const eu = findRealUserByUid(req.params.uid);
+  if (eu && (eu.deletion_state === 'deleted' || eu.merged_into)) return res.status(400).json({ error: '该账号已删除或已合并，不能启用' });
   db.prepare("UPDATE users SET status='active' WHERE uid_seq=? OR id=?").run(req.params.uid,req.params.uid);
   audit('user.enabled', { subject: req.params.uid, actor: actorOf(req) });
+  if (eu) onAccountResumed(eu);
   res.json({ success: true });
 });
 router.delete('/v1/users/:uid/realname', requireApiKey('users:kyc'), (req, res) => {

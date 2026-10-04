@@ -45,6 +45,13 @@ function requireAuth(req, res, next) {
   const { valid, data, error } = verifyToken(auth.slice(7));
   if (!valid) return res.status(401).json({ error: `Token 无效: ${error}` });
   req.user = data;
+  // 账号已停用 / 已删除 / 已合并：已签发的令牌立即失效（v3.5.44；之前要等令牌自然过期）。
+  // 2FA 中间态令牌（stage）不在这里用，公共账号令牌同样要看那个账号的状态
+  try {
+    const { db } = require('./db');
+    const u = db.prepare('SELECT status FROM users WHERE id=?').get(data.uid);
+    if (!u || u.status === 'disabled') return res.status(401).json({ error: '账号已停用或已删除，请重新登录' });
+  } catch (_) {}
   // org-scoped 会话（v3.5.26）：组织被停用/关闭直登、或本人已被移出组织 → 会话立即失效，不能留着继续用
   if (data.org_scoped) {
     try {

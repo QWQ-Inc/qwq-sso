@@ -381,4 +381,11 @@ function renameExtId(source, subject, cfg, oldId, newId) {
   return { renamed: true, user_id: link.user_id };
 }
 
-module.exports = { LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+// 账号停用 / 删除时同步暂停企业微信成员（v3.5.44，同步源开了 push_suspend 才做）：user/update enable=0/1。
+// 需要有通讯录写权限的 Secret（「通讯录同步」Secret；自建应用 Secret 不能改成员）。
+async function setMemberEnabled(cfg, userid, enabled) {
+  const access_token = await token(cfg);
+  await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), enable: enabled ? 1 : 0 });
+}
+
+module.exports = { setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
