@@ -51,13 +51,16 @@ function audit(event_type, opts = {}) {
   try {
     const detail = opts.detail == null ? null
       : (typeof opts.detail === 'string' ? opts.detail : JSON.stringify(opts.detail));
-    return _append({
+    const r = _append({
       id: uuidv4(), event_type,
       subject: opts.subject != null ? String(opts.subject) : null,
       actor: opts.actor != null ? String(opts.actor) : null,
       detail,
       created_at: new Date().toISOString(),
     });
+    // 部分存证事件同时推送到 Webhook / 群机器人（v3.5.52，未配置通知分组时什么都不做）
+    try { require('./notify').fromAudit(event_type, opts); } catch (_) {}
+    return r;
   } catch (e) {
     console.warn('[audit] 存证写入失败:', e.message);
     return null;

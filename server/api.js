@@ -2012,6 +2012,7 @@ router.post('/v1/orgs/:sid/members/import', requireApiKey('org:sync'), (req, res
 // 配置存 oauth_subjects.dir_sync（JSON，含通讯录 secret），结果存 dir_sync_state。
 // ══════════════════════════════════════════
 const dirsyncWecom = require('./dirsync-wecom');
+const notifyHub = require('./notify');
 const SECRET_MASK = '••••••••';
 const DIR_TYPES = { wecom: '企业微信' };          // 以后加飞书 / 钉钉：在这里登记 + 写对应的 dirsync-xxx.js
 const _dirSyncRunning = new Set();               // 按组织加锁：同一组织的多个源不并发跑（会互相影响移出判断）
@@ -2160,6 +2161,8 @@ async function runDirSource(src, actor, opts = {}) {
   if (_dirSyncRunning.has(subject.id)) throw Object.assign(new Error('该组织正在同步中，请稍后'), { status: 409 });
   _dirSyncRunning.add(subject.id);
   const at = new Date().toISOString();
+  const prevState = parseJ(src.state) || {};
+  const srcName = `${subject.name} · ${src.label || DIR_TYPES[src.type]}`;
   try {
     const out = await dirsyncWecom.syncWecom(src, subject, cfg, { genOrgUid, isEmail, isPhone }, undefined, { force: !!opts.force });
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
@@ -2168,10 +2171,17 @@ async function runDirSource(src, actor, opts = {}) {
       limited: out.limited, unmatched: out.unmatched, created_idonly: out.created_idonly || 0, blocked: out.blocked || 0, duplicates: out.duplicates || 0, warning: out.warning,
       errors: out.errors.slice(0, 20) };
     dirSources.setState.run(JSON.stringify(state), src.id);
+    // 通知（v3.5.52）：遗留重复账号数变了才推，免得定时同步每次都推一遍
+    if (state.duplicates && state.duplicates !== prevState.duplicates)
+      notifyHub.notify('dirsync', `通讯录同步发现 ${state.duplicates} 个人有重复账号`, [`同步源：${srcName}`, '到「组织管理」页顶部的「企业微信重复账号」里合并']);
     audit('org.dir_synced', { subject: subject.id, actor, detail: { source: src.type, source_id: src.id, label: src.label, force: out.force, total: out.total, created: out.created, added: out.added, removed: out.removed, bound: out.bound, pw_set: out.pw_set, kept: out.kept, errors: out.errors.length } });
     return state;
   } catch (e) {
-    dirSources.setState.run(JSON.stringify({ at, ok: false, error: String(e.message || e).slice(0, 300) }), src.id);
+    const err = String(e.message || e).slice(0, 300);
+    dirSources.setState.run(JSON.stringify({ at, ok: false, error: err }), src.id);
+    // 从正常变成失败、或失败原因变了才推（定时同步一直失败时不会每 10 分钟推一次）
+    if (prevState.ok !== false || prevState.error !== err)
+      notifyHub.notify('dirsync', '通讯录同步失败', [`同步源：${srcName}`, `原因：${err}`, `触发：${actor}`]);
     throw e;
   } finally {
     _dirSyncRunning.delete(subject.id);
@@ -2774,7 +2784,18 @@ router.post('/admin/announcements', requireAdmin(2), (req, res) => {
   const ann = announcements.findById.get(id);
   let emailed = 0;
   if (send_email) emailed = broadcastAnnouncementEmail(ann);
+  // 新公告推到 Webhook / 群机器人（v3.5.52；通知类别里开了 announcement 才推）
+  if (ann.active) {
+    const plain = String(ann.content || '').replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/\n{2,}/g, '\n').trim();
+    notifyHub.notify('announcement', `公告：${ann.title}`, [plain.length > 300 ? plain.slice(0, 300) + '…' : plain, ann.link ? `详情：${ann.link}` : '']);
+  }
   res.json({ success: true, announcement: ann, emailed, email_configured: hasMessageHub() });
+});
+// 系统通知（Webhook / 群机器人）发一条测试（v3.5.52）
+router.post('/admin/notify/test', requireAdmin(1), async (req, res) => {
+  try { const r = await notifyHub.testNotify(actorOf(req)); res.json({ success: true, method: r && r.method || null }); }
+  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
 router.patch('/admin/announcements/:id', requireAdmin(2), (req, res) => {
   const a = announcements.findById.get(req.params.id);

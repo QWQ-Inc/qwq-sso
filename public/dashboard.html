@@ -9083,7 +9083,7 @@ function renderEnvCards() {
         <span class="env-section-meta" style="color:${dotColor}">${dotLabel} · ${g.vars.length} 个变量 · ${g.desc}</span>
         <span class="env-section-chevron">▾</span>
       </div>
-      <div class="env-rows">${rows}</div>
+      <div class="env-rows">${rows}${g.footer ? `<div style="padding:10px 16px;border-top:1px solid var(--bd);">${g.footer}</div>` : ''}</div>
     </div>`;
   }).join('');
 }
@@ -9107,6 +9107,12 @@ function filterEnvGroupIn(cat, groupKey) {
 // secret 字段未展开时输入框里装的是 '•'.repeat(n)，绝不能把它当成真值提交。
 const isMaskedValue = s => typeof s === 'string' && s.length > 0 && /^[•]+$/.test(s);
 
+async function testNotify() {
+  showToast('正在发送测试通知…');
+  const { ok, data } = await api('POST', '/admin/notify/test', {});
+  if (ok) showToast('测试通知已发出' + (data.method ? `（${data.method}）` : '') + '，去群里 / Webhook 接收端看看');
+  else await uiAlert(data?.error || '发送失败', { title: '测试通知没发出去' });
+}
 async function saveAllEnv() {
   const vars = {};
   // 只提交当前页面里有值的变量（避免把未展示的变量的空值覆盖掉已有配置）
@@ -9399,6 +9405,15 @@ const ENV_GROUPS = [
       { key: 'QWQ_MESSAGE_SMS_TEMPLATE',label: '服务商模板号',   desc: '⚠️ 与上面是两回事：这里填服务商后台（如火山引擎控制台）已审核通过的模板 ID。把自建模板编号填到这里会被服务商判「模板错误」。两者二选一，自建模板优先',  required: false, secret: false, placeholder: 'ST_xxxxxxxx',  value: '' },
       { key: 'QWQ_MESSAGE_SMS_VAR',     label: '模板变量名',     desc: '模板里验证码占位符的名字，默认 code。若模板写的是 ${verifyCode} 就填 verifyCode，名字对不上同样报「模板错误」', required: false, secret: false, placeholder: 'code',                 value: '' },
       { key: 'SMS_CODE_EXPIRE',         label: '短信码有效期(秒)',desc: '短信验证码过期秒数，默认 300 秒（5分钟）',                       required: false, secret: false, placeholder: '300',                     value: '' },
+    ]
+  },
+  {
+    key: 'qwq_notify', category: 'msg', label: '系统通知（Webhook / 群机器人）', icon: '🔔', color: '#7B61FF',
+    desc: '把重要事件经 QWQ Message 推到 Webhook 或飞书 / 钉钉 / 企业微信群机器人：在分发中心建一个 Webhook 或群机器人分组，把分组编号填在这里。复用上面的分发中心地址和密钥。',
+    footer: '<button class="btn" style="font-size:12px;" onclick="testNotify()">发送测试通知</button> <span style="font-size:11px;color:var(--txd);">先保存再测试</span>',
+    vars: [
+      { key: 'QWQ_MESSAGE_NOTIFY_GROUP',  label: '通知分组编号', desc: '分发中心「渠道配置」里 Webhook / 飞书 / 钉钉 / 企业微信群机器人分组的编号。留空 = 不推送', required: false, secret: false, placeholder: 'sso-alert', value: '' },
+      { key: 'QWQ_MESSAGE_NOTIFY_EVENTS', label: '推送哪些事件', desc: '逗号分隔：account（注销 / 删除申请、删除、恢复、清除）、merge（账号合并 / 撤销）、grant（高危权限授权）、dirsync（通讯录同步失败、发现重复账号）、backup（备份失败）、kyc（实名账号数超限）、system（系统更新）、announcement（新公告）。all = 全部；留空 = 除 announcement 外全部', required: false, secret: false, placeholder: '留空 = 除公告外全部', value: '' },
     ]
   },
   {

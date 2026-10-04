@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.51　　最后更新：2026-10
+> 版本：v3.5.52　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -1809,6 +1809,21 @@ POST /api/admin/env         # 批量保存环境变量
 ```
 
 ---
+
+### 7.12.0 系统通知：Webhook / 群机器人（v3.5.52）
+
+经 QWQ Message 分发中心把重要事件推到 Webhook 或飞书 / 钉钉 / 企业微信群机器人（复用 `QWQ_MESSAGE_URL` / `QWQ_MESSAGE_KEY`）。
+
+| 变量 | 说明 |
+|---|---|
+| `QWQ_MESSAGE_NOTIFY_GROUP` | 分发中心里 Webhook / 群机器人分组的编号；空 = 不推送 |
+| `QWQ_MESSAGE_NOTIFY_EVENTS` | 逗号分隔类别：`account` `merge` `grant` `dirsync` `backup` `kyc` `system` `announcement`；`all` = 全部；留空 = 除 `announcement` 外全部 |
+
+```
+POST /api/admin/notify/test     # Lv.1：发一条测试通知 → { success, method }；分发中心的错误原样返回（502）
+```
+
+发送体：`{ group, subject:"[QWQ SSO] 标题", content:"【QWQ SSO】标题\n…\n时间：…\n站点：…", variables:{ event, title, time, site } }`（Webhook 默认请求体会带上 variables 的键，渠道里配了请求体模板也可以用 `{{title}}` 等引用）。通讯录同步失败只在「从正常变失败 / 原因变了」时推一次，重复账号数变了才推；推送失败只记日志，不影响业务。
 
 ### 7.12.1 域名验证文件（v3.5.40）
 

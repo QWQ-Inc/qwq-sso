@@ -6,18 +6,18 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.51**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.52**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.51，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.52，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
-- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接项系统核验 + 三方账号摘除封存 + 审批 + 批量操作）、账号合并（可撤销）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
+- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、系统通知（经消息分发推到 Webhook / 群机器人）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接项系统核验 + 三方账号摘除封存 + 审批 + 批量操作）、账号合并（可撤销）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
 - **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码（含主屏幕快捷操作）、商城、备忘录、应用中心（图标/文件夹/组织切换/管理工具磁贴：门禁·设备·用户·身份核验）、账号设定等；GitHub Actions 云编译）。
 
@@ -46,6 +46,7 @@ server/
 ├── oauth-meta.js # 三方平台元数据（字段/secret/扫码字段/中文名），oauth.js + api.js 共用
 ├── provider.js   # 【提供方】第三方"用 QWQ SSO 登录"：OIDC 授权码流程 + PKCE
 │                 #   ⚠️ 和 oauth.js 方向相反，别搞混
+├── notify.js     # 系统通知（v3.5.52）：重要事件经 QWQ Message 推到 Webhook / 群机器人；audit() 写完存证后调 fromAudit()
 ├── message.js    # 短信 + 邮件：统一调 QWQ Message 分发中心的单一接口
 │                 #   （v3.3.3 起替代原 sms.js / email.js，两者已删除）
 ├── kyc.js        # KYC 五服务商（Didit/Stripe/阿里云/火山引擎/支付宝）+ 轮询
@@ -435,6 +436,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.52 系统通知：经 QWQ Message 推到 Webhook / 群机器人（用户反馈）
+
+三级版本。用户：「消息分发支持 webhook。」——QWQ Message 的分发方式除短信 / 邮件外还有 WEBHOOK / FEISHU / DINGTALK / WECOM 群机器人，调用同一个 `/api/v1/send {group, content}`（见其 API.md 第 6 节；渠道可配请求体模板 `{{变量}}` 与 `X-Signature` 签名）。
+- 新 `server/notify.js`：`QWQ_MESSAGE_NOTIFY_GROUP`（分组编号，空 = 不推）+ `QWQ_MESSAGE_NOTIFY_EVENTS`（类别 `account/merge/grant/dirsync/backup/kyc/system/announcement`，`all` 全部，空 = 除 announcement 外全部）。`notify(cat, title, lines)` 异步、不抛错；发送体 `{group, subject:'[QWQ SSO] 标题', content:多行纯文本(含时间 按 WATERMARK_TZ / 站点 BASE_URL), variables:{event,title,time,site}}`，复用 `message.dispatch`（地址 / 密钥 / 出站统计照旧）。`testNotify()` 等待返回。
+- 事件来源：`audit.js` 的 `audit()` 写完存证后 `require('./notify').fromAudit(type, opts)`（懒加载避免循环依赖；未配置分组直接返回）——映射 `account.deletion_requested/deleted/restored/purged`、`user.merged/merge_undone`、`admin.grant_added/removed`、`backup.run`（有失败目标才推）、`kyc.account_limit`、`system.update_applied`，subject（uid_seq）/ actor（`admin:<seq>`）反查成「姓名（UID）」。直接调用：`runDirSource` 失败（`prevState.ok !== false || prevState.error !== err` 才推，防定时同步刷屏）、成功但 `duplicates` 与上次不同；`POST /admin/announcements` 新建且启用时推（去 HTML、≤300 字 + 外链）。
+- 接口 `POST /admin/notify/test`（Lv.1；没配地址密钥 / 分组 400，分发中心报错 502 原样带回）。前端 ENV_GROUPS 新组 `qwq_notify`（category msg）+ 通用 `g.footer`（卡片底部放「发送测试通知」→ `testNotify()`）；init.js ENV_KEYS 同步。
+- ⚠️ 测试：mock-hub.js（3920，`/__sent` 看收到的请求）+ run27 12 项（没填分组 400、Lv.2 403、测试通知分组 / subject / variables、分发中心报错带回、注销申请推送带账号名、授权推送、同步失败只推一次、公告默认不推 / 开了推且去 HTML、类别过滤、分发中心挂了业务照常）；进程内 fromAudit：备份失败只列失败目标、删除带封存数、合并带「企业微信重复账号合并」；回归 run 35 / run10 36 / run19 35 / run22 62 / run23 38 / run24 27 / run25 19；playwright ui27：卡片 + 测试按钮推到 mock，零 JS 报错、无原生弹窗。真实分发中心 Webhook / 群机器人未联调。
 
 ## v3.5.51 文件夹资源「交给」而非「套用」+ 文件夹凭证按组织使用 + 按部门建组织（用户反馈）
 
