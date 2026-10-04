@@ -334,6 +334,13 @@ router.get('/wecom', (req, res) => {
     // snsapi_base：企业微信内静默授权，不弹确认页（回调只用 userid，不需要敏感信息的 user_ticket）
     response_type: 'code', scope: 'snsapi_base', state,
   });
+  // 不在企业微信里（电脑 / 手机浏览器，比如在控制台点「绑定企业微信」）：网页授权链接只能在企业微信里打开，
+  // 在浏览器里授权会跑到企业微信自己的浏览器、session 不在同一处 → 绑不上、反而新建账号（v3.5.42.1 修）。
+  // 改走企业微信「网页登录」：扫码 / 电脑端一键登录，回调的 code 同样用 auth/getuserinfo 换 userid。
+  if (!/wxwork/i.test(req.headers['user-agent'] || '')) {
+    const w = new URLSearchParams({ login_type: 'CorpApp', appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID, redirect_uri: c.WECOM_REDIRECT_URI, state });
+    return res.redirect(`https://login.work.weixin.qq.com/wwlogin/sso/login?${w}`);
+  }
   res.redirect(`https://open.weixin.qq.com/connect/oauth2/authorize?${p}#wechat_redirect`);
 });
 

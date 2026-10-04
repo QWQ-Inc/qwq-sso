@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.42**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.42.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -433,6 +433,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.42.1 修企业微信绑定绑不上 + 受限 Secret 同步不建号（用户反馈）
+
+四级补丁。用户：「企业微信的绑定在企业微信里可以正常授权，但是回到 sso 没反应，没绑上」「企业微信回来 39 人，用户管理里只有 7 个人」。
+- 🐛 绑定：`/auth/wecom` 一直跳 `open.weixin.qq.com/connect/oauth2/authorize`（**只能在企业微信里打开**）。在电脑浏览器点绑定 → 授权跑到企业微信自带浏览器 → 回调在另一个 cookie 里，没有 `session.bindUserId` → 当成登录，`findOrCreate` 新建了一个账号（截图里的「许睿好懒工作室」00003）。修：UA 不含 `wxwork` 时改跳企业微信**网页登录** `login.work.weixin.qq.com/wwlogin/sso/login?login_type=CorpApp&appid&agentid&redirect_uri&state`（回调同一个、code 同样走 `auth/getuserinfo`），回调回到同一浏览器 session。多出来的空壳账号：用户重新绑定一次即被 v3.5.41 的 `isShellAccount` 自动合并。⚠️ 刻意**没有**把「绑定意图」放进 state（跨浏览器也能绑）——那是账号关联 CSRF（别人发链接让你授权，你的企业微信就绑到他账号上）。
+- 🐛 同步：v3.5.39 起只拿到 UserId（`_idOnly`，通讯录同步 Secret 受限）的成员不建号，用户以为同步坏了。改为同步源 config `idonly_create`（**默认开**）：照样建号、姓名用 UserId 占位、state 计 `created_idonly`；之后拿到真名时，**账号名仍等于 UserId 占位才替换**（别的情况不改名）。关掉则恢复旧行为（`unmatched`）。弹窗加勾选，状态文案提示。
+- `dir_source_links.ext_name`（新列）：外部系统里的姓名（「应用内姓名」，不可靠，只展示）；只有 UserId 时不覆盖已有值（`COALESCE`）。
+- ⚠️ 测试：run17 9 项（默认开、受限建号 + 占位名、换完整 Secret 不重复建号且换真名 + 记 ext_name、非占位名不覆盖、关掉不建号、受限不清 ext_name、浏览器跳网页登录 / 企业微信里跳 oauth2 snsapi_base）；run13 改为 `idonly_create:false` 后 10 项；回归 run10 36 / run16 21 / run9 26 / run8 20（需 `WECOM_CORP_ID=wwtest`）。真实企业微信网页登录未联调。
 
 ## v3.5.42 手机端第三方登录改为点击跳转 + 应用内自动登录（用户反馈）
 

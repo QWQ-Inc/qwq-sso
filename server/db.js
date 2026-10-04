@@ -442,6 +442,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_source_links (
   updated_at TEXT DEFAULT (datetime('now')),
   PRIMARY KEY (source_id, ext_id)
 )`); } catch(_) {}
+// v3.5.43：外部系统里的姓名（「应用内姓名」，不可靠，只展示；真实姓名以实名认证为准）
+try { db.exec('ALTER TABLE dir_source_links ADD COLUMN ext_name TEXT'); } catch(_) {}
 // v3.5.37：同步给成员设过什么（kind=bind/key=provider/value=UserId；kind=pw/key=''/value=密码哈希）。
 // 当前值 ≠ 记录值 = 被人单独改过 → 普通同步不覆盖，只有强确认的「全部覆盖同步」才覆盖。
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_applied (

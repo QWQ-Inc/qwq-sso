@@ -2027,6 +2027,8 @@ function dirSourceCfgFromBody(b, old) {
     corp_id, secret: secret.slice(0, 200),
     uid_mode: ['userid', 'rule', 'none'].includes(b.uid_mode) ? b.uid_mode : (old.uid_mode || 'userid'),
     remove_missing: b.remove_missing !== undefined ? b.remove_missing !== false : old.remove_missing !== false,
+    // 只拿到 UserId（通讯录 Secret 受限）的成员也建账号（姓名先用 UserId 占位，拿到真名后自动替换；一人多号可在成员列表合并）
+    idonly_create: b.idonly_create !== undefined ? b.idonly_create !== false : old.idonly_create !== false,
     interval_hours: Math.min(168, Math.max(0, parseInt(b.interval_hours ?? old.interval_hours, 10) || 0)),
   } };
 }
@@ -2044,7 +2046,7 @@ async function runDirSource(src, actor, opts = {}) {
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
       removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, bind_providers: out.bind_providers,
       bound: out.bound, pw_set: out.pw_set, kept: out.kept, conflicts: out.conflicts, force: out.force,
-      limited: out.limited, unmatched: out.unmatched, warning: out.warning,
+      limited: out.limited, unmatched: out.unmatched, created_idonly: out.created_idonly || 0, warning: out.warning,
       errors: out.errors.slice(0, 20) };
     dirSources.setState.run(JSON.stringify(state), src.id);
     audit('org.dir_synced', { subject: subject.id, actor, detail: { source: src.type, source_id: src.id, label: src.label, force: out.force, total: out.total, created: out.created, added: out.added, removed: out.removed, bound: out.bound, pw_set: out.pw_set, kept: out.kept, errors: out.errors.length } });

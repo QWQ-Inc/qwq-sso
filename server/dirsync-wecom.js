@@ -24,8 +24,9 @@ const crypto = require('crypto');
 const { db, users, oauth, orgMembers, oauthSubjects } = require('./db');
 
 const linkGet    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND ext_id=?');
-const linkUpsert = db.prepare(`INSERT INTO dir_source_links (source_id, ext_id, user_id, depts, updated_at) VALUES (?,?,?,?,datetime('now'))
-  ON CONFLICT(source_id, ext_id) DO UPDATE SET user_id=excluded.user_id, depts=excluded.depts, updated_at=datetime('now')`);
+const linkUpsert = db.prepare(`INSERT INTO dir_source_links (source_id, ext_id, user_id, depts, ext_name, updated_at) VALUES (?,?,?,?,?,datetime('now'))
+  ON CONFLICT(source_id, ext_id) DO UPDATE SET user_id=excluded.user_id, depts=excluded.depts,
+    ext_name=COALESCE(excluded.ext_name, ext_name), updated_at=datetime('now')`);
 const linksOf    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=?');
 const linkDelete = db.prepare('DELETE FROM dir_source_links WHERE source_id=? AND ext_id=?');
 // 该用户是否还被本组织的「任一」同步源同步着（多同步源时，离开 A 但还在 B 的人不能移出）
@@ -81,7 +82,7 @@ async function token(cfg) {
 // 只能调「获取部门 ID 列表」(department/simplelist) 和「获取成员 ID 列表」(user/list_id)，且只返回 ID。
 // 企业微信官方建议读通讯录改用「自建应用」Secret。这里遇到 48009 自动降级到 ID 接口，保证同步还能按 UserId 跑通。
 const FORBIDDEN = 48009;
-const LIMITED_HINT = '当前 Secret 是「通讯录同步」Secret，企业微信已限制它读取姓名 / 部门名 / 联系方式（48009），本次只拿到了 UserId 和部门 ID。要同步姓名等信息，请改填「自建应用」的 Secret（应用可见范围设为要同步的部门，并把本服务器出口 IP 加进应用的可信 IP）。';
+const LIMITED_HINT = '当前 Secret 是「通讯录同步」Secret，企业微信已限制它读取姓名 / 部门名 / 联系方式（48009），本次只拿到了 UserId 和部门 ID（成员照样建号，姓名暂用 UserId）。要同步姓名等信息，请改填「自建应用」的 Secret（应用可见范围设为要同步的部门，并把本服务器出口 IP 加进应用的可信 IP）。';
 
 async function deptList(access_token, id) {
   try {
@@ -255,8 +256,14 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       if (!user && email && helpers.isEmail(email)) user = users.findByEmail.get(email) || null;
       if (!user && phone && helpers.isPhone(phone)) user = users.findByPhone.get(phone) || null;
       if (user && user.is_public) { out.errors.push({ userid: extId, error: '命中公共账号，跳过' }); continue; }
-      // 只拿到 UserId（通讯录同步 Secret 受限）：没有邮箱手机，无法确认是不是已有账号——不建号，免得给已有用户造重复账号
-      if (!user && m._idOnly) { out.unmatched++; continue; }
+      // 只拿到 UserId（通讯录同步 Secret 受限）：认不出是不是已有账号。默认照样建号（姓名用 UserId 占位），
+      // 一人多号 / 与已有账号重复的，可在组织成员列表里合并；同步源关了 idonly_create 则不建号只计数
+      if (!user && m._idOnly && cfg.idonly_create === false) { out.unmatched++; continue; }
+      if (!user && m._idOnly) out.created_idonly = (out.created_idonly || 0) + 1;
+      // 之前只拿到 UserId 建的号，现在拿到了真名 → 把占位名换掉（别的情况不改名：外部姓名不可靠，用户可能自己改过）
+      if (user && !m._idOnly && m.name && user.name === extId && m.name !== extId) {
+        db.prepare("UPDATE users SET name=?, updated_at=datetime('now') WHERE id=?").run(name, user.id);
+      }
       if (!user) {
         user = users.create({
           name,
@@ -267,7 +274,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       } else if (!link) {
         out.linked++;
       }
-      linkUpsert.run(source.id, extId, user.id, depts || null);
+      linkUpsert.run(source.id, extId, user.id, depts || null, m._idOnly ? null : (name || null));
       for (const p of bindProviders) applyBind(user, extId, p);
       seenUsers.add(user.id);
       const existing = orgMembers.get.get(subject.id, user.id);
