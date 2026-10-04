@@ -429,7 +429,7 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - **不要尝试"保留完整连续 git 历史"的方案**——之前尝试过，因为主目录曾经有个误建的 `.git`（在 `C:\Users\xurui` 根目录，混入了大量个人文件和 Codex 运行时缓存），排查耗费大量精力，最终放弃，回到"每次重新初始化"的简单方案
 - 部署路径确认：本地解压 zip 到某个 `sso-deploy_XX/sso-system` 目录后，直接在**该子目录**里 `git init`，不要在上层目录操作
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
-- ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支），且**也不能交给 Actions 补打**：GITHUB_TOKEN 没有 workflows 权限，GitHub 拒绝它给「workflow 文件与当前不同」的提交建引用（git push 与 Release API 都被拒，v3.5.37 实测）。所以在云端发版时，tag 要由用户在本地推（推上去后 `release.yml` 自动建 Release）；发版提交标题保持 `vX.Y.Z: 描述` 格式，方便本地按标题找提交打 tag。
+- ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
 
