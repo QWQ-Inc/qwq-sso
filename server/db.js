@@ -362,6 +362,20 @@ try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_org_uid ON org_members(subj
 try { db.exec('ALTER TABLE org_members ADD COLUMN password_hash TEXT'); } catch(_) {}
 // 成员所属部门（v3.5.67）：组织内手动分部门（自由文本，如「技术部/后端组」）。通讯录同步也会回填。空=未分配。
 try { db.exec('ALTER TABLE org_members ADD COLUMN dept TEXT'); } catch(_) {}
+// 正式树状部门（v3.5.68）：org_departments 树 + org_members.dept_id 归属（替换上面的自由文本 dept）
+try { db.exec(`CREATE TABLE IF NOT EXISTS org_departments (
+  id         TEXT PRIMARY KEY,
+  subject_id TEXT NOT NULL,                       -- 所属组织
+  name       TEXT NOT NULL,                       -- 部门名
+  parent_id  TEXT,                                -- 父部门 id（树），NULL=顶级
+  source     TEXT NOT NULL DEFAULT 'manual',       -- manual | wecom | feishu
+  ext_id     TEXT,                                -- 外部部门 id（通讯录同步 upsert 匹配用），手动为空
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_org_depts_subject ON org_departments(subject_id)'); } catch(_) {}
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_org_depts_ext ON org_departments(subject_id, source, ext_id) WHERE ext_id IS NOT NULL'); } catch(_) {}
+try { db.exec('ALTER TABLE org_members ADD COLUMN dept_id TEXT'); } catch(_) {}
 // 组织内 org_uid 自动生成规则 + per-组织自增计数（挂在主体上）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_prefix TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_len INTEGER NOT NULL DEFAULT 4'); } catch(_) {}
@@ -1172,10 +1186,12 @@ const oauthSubjectStmts = {
 
 // 组织成员（org=主体）
 const orgMemberStmts = {
-  listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept,
+  listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept_id,
+      d.name AS dept_name,
       (m.password_hash IS NOT NULL) AS has_pw,
       u.name, u.email, u.uid_seq, u.uid_code
     FROM org_members m JOIN users u ON m.user_id=u.id
+    LEFT JOIN org_departments d ON d.id=m.dept_id
     WHERE m.subject_id=? AND u.is_public=0 ORDER BY m.created_at`),
   get:        db.prepare('SELECT * FROM org_members WHERE subject_id=? AND user_id=?'),
   add:        db.prepare('INSERT OR IGNORE INTO org_members (subject_id,user_id,org_uid,source) VALUES (?,?,?,?)'),
@@ -1184,7 +1200,8 @@ const orgMemberStmts = {
   removeUser: db.prepare('DELETE FROM org_members WHERE user_id=?'),
   setOrgUid:  db.prepare('UPDATE org_members SET org_uid=? WHERE subject_id=? AND user_id=?'),
   setPassword: db.prepare('UPDATE org_members SET password_hash=? WHERE subject_id=? AND user_id=?'),  // v3.5.20 组织自有密码
-  setDept:    db.prepare('UPDATE org_members SET dept=? WHERE subject_id=? AND user_id=?'),             // v3.5.67 成员所属部门
+  setDeptId:  db.prepare('UPDATE org_members SET dept_id=? WHERE subject_id=? AND user_id=?'),           // v3.5.68 成员归属部门
+  deptOfUser: db.prepare('SELECT dept_id FROM org_members WHERE user_id=? AND dept_id IS NOT NULL'),      // 门禁 dept 判定用
   countBySubject: db.prepare('SELECT COUNT(*) n FROM org_members m JOIN users u ON m.user_id=u.id WHERE m.subject_id=? AND u.is_public=0'),
   orgUidTaken: db.prepare('SELECT 1 FROM org_members WHERE subject_id=? AND org_uid=? AND user_id<>?'),
   // 某用户所属的（启用中的）组织 + 其组织内 uid
@@ -1557,6 +1574,21 @@ const contactStmts = {
   setPrimary: db.prepare('UPDATE user_contacts SET is_primary=1 WHERE id=? AND user_id=?'),
 };
 
+// 组织树状部门（v3.5.68）：每组织一套，parent_id 自引用；source=manual|wecom|feishu，ext_id 供通讯录同步 upsert
+const deptStmts = {
+  bySubject: db.prepare('SELECT d.*, (SELECT COUNT(*) FROM org_members m WHERE m.subject_id=d.subject_id AND m.dept_id=d.id AND m.user_id NOT IN (SELECT id FROM users WHERE is_public=1)) AS member_count FROM org_departments d WHERE d.subject_id=? ORDER BY d.sort_order, d.created_at'),
+  get:       db.prepare('SELECT * FROM org_departments WHERE id=?'),
+  getByExt:  db.prepare('SELECT * FROM org_departments WHERE subject_id=? AND source=? AND ext_id=?'),
+  insert:    db.prepare('INSERT INTO org_departments (id,name,subject_id,parent_id,source,ext_id,sort_order) VALUES (?,?,?,?,?,?,?)'),
+  update:    db.prepare('UPDATE org_departments SET name=?, parent_id=? WHERE id=?'),
+  remove:    db.prepare('DELETE FROM org_departments WHERE id=?'),
+  childrenOf: db.prepare('SELECT id FROM org_departments WHERE parent_id=?'),
+  upsertExt: db.prepare(`INSERT INTO org_departments (id,name,subject_id,parent_id,source,ext_id,sort_order)
+    VALUES (@id,@name,@subject_id,@parent_id,@source,@ext_id,@sort_order)
+    ON CONFLICT(subject_id, source, ext_id) DO UPDATE SET name=excluded.name, parent_id=excluded.parent_id, sort_order=excluded.sort_order`),
+  clearMemberDeptByDept: db.prepare('UPDATE org_members SET dept_id=NULL WHERE dept_id=?'),
+};
+
 // 域名验证文件（v3.5.40）；expires_at 为 NULL = 永久
 const verifyFileStmts = {
   all:    db.prepare('SELECT name, length(content) AS size, expires_at, note, created_by, created_at, updated_at FROM site_verify_files ORDER BY created_at DESC'),
@@ -1627,6 +1659,7 @@ module.exports = {
   access: accessStmts,
   devices: deviceStmts,
   contacts: contactStmts,
+  departments: deptStmts,
   otp: otpStmts,
   state: stateStmts,
   logs: logStmts,

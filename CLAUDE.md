@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.67**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.68**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,36 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.68 正式树状部门体系（成员按部门归属 + 通讯录同步自动建部门 + 门禁部门授权）（用户反馈）
+
+三级版本。把 v3.5.67 的「自由文本部门」升级成正式的树状部门。用户确认两个决策：① 通讯录同步（企微/飞书）**自动建部门树**；② 门禁授权**同时加「部门」维度**。
+
+### 数据（db.js）
+- 新表 `org_departments(id, subject_id, name, parent_id, source[manual|wecom|feishu], ext_id, sort_order, created_at)`——树状（parent_id 自引用），每组织一套；`ext_id` 供通讯录同步按 `(subject_id, source, ext_id)` 唯一 upsert。
+- `org_members` 加 `dept_id`（指向部门；旧的 `dept` 自由文本字段保留但不再用，避免 ALTER DROP）。
+- `deptStmts`（导出 `departments`）：bySubject（带 member_count 子查询）/ get / getByExt / insert / update / remove / childrenOf / upsertExt / clearMemberDeptByDept。`orgMemberStmts`：`setDept` 改语义为 `setDeptId`、新增 `deptOfUser`（门禁判定用）、`listBySubject` 回带 `dept_id` + `LEFT JOIN` 取 `dept_name`。
+
+### 后端（api.js）
+- 部门 CRUD（`canManageOrg` 同成员接口）：`GET/POST/PATCH/DELETE /admin/orgs/:sid/departments`。POST 建顶级部门；PATCH 改名/换父级（**防循环** `deptIsDescendant`：不能把部门移到自己的子孙下）；DELETE 删部门（成员 `dept_id` 置空、子部门 `parent_id` 上提到被删部门父级）。
+- `PATCH /admin/orgs/:sid/members/:uid` 收 `dept_id`（替换 v3.5.67 的 `dept` 文本），校验是本组织的部门。
+- 门禁规则：`ACCESS_GRANT_TYPES` 加 `dept`，POST 校验 grant_value 必须是存在的部门；`accessRuleLabel` 加 `dept` 显示部门名。
+
+### 门禁判定（access.js）
+`ruleMatchesUser` 加 `case 'dept'`：`orgMembers.deptOfUser.all(user.id)` 里任一 `dept_id === grant_value`（**先精确匹配部门本身，不含子部门递归**，子部门展开留后续）。
+
+### 通讯录同步自动建部门（dirsync-wecom.js + dirsync-feishu.js）
+- `fetchDirectory` 额外返回 `deptTree`（含父子关系的部门节点；企微 `deptList` 的 `parentid`、飞书 `childrenOf/deptInfo` 的 `parent`）。
+- `syncWecom`/`syncFeishu` 开头：非 limited 时遍历 `deptTree`，按 `getByExt` 命中则 update（改名/换父级）、否则 insert，`ext_id` 映射到部门 uuid；成员 `department`/`department_ids` 里第一个有对应部门的 id → `setDeptId` 归部门。飞书 `normMember` 加 `department_ids`（保留原始 open_department_id，之前只映射成 name 丢了 id）。
+
+### 前端（dashboard.html）
+- 组织成员弹窗加「🏢 部门（树状）」折叠区：部门树列表（缩进层级 + 来源徽章 + 人数）+ 新建/改名/删除；成员行部门输入从自由文本改**部门下拉**（`_deptOpts` 缩进显示层级）；「新建并加入」的部门也改下拉。dev mock 加 departments CRUD。
+- 门禁规则弹窗 `rule-type` 加「按部门」；`openDoorRules` 预取各组织部门合并成带「组织名 · 部门名」的下拉。
+
+### 测试
+- `scratchpad/departments-test.js` 12 项全过：门禁 dept 命中/别的部门不命中/无部门不命中/多部门命中其一；部门 upsert 幂等（同 ext_id 不新建、改名+换父级生效）；防循环（子孙判定）。
+- dev 浏览器实测：部门树渲染（技术部/后端组缩进）、成员行部门下拉（缩进 + 回填选中部门 + 名字旁部门徽章）、门禁规则弹窗「按部门」+ 部门下拉（示例集团 · 技术部）。回归 contacts 18 + dirsync-contacts 6 + similar-clues 5 + import-multi 10 全过。
+- ⚠️ 真实通讯录同步链路无凭据无法端到端（同既有约束），靠 fetchDirectory 返回 deptTree 的逻辑审查 + upsert 单测覆盖。
 
 ## v3.5.67 组织成员管理补齐：按组织建成员 + 分配登录凭证 + 成员部门（用户反馈）
 

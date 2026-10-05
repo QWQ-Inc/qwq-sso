@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, departments, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const contactUtil = require('./contacts');
@@ -1691,8 +1691,12 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
     orgUid = genOrgUid(s); source = 'auto';
   }
   orgMembers.add.run(s.id, r.id, orgUid, source);
-  const dept = String(req.body?.dept || '').trim();
-  if (dept) orgMembers.setDept.run(dept, s.id, r.id);
+  const deptId = String(req.body?.dept_id || '').trim();
+  if (deptId) {
+    const dp = departments.get.get(deptId);
+    if (!dp || dp.subject_id !== s.id) return res.status(400).json({ error: '部门不存在或不属于本组织' });
+    orgMembers.setDeptId.run(deptId, s.id, r.id);
+  }
   res.json({ success: true, org_uid: orgUid, uid_seq: r.uid_seq });
 });
 
@@ -1707,8 +1711,13 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
     if (orgUid && orgMembers.orgUidTaken.get(s.id, orgUid, target.id)) return res.status(400).json({ error: '该组织内 UID 已被占用' });
     orgMembers.setOrgUid.run(orgUid, s.id, target.id);
   }
-  if (req.body?.dept !== undefined) {
-    orgMembers.setDept.run(String(req.body.dept || '').trim() || null, s.id, target.id);   // v3.5.67 部门
+  if (req.body?.dept_id !== undefined) {
+    const deptId = String(req.body?.dept_id || '').trim() || null;
+    if (deptId) {
+      const dp = departments.get.get(deptId);
+      if (!dp || dp.subject_id !== s.id) return res.status(400).json({ error: '部门不存在或不属于本组织' });
+    }
+    orgMembers.setDeptId.run(deptId, s.id, target.id);   // v3.5.68 成员归属部门
   }
   res.json({ success: true });
 });
@@ -1718,6 +1727,73 @@ router.delete('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   const target = findRealUserByUid(req.params.uid);
   if (!target) return res.status(404).json({ error: '成员不存在' });
   orgMembers.remove.run(req.params.sid, target.id);
+  res.json({ success: true });
+});
+
+// ── 组织树状部门（v3.5.68）──────────────────────────────
+// 每组织一套部门树；canManageOrg 同成员接口。手动部门 source=manual、ext_id 空；通讯录同步建的 source=wecom|feishu。
+function deptIsDescendant(deptId, ancestorId) {
+  let cur = departments.get.get(deptId);
+  const seen = new Set();
+  while (cur && cur.parent_id && !seen.has(cur.parent_id)) {
+    seen.add(cur.parent_id);
+    if (cur.parent_id === ancestorId) return true;
+    cur = departments.get.get(cur.parent_id);
+  }
+  return false;
+}
+router.get('/admin/orgs/:sid/departments', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
+  res.json({ success: true, data: departments.bySubject.all(s.id) });
+});
+router.post('/admin/orgs/:sid/departments', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: '请填写部门名称' });
+  const parentId = String(req.body?.parent_id || '').trim() || null;
+  if (parentId) {
+    const p = departments.get.get(parentId);
+    if (!p || p.subject_id !== s.id) return res.status(400).json({ error: '上级部门不存在或不属于本组织' });
+  }
+  const id = uuidv4();
+  departments.insert.run(id, name, s.id, parentId, 'manual', null, 0);
+  res.json({ success: true, id });
+});
+router.patch('/admin/orgs/:sid/departments/:id', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const d = departments.get.get(req.params.id);
+  if (!d || d.subject_id !== s.id) return res.status(404).json({ error: '部门不存在' });
+  const name = req.body?.name !== undefined ? String(req.body.name || '').trim() : d.name;
+  if (!name) return res.status(400).json({ error: '请填写部门名称' });
+  let parentId = d.parent_id;
+  if (req.body?.parent_id !== undefined) {
+    parentId = String(req.body?.parent_id || '').trim() || null;
+    if (parentId) {
+      const p = departments.get.get(parentId);
+      if (!p || p.subject_id !== s.id) return res.status(400).json({ error: '上级部门不存在或不属于本组织' });
+      if (parentId === d.id || deptIsDescendant(d.id, parentId)) return res.status(400).json({ error: '不能把部门移到自己的子部门下' });
+    }
+  }
+  departments.update.run(name, parentId, d.id);
+  res.json({ success: true });
+});
+router.delete('/admin/orgs/:sid/departments/:id', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const d = departments.get.get(req.params.id);
+  if (!d || d.subject_id !== s.id) return res.status(404).json({ error: '部门不存在' });
+  // 子部门上提到被删部门的父级；成员 dept_id 置空
+  const children = departments.childrenOf.all(d.id);
+  for (const c of children) departments.update.run(departments.get.get(c.id).name, d.parent_id, c.id);
+  departments.clearMemberDeptByDept.run(d.id);
+  departments.remove.run(d.id);
   res.json({ success: true });
 });
 
@@ -6574,11 +6650,12 @@ function accessRuleLabel(type, value) {
       case 'tag':   { const t = tags.get.get(value); return t ? ('标签：' + t.name) : ('标签 ' + value); }
       case 'level': return '等级：' + String(value).toUpperCase();
       case 'org':   { const s = oauthSubjects.get.get(value); return s ? ('组织：' + s.name) : ('组织 ' + value); }
+      case 'dept':  { const d = departments.get.get(value); return d ? ('部门：' + d.name) : ('部门 ' + value); }
       default:      return String(value);
     }
   } catch (_) { return String(value); }
 }
-const ACCESS_GRANT_TYPES = ['all', 'org', 'group', 'tag', 'level', 'user'];
+const ACCESS_GRANT_TYPES = ['all', 'org', 'group', 'tag', 'level', 'user', 'dept'];
 const okHHMM = s => s === '' || /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(s || '').trim());
 function safeWeekdays(s) {
   return String(s || '').split(/[，,]/).map(x => x.trim()).filter(x => /^[0-6]$/.test(x)).join(',');
@@ -6680,6 +6757,7 @@ router.post('/admin/access/doors/:id/rules', requireAdmin(2), (req, res) => {
   if (grant_type !== 'all' && !grant_value) return res.status(400).json({ error: '请选择授权对象' });
   if (grant_type === 'all') grant_value = '';
   if (grant_type === 'level' && !/^[UA][1-9]$/i.test(grant_value)) return res.status(400).json({ error: '等级格式应为 U1~U9 / A1~A9' });
+  if (grant_type === 'dept' && !departments.get.get(grant_value)) return res.status(400).json({ error: '部门不存在' });
   const effect = ['allow', 'deny'].includes(req.body?.effect) ? req.body.effect : 'allow';
   const time_start = String(req.body?.time_start || '').trim();
   const time_end = String(req.body?.time_end || '').trim();

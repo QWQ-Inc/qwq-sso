@@ -618,15 +618,24 @@ function _devApi(method, path, body) {
   db._appOrgs = db._appOrgs || {};              // appId -> [sid]
   if (path === '/admin/orgs' && method === 'GET')
     return ok({ success:true, data:(db._oauthSubjects||[]).map(s=>({ id:s.id, name:s.name, enabled:s.enabled, uid_prefix:(db._orgUidRule[s.id]||{}).prefix||'', uid_len:(db._orgUidRule[s.id]||{}).len||4, members:(db._orgMembers[s.id]||[]).length })) });
+  // 组织部门（v3.5.68）演示
+  db._orgDepts = db._orgDepts || {};
+  const deptNameOf = (sid, id) => (db._orgDepts[sid]||[]).find(x=>x.id===id)?.name || '';
+  let dpm = path.match(/^\/admin\/orgs\/([^/]+)\/departments$/);
+  if (dpm && method === 'GET') { const sid=dpm[1]; db._orgDepts[sid]=db._orgDepts[sid]||[{ id:'dept1', name:'技术部', parent_id:null, source:'manual', member_count:0 },{ id:'dept2', name:'后端组', parent_id:'dept1', source:'wecom', member_count:0 }]; return ok({ success:true, data: db._orgDepts[sid] }); }
+  if (dpm && method === 'POST') { const sid=dpm[1]; db._orgDepts[sid]=db._orgDepts[sid]||[]; const d={ id:'dept'+Date.now(), name:body.name, parent_id:body.parent_id||null, source:'manual', member_count:0 }; db._orgDepts[sid].push(d); return ok({ success:true, id:d.id }); }
+  let dpp = path.match(/^\/admin\/orgs\/([^/]+)\/departments\/([^/]+)$/);
+  if (dpp && method === 'PATCH') { const arr=db._orgDepts[dpp[1]]||[]; const d=arr.find(x=>x.id===dpp[2]); if(d){ if(body.name!==undefined)d.name=body.name; if(body.parent_id!==undefined)d.parent_id=body.parent_id||null; } return ok({ success:true }); }
+  if (dpp && method === 'DELETE') { db._orgDepts[dpp[1]]=(db._orgDepts[dpp[1]]||[]).filter(x=>x.id!==dpp[2]); return ok({ success:true }); }
   let mm = path.match(/^\/admin\/orgs\/([^/]+)\/members$/);
   if (mm && method === 'GET') { const s=(db._oauthSubjects||[]).find(x=>x.id===mm[1])||{}; const r=db._orgUidRule[mm[1]]||{}; return ok({ success:true, org:{ id:mm[1], name:s.name, uid_prefix:r.prefix||'', uid_len:r.len||4, members_open:!!s.members_open }, members: db._orgMembers[mm[1]]||[] }); }
   let msh = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/shareable$/);
   if (msh && method === 'GET') return ok({ success:true, data:[{ uid:'#01008', name:'周可复用', email:'z**@corp.com', phone:'138****8899', from_orgs:'B集团,示例集团' }] });
-  if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } const nm=body.create?(body.name||body.email||body.phone):body.account; db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:nm, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid, dept:body.dept||null, has_pw:body.create&&body.password?1:0 }); return ok({ success:true, org_uid:uid }); }
+  if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } const nm=body.create?(body.name||body.email||body.phone):body.account; const did=body.dept_id||null; db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:nm, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid, dept_id:did, dept_name:did?deptNameOf(sid,did):'', has_pw:body.create&&body.password?1:0 }); return ok({ success:true, org_uid:uid }); }
   let mmg = path.match(/^\/admin\/orgs\/([^/]+)\/members\/merge$/);
   if (mmg && method === 'POST') { const arr=db._orgMembers[mmg[1]]||[]; const t=arr.find(x=>x.user_id===body.target); const src=arr.filter(x=>(body.sources||[]).includes(x.user_id)); if(t){ t.ext_ids=[...(t.ext_ids||[]),...src.flatMap(x=>x.ext_ids||[])]; } db._orgMembers[mmg[1]]=arr.filter(x=>!(body.sources||[]).includes(x.user_id)); return ok({ success:true, merged:src.map(x=>({id:x.user_id,uid_seq:x.uid_seq,name:x.name})), target:t?{id:t.user_id}:null, moved:{} }); }
   let mp = path.match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)$/);
-  if (mp && method === 'PATCH') { const arr=db._orgMembers[mp[1]]||[]; const m=arr.find(x=>String(x.uid_seq)===mp[2]); if(m){ if(body.org_uid!==undefined)m.org_uid=body.org_uid||null; if(body.dept!==undefined)m.dept=body.dept||null; } return ok({ success:true }); }
+  if (mp && method === 'PATCH') { const arr=db._orgMembers[mp[1]]||[]; const m=arr.find(x=>String(x.uid_seq)===mp[2]); if(m){ if(body.org_uid!==undefined)m.org_uid=body.org_uid||null; if(body.dept_id!==undefined){ m.dept_id=body.dept_id||null; m.dept_name=body.dept_id?deptNameOf(mp[1],body.dept_id):''; } } return ok({ success:true }); }
   if (mp && method === 'DELETE') { db._orgMembers[mp[1]]=(db._orgMembers[mp[1]]||[]).filter(x=>String(x.uid_seq)!==mp[2]); return ok({ success:true }); }
   // 成员登录凭证（v3.5.67）
   let mc = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)\/credentials$/);
@@ -872,7 +881,7 @@ function _devApi(method, path, body) {
   if (ad && method === 'DELETE') { db._accessDoors=db._accessDoors.filter(x=>x.id!==ad[1]); delete db._accessRules[ad[1]]; return ok({ success:true }); }
   let arr = path.match(/^\/admin\/access\/doors\/([^/]+)\/rules$/);
   if (arr && method === 'GET') return ok({ success:true, rules: db._accessRules[arr[1]]||[] });
-  if (arr && method === 'POST') { const did=arr[1]; db._accessRules[did]=db._accessRules[did]||[]; const labels={all:'所有登录用户',user:'用户 '+body.grant_value,group:'分组 '+body.grant_value,tag:'标签 '+body.grant_value,level:'等级：'+String(body.grant_value||'').toUpperCase(),org:'组织 '+body.grant_value}; const r={ id:'r'+Date.now(), door_id:did, grant_type:body.grant_type, grant_value:body.grant_value||'', effect:body.effect||'allow', weekdays:body.weekdays||'', time_start:body.time_start||'', time_end:body.time_end||'', label:labels[body.grant_type]||body.grant_value }; db._accessRules[did].push(r); const d=db._accessDoors.find(x=>x.id===did); if(d)d.rule_count=db._accessRules[did].length; return ok({ success:true, rule:r }); }
+  if (arr && method === 'POST') { const did=arr[1]; db._accessRules[did]=db._accessRules[did]||[]; const labels={all:'所有登录用户',user:'用户 '+body.grant_value,group:'分组 '+body.grant_value,tag:'标签 '+body.grant_value,level:'等级：'+String(body.grant_value||'').toUpperCase(),org:'组织 '+body.grant_value,dept:'部门 '+body.grant_value}; const r={ id:'r'+Date.now(), door_id:did, grant_type:body.grant_type, grant_value:body.grant_value||'', effect:body.effect||'allow', weekdays:body.weekdays||'', time_start:body.time_start||'', time_end:body.time_end||'', label:labels[body.grant_type]||body.grant_value }; db._accessRules[did].push(r); const d=db._accessDoors.find(x=>x.id===did); if(d)d.rule_count=db._accessRules[did].length; return ok({ success:true, rule:r }); }
   let ar2 = path.match(/^\/admin\/access\/doors\/([^/]+)\/rules\/([^/]+)$/);
   if (ar2 && method === 'DELETE') { const did=ar2[1]; db._accessRules[did]=(db._accessRules[did]||[]).filter(x=>x.id!==ar2[2]); const d=db._accessDoors.find(x=>x.id===did); if(d)d.rule_count=(db._accessRules[did]||[]).length; return ok({ success:true }); }
   if (path.indexOf('/admin/access/logs') === 0) return ok({ success:true, total:db._accessLogs.length, data:db._accessLogs });
@@ -3083,7 +3092,7 @@ async function loadMe() {
         <input id="orgmem-new-email" placeholder="邮箱" style="flex:1;min-width:130px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
         <input id="orgmem-new-phone" placeholder="手机" style="width:120px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
         <input id="orgmem-new-pw" type="password" placeholder="密码(可空)" style="width:100px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
-        <input id="orgmem-new-dept" placeholder="部门(可空)" style="width:110px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <select id="orgmem-new-dept" style="width:120px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);"></select>
         <input id="orgmem-new-uid" placeholder="组织内UID(可空)" style="width:130px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
         <button class="btn primary" style="font-size:12px;" onclick="createOrgMember()">新建并加入</button>
       </div>
@@ -3102,6 +3111,15 @@ async function loadMe() {
     <div id="orgmem-merge" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-creds" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--ac);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;">加载中…</div>
+    <details style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadOrgMembers()">
+      <summary style="cursor:pointer;color:var(--txm);">🏢 部门（树状）</summary>
+      <div style="font-size:11px;color:var(--txd);margin:6px 0;">组织下的树状部门。通讯录同步（企微/飞书）会自动建部门并把成员归进去；也可手动建顶级部门。成员可在上方成员行的「部门」下拉里改归属。</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:11px;color:var(--txd);">部门列表（缩进表示层级）</span>
+        <button class="btn primary" style="font-size:11px;" onclick="createDept()">+ 新建部门</button>
+      </div>
+      <div id="orgmem-depts" style="max-height:24vh;overflow:auto;font-size:12px;">加载中…</div>
+    </details>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);">📇 批量导入（外部通讯录）</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">每行一条：<code>邮箱或手机, 姓名, 组织内UID</code>（姓名/UID 可省，UID 留空按规则自动生成）。已存在的用户直接加入，不存在的按邮箱/手机建号。<br>第一列可填<b>多个手机/邮箱</b>，用分号 <code>;</code> 隔开（第一个做主，其余进成员多联系方式）：<code>13800138000;a@x.com;a@corp.com, 张三, EMP0001</code>。</div>
@@ -8179,10 +8197,19 @@ async function openDoorRules(doorId, doorName) {
   const groups = (g.data && g.data.groups) || [];
   const tags = (t.data && t.data.tags) || [];
   const subjects = (s.data && s.data.data) || [];
+  // v3.5.68：各部门（跨组织合并，带组织名前缀）
+  const departments = [];
+  for (const subj of subjects) {
+    if (!subj.enabled) continue;
+    try {
+      const dd = await api('GET', '/admin/orgs/' + subj.id + '/departments');
+      if (dd.ok) for (const d of (dd.data.data || [])) departments.push({ ...d, org_name: subj.name });
+    } catch (_) {}
+  }
   const ov = document.createElement('div');
   ov.className = 'modal-mask show';
   ov.id = 'rules-modal';
-  ov._opts = { groups, tags, subjects };
+  ov._opts = { groups, tags, subjects, departments };
   ov.innerHTML = `<div class="modal" style="max-width:560px;">
     <div class="modal-head"><h3>授权规则 · ${esc(doorName)}</h3><button class="modal-x" onclick="this.closest('.modal-mask').remove()">×</button></div>
     <div class="modal-body" style="padding:16px;">
@@ -8200,6 +8227,7 @@ async function openDoorRules(doorId, doorName) {
             <option value="tag">按标签</option>
             <option value="level">按等级</option>
             <option value="org">按组织</option>
+            <option value="dept">按部门</option>
             <option value="user">指定用户</option>
           </select>
           <span id="rule-value-wrap"></span>
@@ -8237,6 +8265,7 @@ function renderRuleValueInput() {
   else if (type === 'group') wrap.innerHTML = opts.groups.length ? sel(opts.groups,'name') : '<span style="font-size:12px;color:var(--err);">无分组</span>';
   else if (type === 'tag') wrap.innerHTML = opts.tags.length ? sel(opts.tags,'name') : '<span style="font-size:12px;color:var(--err);">无标签</span>';
   else if (type === 'org') wrap.innerHTML = opts.subjects.length ? sel(opts.subjects,'name') : '<span style="font-size:12px;color:var(--err);">无组织</span>';
+  else if (type === 'dept') wrap.innerHTML = opts.departments.length ? `<select id="rule-value" style="padding:7px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);min-width:200px;">${opts.departments.map(d=>`<option value="${esc(d.id)}">${esc(d.org_name)} · ${esc(d.name)}</option>`).join('')}</select>` : '<span style="font-size:12px;color:var(--err);">无部门（先去组织里建部门）</span>';
   else if (type === 'level') wrap.innerHTML = '<input id="rule-value" placeholder="如 U3 / A1" style="width:120px;padding:7px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">';
   else wrap.innerHTML = '<input id="rule-value" placeholder="UID / 用户名" style="width:160px;padding:7px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">';
 }
@@ -8906,9 +8935,68 @@ async function openOrgMembers(sid, name) {
   await loadOrgMembers();
 }
 function closeOrgMembers() { document.getElementById('orgmem-modal').classList.remove('show'); }
+// ── 组织树状部门（v3.5.68）──
+let _orgDepts = [];
+function _deptDepth(d) {
+  let depth = 0, cur = d, seen = new Set();
+  while (cur && cur.parent_id && !seen.has(cur.parent_id)) { seen.add(cur.parent_id); depth++; cur = _orgDepts.find(x => x.id === cur.parent_id); }
+  return depth;
+}
+function _deptOpts(selectedId) {
+  const opts = ['<option value="">（未分配）</option>'];
+  for (const d of _orgDepts) {
+    const depth = _deptDepth(d);
+    const srcTag = d.source === 'wecom' ? '（企微）' : d.source === 'feishu' ? '（飞书）' : '';
+    opts.push(`<option value="${esc(d.id)}" ${d.id === selectedId ? 'selected' : ''}>${'　'.repeat(depth)}${esc(d.name)}${srcTag}</option>`);
+  }
+  return opts.join('');
+}
+async function loadOrgDepts() {
+  const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/departments');
+  _orgDepts = ok ? (data.data || []) : [];
+}
+function renderOrgDepts() {
+  const box = document.getElementById('orgmem-depts');
+  // 「新建并加入」的部门下拉也一起填充
+  const newSel = document.getElementById('orgmem-new-dept');
+  if (newSel) newSel.innerHTML = _deptOpts('');
+  if (!box) return;
+  const rows = _orgDepts.map(d => {
+    const depth = _deptDepth(d);
+    const srcTag = d.source === 'wecom' ? ' <span style="color:#1F7A3A;font-size:10px;">企微</span>' : d.source === 'feishu' ? ' <span style="color:#1F7A3A;font-size:10px;">飞书</span>' : '';
+    const cnt = d.member_count ? ` <span style="color:var(--txd);font-size:10px;">${d.member_count}人</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;">
+      <span style="flex:1;padding-left:${depth * 16}px;color:var(--txt);">${esc(d.name)}${srcTag}${cnt}</span>
+      <button class="btn" style="font-size:10px;padding:1px 7px;" onclick='renameDept(${JSON.stringify(d.id)},${JSON.stringify(d.name)})'>改名</button>
+      <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='delDept(${JSON.stringify(d.id)},${JSON.stringify(d.name)})'>删除</button>
+    </div>`;
+  }).join('') || '<div style="color:var(--txd);font-size:12px;">还没有部门（通讯录同步会自动建，也可手动新建顶级部门）。</div>';
+  box.innerHTML = rows;
+}
+async function createDept() {
+  const name = await uiPrompt('新部门名称（手动建的是顶级部门；子部门由通讯录同步自动建）：');
+  if (!name) return;
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/departments', { name: name.trim() });
+  if (ok) { showToast('已新建部门'); await loadOrgDepts(); renderOrgDepts(); loadOrgMembers(); }
+  else showToast('新建失败：' + (data?.error || '未知错误'));
+}
+async function renameDept(id, oldName) {
+  const name = await uiPrompt('重命名部门：', oldName);
+  if (!name || name === oldName) return;
+  const { ok, data } = await api('PATCH', '/admin/orgs/' + _orgMemSid + '/departments/' + id, { name: name.trim() });
+  if (ok) { showToast('已重命名'); await loadOrgDepts(); renderOrgDepts(); loadOrgMembers(); }
+  else showToast('重命名失败：' + (data?.error || '未知错误'));
+}
+async function delDept(id, name) {
+  if (!await uiConfirm(`删除部门「${name}」？其成员会变为未分配，子部门会上提一级。`)) return;
+  const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/departments/' + id);
+  if (ok) { showToast('已删除'); await loadOrgDepts(); renderOrgDepts(); loadOrgMembers(); }
+  else showToast('删除失败：' + (data?.error || '未知错误'));
+}
 async function loadOrgMembers() {
   const box = document.getElementById('orgmem-list');
   box.innerHTML = '加载中…';
+  await loadOrgDepts(); renderOrgDepts();
   const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/members');
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   document.getElementById('orgmem-prefix').value = data.org?.uid_prefix || '';
@@ -8922,15 +9010,15 @@ async function loadOrgMembers() {
   box.innerHTML = rows.length ? rows.map(m => {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
     const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
-    const deptShow = m.dept ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">🏢 ${esc(m.dept)}</span>` : '';
+    const deptShow = m.dept_name ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">🏢 ${esc(m.dept_name)}</span>` : '';
     const ext = (m.ext_ids || []).length ? `<br><span style="color:var(--txd);font-size:10px;">外部账号：${m.ext_ids.map(x => esc(x.id) + (x.source ? '（' + esc(x.source) + '）' : '')).join('、')}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
       <input type="checkbox" class="omsel" data-id="${esc(m.user_id)}" ${_orgMemSel.has(m.user_id) ? 'checked' : ''} onchange="toggleOrgMemSel(this)" title="勾选多个 → 合并为同一人">
       <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${deptShow}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
       <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:110px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemUid(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存UID</button>
-      <input value="${esc(m.dept || '')}" placeholder="部门" id="omd-${esc(m.user_id)}" style="width:100px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
-      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemDept(${JSON.stringify(m.uid_seq)})'>存部门</button>
+      <select id="omd-${esc(m.user_id)}" style="max-width:150px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">${_deptOpts(m.dept_id)}</select>
+      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemDept(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存部门</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>组织密码</button>
       ${m.has_pw ? `<button class="btn" style="font-size:11px;padding:2px 7px;" onclick='clearOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>清除</button>` : ''}
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='openOrgMemCreds(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>登录凭证</button>
@@ -9024,14 +9112,15 @@ async function createOrgMember() {
   const email = document.getElementById('orgmem-new-email').value.trim();
   const phone = document.getElementById('orgmem-new-phone').value.trim();
   const password = document.getElementById('orgmem-new-pw').value;
-  const dept = document.getElementById('orgmem-new-dept').value.trim();
+  const dept_id = document.getElementById('orgmem-new-dept').value;
   const org_uid = document.getElementById('orgmem-new-uid').value.trim();
   if (!name) { showToast('请填写姓名'); return; }
   if (!email && !phone) { showToast('邮箱/手机至少填一个'); return; }
-  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { create: true, name, email, phone, password, dept, org_uid, auto_uid: !org_uid });
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { create: true, name, email, phone, password, dept_id: dept_id || null, org_uid, auto_uid: !org_uid });
   if (ok) {
     showToast('已新建并加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : ''));
-    ['name', 'email', 'phone', 'pw', 'dept', 'uid'].forEach(f => { const el = document.getElementById('orgmem-new-' + f); if (el) el.value = ''; });
+    ['name', 'email', 'phone', 'pw', 'uid'].forEach(f => { const el = document.getElementById('orgmem-new-' + f); if (el) el.value = ''; });
+    document.getElementById('orgmem-new-dept').value = '';
     loadOrgMembers();
   } else showToast('新建失败：' + (data?.error || '未知错误'));
 }
@@ -9076,10 +9165,9 @@ async function delOrgMember(uidSeq, name) {
   if (ok) { showToast('已移出'); loadOrgMembers(); } else showToast('移出失败：' + (data?.error || '未知错误'));
 }
 // 成员所属部门（v3.5.67）
-async function setOrgMemDept(uidSeq) {
-  const m = _orgMemRows.find(x => String(x.uid_seq) === String(uidSeq));
-  const dept = document.getElementById('omd-' + (m ? m.user_id : uidSeq)).value.trim();
-  const { ok, data } = await api('PATCH', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq, { dept });
+async function setOrgMemDept(uidSeq, userId) {
+  const dept_id = document.getElementById('omd-' + userId).value;
+  const { ok, data } = await api('PATCH', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq, { dept_id: dept_id || null });
   if (ok) { showToast('已保存部门'); loadOrgMembers(); } else showToast('保存失败：' + (data?.error || '未知错误'));
 }
 // 成员登录凭证：绑定/解绑三方登录（v3.5.67）

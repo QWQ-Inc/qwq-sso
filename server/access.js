@@ -77,6 +77,7 @@ function ruleMatchesUser(rule, user) {
     case 'level': return String(rule.grant_value).toUpperCase() === levelTagOf(user);
     case 'org':   return !!orgMembers.get.get(rule.grant_value, user.id);
     case 'tag':   return (tags.ofUser.all(user.id) || []).some(t => String(t.id) === String(rule.grant_value));
+    case 'dept':  return (orgMembers.deptOfUser.all(user.id) || []).some(r => String(r.dept_id) === String(rule.grant_value));
     default:      return false;
   }
 }

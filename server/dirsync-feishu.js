@@ -15,7 +15,7 @@
 // 离开：离职（is_resigned）/ 暂停（is_frozen）/ 主动退出（is_exited）或不在所选部门了 → 从组织移出（规则同企业微信）。
 // 停用 / 删除：PATCH users/:id {is_frozen}（暂停 / 恢复）、DELETE users/:id（删除成员），需要应用开通「更新通讯录」权限。
 const crypto = require('crypto');
-const { db, users, oauth, orgMembers } = require('./db');
+const { db, users, oauth, orgMembers, departments } = require('./db');
 const W = require('./dirsync-wecom');   // 共用 effectiveCfg（同步源配置解析）
 
 const SRC = 'feishu';   // org_members.source
@@ -153,6 +153,7 @@ function normMember(u, deptName) {
     name: u.name || u.en_name || u.open_id,
     email: String(u.enterprise_email || u.email || '').trim().toLowerCase(), mobile,
     department: (u.department_ids || []).map(id => deptName.get(id) || id),
+    department_ids: u.department_ids || [],   // v3.5.68 保留原始部门 id 供归部门
     active: !(st.is_resigned || st.is_frozen || st.is_exited),
   };
 }
@@ -162,12 +163,14 @@ async function fetchDirectory(cfg) {
   const tk = await token(cfg);
   const roots = deptIdsOf(cfg);
   const deptName = new Map();
+  const deptTree = [];   // v3.5.68：含父子关系的部门节点，供自动建 org_departments
   const inScope = new Set();
   let extraUsers = [];
+  const collect = n => { if (n.name) { deptName.set(n.id, n.name); deptTree.push(n); } };
   for (const root of roots) {
     inScope.add(root);
     try {
-      for (const n of await childrenOf(tk, root)) { inScope.add(n.id); if (n.name) deptName.set(n.id, n.name); }
+      for (const n of await childrenOf(tk, root)) { inScope.add(n.id); collect(n); }
     } catch (e) {
       if (!(root === '0' && e.errcode === 40004)) throw e;
       // 选了「全部」但权限范围没开到根部门：按权限范围里的部门 + 单独授权的成员同步
@@ -175,11 +178,11 @@ async function fetchDirectory(cfg) {
       const sc = await scopes(tk);
       for (const id of sc.dept) {
         inScope.add(id);
-        try { for (const n of await childrenOf(tk, id)) { inScope.add(n.id); if (n.name) deptName.set(n.id, n.name); } } catch (_) {}
+        try { for (const n of await childrenOf(tk, id)) { inScope.add(n.id); collect(n); } } catch (_) {}
       }
       extraUsers = sc.users;
     }
-    if (root !== '0' && !deptName.has(root)) { const d = await deptInfo(tk, root); if (d.name) deptName.set(root, d.name); }
+    if (root !== '0' && !deptName.has(root)) { const d = await deptInfo(tk, root); if (d.name) collect(d); }
   }
   const byId = new Map();
   for (const id of inScope) {
@@ -191,7 +194,7 @@ async function fetchDirectory(cfg) {
     if (byId.has(oid)) continue;
     try { const u = (await call('GET', `/contact/v3/users/${encodeURIComponent(oid)}`, { params: DEPT_Q, token: tk })).data.user; if (u) byId.set(u.open_id, normMember(u, deptName)); } catch (_) {}
   }
-  return { members: [...byId.values()], deptName, limited: false };
+  return { members: [...byId.values()], deptName, deptTree, limited: false };
 }
 
 // ══════════════════════════════════════════
@@ -264,7 +267,23 @@ function bindProvidersFor(subject, cfg) {
 /** 执行一次同步（流程与企业微信一致：只补默认值、不覆盖单独修改；0 人不移除；只移出本源丢掉、也不在其他同步源里的成员） */
 async function syncFeishu(source, subject, cfg, helpers, fetcher = fetchDirectory, opts = {}) {
   const force = !!opts.force;
-  const { members } = await fetcher(cfg);
+  const { members, deptTree } = await fetcher(cfg);
+  // v3.5.68：自动建部门树；ext_id→部门 uuid 映射供成员归部门
+  const extToDeptId = new Map();
+  if (Array.isArray(deptTree) && deptTree.length) {
+    for (const node of deptTree) {
+      const extId = String(node.id);
+      let dId = departments.getByExt.get(subject.id, 'feishu', extId);
+      const parentId = node.parent != null ? (extToDeptId.get(String(node.parent)) || null) : null;
+      if (dId) {
+        departments.update.run(node.name || extId, parentId, dId.id);
+      } else {
+        dId = { id: crypto.randomUUID() };
+        departments.insert.run(dId.id, node.name || extId, subject.id, parentId, 'feishu', extId, Number(node.order) || 0);
+      }
+      extToDeptId.set(extId, dId.id);
+    }
+  }
   const bindProviders = bindProvidersFor(subject, cfg);
   const uidMode = cfg.uid_mode || 'userid';
   const pwHash = cfg.default_pw_hash || null;
@@ -346,6 +365,13 @@ async function syncFeishu(source, subject, cfg, helpers, fetcher = fetchDirector
         out.added++;
       } else if (!existing.org_uid && uidMode === 'userid' && want && !orgMembers.orgUidTaken.get(subject.id, want, user.id)) {
         orgMembers.setOrgUid.run(want, subject.id, user.id);
+      }
+      // v3.5.68：成员归部门（取第一个有对应 org_departments 的外部部门 id）
+      if (Array.isArray(m.department_ids)) {
+        for (const did of m.department_ids) {
+          const deptId = extToDeptId.get(String(did));
+          if (deptId) { orgMembers.setDeptId.run(deptId, subject.id, user.id); break; }
+        }
       }
       applyPassword(user);
     } catch (e) {

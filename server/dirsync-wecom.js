@@ -21,7 +21,7 @@
 //   · 同步只「补上」默认值：成员被单独改过的（解绑/改绑登录凭证、改了或清了组织密码）一律不覆盖，
 //     靠 dir_sync_applied 记住「同步上次给他设了什么」来判断是不是被人动过；除非强确认的「全部覆盖同步」（force）
 const crypto = require('crypto');
-const { db, users, oauth, orgMembers, oauthSubjects } = require('./db');
+const { db, users, oauth, orgMembers, oauthSubjects, departments } = require('./db');
 const { importWecomContacts } = require('./contacts');
 
 const linkGet    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND ext_id=?');
@@ -215,12 +215,13 @@ async function fetchDirectory(cfg) {
   const access_token = await token(cfg);
   const roots = deptIdsOf(cfg);
   const deptName = new Map();
+  const deptTree = [];   // v3.5.68：含父子关系的部门节点，供自动建 org_departments
   const inScope = new Set();
   let limited = false;
   for (const root of roots) {
     const r = await deptList(access_token, root);
     limited = limited || r.limited;
-    r.depts.forEach(d => { if (d.name) deptName.set(d.id, d.name); inScope.add(d.id); });
+    r.depts.forEach(d => { if (d.name) { deptName.set(d.id, d.name); deptTree.push({ id: d.id, name: d.name, parent: d.parentid, order: d.order }); } inScope.add(d.id); });
     inScope.add(root);
   }
   let members = [];
@@ -261,7 +262,7 @@ async function fetchDirectory(cfg) {
   // 同一个人在多个部门（或选了父子两个部门）会出现多次，按 userid 去重
   const byId = new Map();
   for (const m of members) if (m && m.userid && !byId.has(m.userid)) byId.set(m.userid, m);
-  return { members: [...byId.values()], deptName, limited };
+  return { members: [...byId.values()], deptName, deptTree, limited };
 }
 
 /** 这家企业微信在本系统的「登录凭证」provider key（同 corp），用于绑定 UserId；没配企业微信登录则返回 null */
@@ -305,7 +306,23 @@ const ACTIVE = new Set([1, 4]);   // 1 已激活 / 4 未激活（还没加入企
  */
 async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory, opts = {}) {
   const force = !!opts.force;
-  const { members, deptName, limited } = await fetcher(cfg);
+  const { members, deptName, deptTree, limited } = await fetcher(cfg);
+  // v3.5.68：自动建部门树（非 limited 才有部门名/父子关系）；ext_id→部门 uuid 映射供成员归部门
+  const extToDeptId = new Map();
+  if (!limited && Array.isArray(deptTree) && deptTree.length) {
+    for (const node of deptTree) {
+      const extId = String(node.id);
+      let dId = departments.getByExt.get(subject.id, 'wecom', extId);
+      const parentId = node.parent != null ? (extToDeptId.get(String(node.parent)) || null) : null;
+      if (dId) {
+        departments.update.run(node.name || extId, parentId, dId.id);
+      } else {
+        dId = { id: crypto.randomUUID() };
+        departments.insert.run(dId.id, node.name || extId, subject.id, parentId, 'wecom', extId, Number(node.order) || 0);
+      }
+      extToDeptId.set(extId, dId.id);
+    }
+  }
   const bindProviders = bindProvidersFor(subject, cfg);
   const bindProvider = bindProviders[0] || null;   // 匹配用：先按第一个绑定凭证找人
   const uidMode = cfg.uid_mode || 'userid';
@@ -407,6 +424,13 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
         out.added++;
       } else if (!existing.org_uid && uidMode === 'userid' && !orgMembers.orgUidTaken.get(subject.id, extId, user.id)) {
         orgMembers.setOrgUid.run(extId, subject.id, user.id);
+      }
+      // v3.5.68：成员归部门（取第一个有对应 org_departments 的外部部门 id；只给非 idOnly 成员）
+      if (!m._idOnly && Array.isArray(m.department)) {
+        for (const did of m.department) {
+          const deptId = extToDeptId.get(String(did));
+          if (deptId) { orgMembers.setDeptId.run(deptId, subject.id, user.id); break; }
+        }
       }
       applyPassword(user);
     } catch (e) {
