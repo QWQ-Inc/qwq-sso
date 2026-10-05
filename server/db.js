@@ -512,6 +512,9 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS account_deletions (
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.62：疑似重复账号里被标记「不是同一人」的两两组合（a < b），以后不再分到一组
+try { db.exec(`CREATE TABLE IF NOT EXISTS merge_ignore_pairs (
+  a TEXT NOT NULL, b TEXT NOT NULL, created_by TEXT, created_at TEXT DEFAULT (datetime('now')), PRIMARY KEY (a, b))`); } catch (_) {}
 // v3.5.48：账号合并可撤销——合并记录 + 合并时数据库每一行改动的日志（撤销时按日志倒放）。
 // 撤销窗口 MERGE_UNDO_DAYS（默认 30 天），过期日志清掉（里面有被删账号的完整数据）。
 try { db.exec(`CREATE TABLE IF NOT EXISTS merge_records (

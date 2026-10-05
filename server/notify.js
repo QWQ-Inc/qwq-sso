@@ -86,7 +86,7 @@ const actorText = (a) => {
   return m ? who(m[1]) : a;
 };
 const PERM = { 'kyc.clear': '清除实名', 'user.delete': '删除账号' };
-const VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时并入空壳账号', dir_duplicate: '企业微信重复账号合并' };
+const VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时并入空壳账号', dir_duplicate: '企业微信重复账号合并', user_list: '用户管理勾选合并', similar: '疑似重复账号批量合并' };
 
 function fromAudit(type, opts = {}) {
   try {

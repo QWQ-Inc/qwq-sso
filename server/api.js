@@ -3112,13 +3112,8 @@ router.post('/user/kyc/merge', requireAuth, noPublic, (req, res) => {
 // 用户管理勾选合并（v3.5.61）：先预览——每个账号的资料、能不能被并进别人、建议保留哪个
 const mergeKeepScore = (u) => (u.role === 'admin' ? 64 : 0) + (u.password_hash ? 16 : 0) + (u.kyc_verified ? 8 : 0)
   + (u.twofa_enabled ? 4 : 0) + (u.email ? 2 : 0) + (u.phone ? 1 : 0);
-router.post('/admin/users/merge/preview', requireAdmin(1), (req, res) => {
-  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))];
-  if (ids.length < 2) return res.status(400).json({ error: '至少勾选两个账号才能合并' });
-  if (ids.length > 21) return res.status(400).json({ error: '一次最多合并 21 个账号（1 个保留 + 20 个并入）' });
-  const list = ids.map(id => users.findById.get(id));
-  const miss = ids.filter((id, i) => !list[i]);
-  if (miss.length) return res.status(404).json({ error: '有账号不存在（可能刚被删除或合并），请刷新列表' });
+// 一组待合并账号的视图：每人资料摘要 + 能否被并入 / 能否当保留账号 + 建议保留 + 整组冲突（v3.5.61 / v3.5.62）
+function mergeGroupView(list) {
   const orgCnt = db.prepare('SELECT COUNT(*) n FROM org_members WHERE user_id=?');
   const bindCnt = db.prepare('SELECT COUNT(*) n FROM user_oauth WHERE user_id=?');
   const pkCnt = db.prepare('SELECT COUNT(*) n FROM webauthn_credentials WHERE user_id=?');
@@ -3138,8 +3133,126 @@ router.post('/admin/users/merge/preview', requireAdmin(1), (req, res) => {
   const ps = list.filter(u => u.kyc_verified && u.kyc_pseudonym).map(u => u.kyc_pseudonym);
   const conflict = new Set(ps).size > 1 ? '勾选的账号里有实名信息不同的人，不能合并成一个账号' : null;
   const admins = list.filter(u => u.role === 'admin');
-  res.json({ users: view, suggested: sorted[0].id, conflict: conflict || (admins.length > 1 ? '勾选了两个以上管理员账号，管理员账号不能被合并（只能当保留账号）' : null),
-    undo_days: userMerge.undoDays() });
+  const keep = sorted.find(u => !userMerge.checkMerge(u, [{ id: '\0', name: '', status: 'active' }])) || sorted[0];
+  return { users: view, suggested: keep.id, conflict: conflict || (admins.length > 1 ? '这组里有两个以上管理员账号，管理员账号不能被合并（只能当保留账号）' : null) };
+}
+
+// ── 疑似重复账号（v3.5.62）：按线索把可能是同一人的账号分组，管理员批量确认合并或标记「不是同一人」 ──
+// 强线索：同一实名假名、同一平台 unionid（微信 / 飞书 union_id，含通讯录映射的 ext_union）、同一企业微信企业 + UserId；
+// 一般线索：姓名相同（NFKC、去空白、去掉结尾括号注记如「张三（企微）」）、邮箱 @ 前缀相同（≥4 位）。
+// 实名假名不同的两人绝不连在一起；被标记「不是同一人」的两两组合也不连。
+const SIMILAR_REASON = { kyc: '同一实名', union: '同一三方 unionid', corp: '企业微信同一 UserId', name: '姓名相同', email: '邮箱前缀相同' };
+const SIMILAR_STRONG = new Set(['kyc', 'union', 'corp']);
+const pairKey = (x, y) => x < y ? [x, y] : [y, x];
+function similarNameKey(n) {
+  let k = String(n || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  for (let i = 0; i < 3; i++) k = k.replace(/[（(【\[][^（()）【】\[\]]*[)）】\]]$/, '');
+  return k.length >= 2 ? k : '';
+}
+function findSimilarUsers() {
+  const rows = db.prepare(`SELECT * FROM users WHERE is_public=0 AND merged_into IS NULL AND deletion_state IS NULL`).all();
+  const byId = new Map(rows.map(u => [u.id, u]));
+  const ignored = new Set(db.prepare('SELECT a, b FROM merge_ignore_pairs').all().map(r => r.a + '|' + r.b));
+  const buckets = new Map();   // kind|key → Set(id)
+  const put = (kind, key, id) => { if (!key || !byId.has(id)) return; const k = kind + '|' + key; if (!buckets.has(k)) buckets.set(k, new Set()); buckets.get(k).add(id); };
+  for (const u of rows) {
+    if (u.kyc_verified && u.kyc_pseudonym) put('kyc', u.kyc_pseudonym, u.id);
+    put('name', similarNameKey(u.name), u.id);
+    const lp = String(u.email || '').toLowerCase().split('@')[0];
+    if (lp.length >= 4) put('email', lp, u.id);
+  }
+  for (const b of db.prepare("SELECT user_id, provider, union_id FROM user_oauth WHERE union_id IS NOT NULL AND union_id <> ''").all())
+    put('union', String(b.provider).split(':')[0] + ':' + b.union_id, b.user_id);
+  try { for (const l of db.prepare("SELECT user_id, ext_union FROM dir_source_links WHERE ext_union IS NOT NULL AND ext_union <> ''").all()) put('union', 'feishu:' + l.ext_union, l.user_id); } catch (_) {}
+  try { for (const g of dirsyncWecom.findCorpDuplicates()) for (const u of g.users) put('corp', g.corp_id + ':' + String(g.ext_id).toLowerCase(), u.id); } catch (_) {}
+  // 两两连边（同一桶里的人），记下原因；同名 / 同前缀的桶太大（>8 人）多半是常见名，不连
+  const edges = new Map();   // a|b → Set(kind)
+  for (const [k, set] of buckets) {
+    const kind = k.split('|')[0], ids = [...set];
+    if (ids.length < 2 || (!SIMILAR_STRONG.has(kind) && ids.length > 8)) continue;
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      const [a, b] = pairKey(ids[i], ids[j]); const ua = byId.get(a), ub = byId.get(b);
+      if (ignored.has(a + '|' + b)) continue;
+      if (ua.kyc_verified && ub.kyc_verified && ua.kyc_pseudonym && ub.kyc_pseudonym && ua.kyc_pseudonym !== ub.kyc_pseudonym) continue;
+      if (ua.role === 'admin' && ub.role === 'admin') continue;
+      const ek = a + '|' + b; if (!edges.has(ek)) edges.set(ek, new Set()); edges.get(ek).add(kind);
+    }
+  }
+  // 并查集分组
+  const parent = new Map(); const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  for (const ek of edges.keys()) for (const id of ek.split('|')) if (!parent.has(id)) parent.set(id, id);
+  for (const ek of edges.keys()) { const [a, b] = ek.split('|'); const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); }
+  const groups = new Map();
+  for (const id of parent.keys()) { const r = find(id); if (!groups.has(r)) groups.set(r, { ids: [], reasons: new Set() }); groups.get(r).ids.push(id); }
+  for (const [ek, kinds] of edges) { const g = groups.get(find(ek.split('|')[0])); kinds.forEach(k => g.reasons.add(k)); }
+  const out = [];
+  for (const g of groups.values()) {
+    if (g.ids.length > 21) continue;   // 太大的组不展示（多半是线索误连），请用勾选合并
+    const list = g.ids.map(id => byId.get(id)).sort((a, b) => (a.uid_seq || 0) - (b.uid_seq || 0));
+    const reasons = [...g.reasons];
+    const strong = reasons.some(r => SIMILAR_STRONG.has(r));
+    out.push({ key: list.map(u => u.id).sort().join(','), strong, reasons: reasons.map(r => ({ kind: r, label: SIMILAR_REASON[r] })), ...mergeGroupView(list) });
+  }
+  out.sort((a, b) => (b.strong - a.strong) || (b.users.length - a.users.length));
+  return out;
+}
+router.get('/admin/users/similar', requireAdmin(1), (req, res) => {
+  const groups = findSimilarUsers();
+  res.json({ groups, ignored: db.prepare('SELECT COUNT(*) n FROM merge_ignore_pairs').get().n, undo_days: userMerge.undoDays() });
+});
+// 标记「不是同一人」：组里两两记下，以后不再连到一起
+router.post('/admin/users/similar/ignore', requireAdmin(1), (req, res) => {
+  const ins = db.prepare('INSERT OR IGNORE INTO merge_ignore_pairs (a, b, created_by) VALUES (?, ?, ?)');
+  let n = 0;
+  const groups = (Array.isArray(req.body?.groups) ? req.body.groups : []).slice(0, 200);
+  db.transaction(() => {
+    for (const g of groups) {
+      const ids = [...new Set((Array.isArray(g?.ids) ? g.ids : []).map(String))].filter(id => users.findById.get(id)).slice(0, 21);
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) { const [a, b] = pairKey(ids[i], ids[j]); n += ins.run(a, b, req.user.uid).changes; }
+    }
+  })();
+  if (!n && !groups.length) return res.status(400).json({ error: '没有选中要忽略的组' });
+  audit('user.similar_ignored', { actor: actorOf(req), detail: { groups: groups.length, pairs: n } });
+  res.json({ success: true, pairs: n });
+});
+router.post('/admin/users/similar/unignore', requireAdmin(1), (req, res) => {
+  const r = db.prepare('DELETE FROM merge_ignore_pairs').run();
+  audit('user.similar_unignored', { actor: actorOf(req), detail: { pairs: r.changes } });
+  res.json({ success: true, pairs: r.changes });
+});
+// 批量合并：每组 {ids, target}；逐组 mergeUsers（各自一条可撤销的合并记录），失败的组不影响其他组
+router.post('/admin/users/similar/merge', requireAdmin(1), (req, res) => {
+  if (String(req.body?.confirm || '').trim() !== '合并账号') return res.status(400).json({ error: '请输入「合并账号」确认' });
+  const groups = (Array.isArray(req.body?.groups) ? req.body.groups : []).slice(0, 200);
+  if (!groups.length) return res.status(400).json({ error: '没有选中要合并的组' });
+  const results = []; let done = 0, failed = 0;
+  for (const g of groups) {
+    const ids = [...new Set((Array.isArray(g?.ids) ? g.ids : []).map(String))];
+    const target = users.findById.get(String(g?.target || ''));
+    const label = target ? target.name : '';
+    try {
+      if (!target || !ids.includes(target.id)) throw Object.assign(new Error('保留账号不在这组里'), { status: 400 });
+      if (ids.length < 2) throw Object.assign(new Error('一组至少两个账号'), { status: 400 });
+      const srcs = ids.filter(id => id !== target.id).map(id => users.findById.get(id));
+      if (srcs.some(x => !x)) throw Object.assign(new Error('有账号不存在（可能刚被删除或合并），请刷新'), { status: 400 });
+      const r = userMerge.mergeUsers(target.id, srcs.map(x => x.id), {
+        onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
+        actor: actorOf(req), actorUid: req.user.uid, via: 'similar',
+      });
+      audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: 'similar', merge_id: r.merge_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+      results.push({ name: label, ok: true, merged: r.merged.length, merge_id: r.merge_id }); done++;
+    } catch (e) { results.push({ name: label, ok: false, error: e.message }); failed++; }
+  }
+  res.json({ success: true, done, failed, results });
+});
+router.post('/admin/users/merge/preview', requireAdmin(1), (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))];
+  if (ids.length < 2) return res.status(400).json({ error: '至少勾选两个账号才能合并' });
+  if (ids.length > 21) return res.status(400).json({ error: '一次最多合并 21 个账号（1 个保留 + 20 个并入）' });
+  const list = ids.map(id => users.findById.get(id));
+  const miss = ids.filter((id, i) => !list[i]);
+  if (miss.length) return res.status(404).json({ error: '有账号不存在（可能刚被删除或合并），请刷新列表' });
+  res.json({ ...mergeGroupView(list), undo_days: userMerge.undoDays() });
 });
 router.post('/admin/users/merge', requireAdmin(1), (req, res) => {
   let target, sources = [];
@@ -3219,7 +3332,7 @@ router.post('/admin/dir-duplicates/merge', requireAdmin(1), (req, res) => {
 });
 // ── 合并记录与撤销合并（v3.5.48）──
 // 系统管理员看全部；其他人只看自己做的合并。撤销：超级管理员，或做这次合并的人本人。
-const MERGE_VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时自动并入空壳账号', dir_duplicate: '企业微信重复账号合并' };
+const MERGE_VIA = { org_admin: '组织成员合并', kyc_self: '本人按实名合并', super_admin: '超级管理员合并', self_bind: '绑定三方账号时自动并入空壳账号', dir_duplicate: '企业微信重复账号合并', user_list: '用户管理勾选合并', similar: '疑似重复账号批量合并' };
 function mergeRecordView(req, r) {
   const t = users.findById.get(r.target_id);
   let target = {}, sources = [];

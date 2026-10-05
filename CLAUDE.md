@@ -6,18 +6,18 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.61**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.62**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.61，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.62，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
 - **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、**飞书通讯录同步**（企业自建应用，v3.5.59；v3.5.60 起也可放在组织文件夹上）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
-- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、系统通知（经消息分发推到 Webhook / 群机器人）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接项系统核验 + 三方账号摘除封存 + 审批 + 批量操作）、账号合并（可撤销）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
+- **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、系统通知（经消息分发推到 Webhook / 群机器人）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接项系统核验 + 三方账号摘除封存 + 审批 + 批量操作）、账号合并（可撤销；勾选合并 + 疑似重复账号批量识别）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
 - **客户端**：iOS 原生 App（`ios/`，SwiftUI，多系统切换、门禁出码（含主屏幕快捷操作）、商城、备忘录、应用中心（图标/文件夹/组织切换/管理工具磁贴：门禁·设备·用户·身份核验）、账号设定等；GitHub Actions 云编译）。
 
@@ -214,7 +214,7 @@ if (isConfigured()) { /* 真发 */ } else { /* 只打印，响应体带 dev: tru
 
 商城相关：`shop_goods`（+`category`）、`shop_records`、`redeem_codes`、`redeem_records`、`feature_quota`、`shop_config`、`blind_box_rewards`、`user_coupons`
 
-身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体；+`folder_id` 文件夹共用凭证，v3.5.47）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39；+`folder_id`/`parent_id` 文件夹通讯录连接与组织套用，v3.5.47）、`folder_cred_orgs`（文件夹凭证由哪些组织使用，v3.5.51）、`dir_source_alias`（并进连接的旧同步源 id → 连接，旧回调地址用，v3.5.51）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44；+`ext_snapshot` 删除时摘下的三方绑定 / 通讯录映射快照，v3.5.49）、`identity_blocks`（已删除账号被封存的外部身份：oauth provider+open_id / dir 连接+UserId，v3.5.49）、`merge_records`/`merge_journal`（账号合并记录 + 改动日志，撤销合并用，v3.5.48）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
+身份/组织（IAM）：`user_levels`（等级）、`user_groups`/`user_tags`/`user_tag_map`（分组标签）、`group_admins`（分组管理员）、`public_account_members`（公共账号成员）、`oauth_providers`（三方登录凭证/多主体；+`folder_id` 文件夹共用凭证，v3.5.47）、`oauth_subjects`（主体=组织，含 msg_config/kyc_config/allow_direct_login/independent_security/require_org_password/deny_code_login/members_open/org_code/direct_listed/require_2fa/ip_allow/login_start/login_end/uid_prefix 等）、`oauth_subject_admins`（组织管理员）、`org_folders`（组织文件夹，v3.5.38；`oauth_subjects.folder_id` 归属，NULL=未归类）、`dir_sync_sources`（通讯录同步源，一组织多个，v3.5.36；+`event_state` 接收事件服务器状态，v3.5.39；+`folder_id`/`parent_id` 文件夹通讯录连接与组织套用，v3.5.47）、`folder_cred_orgs`（文件夹凭证由哪些组织使用，v3.5.51）、`dir_source_alias`（并进连接的旧同步源 id → 连接，旧回调地址用，v3.5.51）/`dir_source_links`（按同步源隔离的 UserId→用户映射）/`dir_sync_applied`（同步给成员设过的登录绑定与组织密码，判断是否被单独改过，v3.5.37）、`dir_source_links.ext_name`（应用内姓名，v3.5.43）、`admin_grants`（高危权限授权：perm + 范围 all/org/group/tag/folder，v3.5.43）、`account_deletions`（注销 / 删除申请 + 交接清单，v3.5.44；+`ext_snapshot` 删除时摘下的三方绑定 / 通讯录映射快照，v3.5.49）、`identity_blocks`（已删除账号被封存的外部身份：oauth provider+open_id / dir 连接+UserId，v3.5.49）、`merge_records`/`merge_journal`（账号合并记录 + 改动日志，撤销合并用，v3.5.48）、`merge_ignore_pairs`（疑似重复里标记「不是同一人」的两两组合，a<b，v3.5.62）；v3.5.35 的 `oauth_subjects.dir_sync`/`dir_sync_state`/`dir_sync_links` 已迁移弃用、`org_members`（组织成员，含 org_uid/source/password_hash）、`app_orgs`（应用按组织开放）
 
 KYC / 核验 / 审计：`kyc_pending`（支付宝待查 + reverify/source/org_id）、`kyc_events`（实名事件流水）、`audit_chain`（防篡改哈希链）、`verify_fields`/`user_verify_values`/`access_verifiers`（身份核验，v3.5.12）
 
@@ -438,6 +438,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.62 疑似重复账号批量识别与合并（用户反馈）
+
+三级版本。用户：「合并账号能够批量识别相近的就好了。」
+- `api.js`：`mergeGroupView(list)` 从 v3.5.61 的 preview 抽出（资料摘要 / can_be_source / can_be_target / suggested（跳过不能当保留的）/ conflict），preview 与本功能共用。`findSimilarUsers()`：候选 = 非公共、未合并、`deletion_state IS NULL`；分桶 `kyc`（kyc_pseudonym）/ `union`（`user_oauth.union_id` 按平台前缀 + `dir_source_links.ext_union` 记为 feishu）/ `corp`（`dirsyncWecom.findCorpDuplicates()`）/ `name`（`similarNameKey`：NFKC + 去空白 + 小写 + 去结尾最多 3 层括号注记，≥2 字）/ `email`（@ 前缀 ≥4 位）；同桶两两连边（弱线索桶 >8 人跳过；`merge_ignore_pairs` 里的、实名假名不同的、两个管理员不连）→ 并查集分组，>21 人的组丢弃；强线索在前。接口 `GET /admin/users/similar`、`POST /admin/users/similar/merge {confirm:'合并账号', groups:[{ids,target}]}`（逐组 `mergeUsers` via `similar`，失败逐组返回）、`POST .../ignore {groups:[{ids}]}`、`POST .../unignore`，全部 Lv.1；审计 `user.merged`（via similar）/ `user.similar_ignored` / `user.similar_unignored`。`MERGE_VIA`（api.js + notify.js）补 `user_list` / `similar`。
+- `db.js`：新表 `merge_ignore_pairs(a, b, created_by, created_at, PK(a,b))`（a<b）。⚠️ 账号被彻底清除 / 合并后这里可能残留其 id，无害（分组时按现存账号过滤）。
+- 前端：用户管理卡片头「疑似重复账号」按钮 `#user-similar-btn`（`_userBulkSync` 里只对 superadmin 显示）→ `openSimilarUsers()`：每组卡片（勾选框，强线索且无冲突默认勾；线索徽章；单选保留账号 `sim-keep-<gi>`；「保留 / 并入后删除」与不能并入原因）、全选、「不是同一人（N）」、「合并所选（N）」→ `uiConfirm` 名单 → `uiPrompt`「合并账号」→ 批量接口 → 失败组 `uiAlert`；「恢复提示」清空忽略。
+- ⚠️ 测试：run38 25 项（Lv.2 403、同一实名强组 + 建议保留、同平台 unionid 强组、不同平台 unionid 不算、姓名去空白 / 去括号三人弱组、公共 / 已删除不参与、邮箱前缀忽略大小写、实名不同不连、两个管理员不连、>8 人常见名不连、强线索在前、不下发哈希、标记不是同一人 3 对且不再出现、缺确认词 400、Lv.2 合并 403、批量两成两败（并入管理员 / 保留账号不在组里）、并入账号删除、unionid 绑定转移、失败组无改动、每组一条可撤销记录、审计、合并后不再出现、单组撤销、恢复提示）；playwright ui38 12 项（Lv.2 无按钮、两组、强组默认勾 / 弱组不勾、线索、默认保留、计数、标记后消失、批量合并积分累加、列表刷新，零 JS 报错、无原生弹窗）；回归 run37 21 / run30 17 / run16 22 / run 35 / run22 62 / ui37 11 / ui30 10。
 
 ## v3.5.61 用户管理勾选合并（用户反馈）
 

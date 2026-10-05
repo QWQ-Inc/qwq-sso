@@ -1913,6 +1913,19 @@ POST /api/admin/users/merge  { target_id, source_ids:[…], confirm:"合并账�
 - `conflict`：整批不能合并的原因（实名不同的人、两个以上管理员）；`source_error` / `target_error`：这个账号不能被并入 / 不能当保留账号的原因（公共账号、管理员不能被并入、已合并、注销中或已删除）。
 - 传 `target_id` 时合并记录与审计的 `via` 为 `user_list`；可在 `MERGE_UNDO_DAYS` 期限内撤销（见下）。
 
+**疑似重复账号**（v3.5.62，Lv.1 超级管理员）：
+
+```
+GET  /api/admin/users/similar            → { groups:[{key, strong, reasons:[{kind,label}], users:[…同 merge/preview], suggested, conflict}], ignored, undo_days }
+POST /api/admin/users/similar/merge      { confirm:"合并账号", groups:[{ids:[…], target}] } → { done, failed, results[{name, ok, merged?, merge_id?, error?}] }
+POST /api/admin/users/similar/ignore     { groups:[{ids:[…]}] }   # 标记「不是同一人」，组内两两记下 → { pairs }
+POST /api/admin/users/similar/unignore   # 清空所有「不是同一人」标记
+```
+
+- 线索 `kind`：强 = `kyc`（同一实名假名）/ `union`（同一平台的 unionid，含飞书通讯录映射的 `ext_union`；不同平台的 unionid 不算）/ `corp`（企业微信同一企业 + UserId）；弱 = `name`（姓名 NFKC、去空白、去掉结尾括号注记后相同）/ `email`（邮箱 @ 前缀相同，≥4 位，忽略大小写）。同名 / 同前缀超过 8 人的不连。
+- 实名假名不同的两人、两个管理员、被标记「不是同一人」的两人永不连在一起；公共账号、已合并、注销中 / 已删除的账号不参与。按线索连边后用并查集分组，超过 21 人的组不返回。
+- 批量合并逐组执行（每组一条 `via:"similar"` 的合并记录，可单组撤销），某组失败不影响其他组。
+
 **账号合并记录 / 撤销合并**（v3.5.48）：
 
 ```

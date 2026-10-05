@@ -1787,6 +1787,7 @@ async function loadMe() {
                 placeholder="UID / 昵称 / 邮箱 / 手机 / 组织…"
                 style="height:28px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:12px;width:220px;outline:none;"
                 oninput="searchAdmUsers(this.value)"/>
+              <button class="btn" id="user-similar-btn" style="font-size:11px;padding:5px 12px;display:none;" onclick="openSimilarUsers()" title="按实名 / unionid / 企业微信 UserId / 姓名 / 邮箱前缀找出可能是同一人的账号，批量合并（仅超级管理员）">疑似重复账号</button>
               <button class="btn primary" style="font-size:11px;padding:5px 12px;" onclick="openNewUserModal()">+ 新建用户</button>
             </div>
           </div>
@@ -4820,6 +4821,8 @@ function _userBulkSync() {
   const bar = document.getElementById('user-bulk'); if (!bar) return;
   bar.style.display = _uSel.size ? 'flex' : 'none';
   document.getElementById('user-bulk-n').textContent = _uSel.size;
+  const sb = document.getElementById('user-similar-btn');
+  if (sb) sb.style.display = (typeof adminRole !== 'undefined' && adminRole === 'superadmin') ? '' : 'none';
   const mb = document.getElementById('user-bulk-merge');
   if (mb) mb.style.display = (typeof adminRole !== 'undefined' && adminRole === 'superadmin' && _uSel.size >= 2) ? '' : 'none';
   const all = document.getElementById('user-sel-all');
@@ -4938,6 +4941,91 @@ async function userBulkMerge() {
   _uSel.clear();
   await loadAdmUsers(document.getElementById('adm-user-search')?.value.trim() || '');
   loadAdmUserDetail(keep);
+}
+
+// ── 疑似重复账号（v3.5.62）：一次列出所有可能是同一人的账号组，逐组选保留账号，批量合并或标记「不是同一人」 ──
+async function openSimilarUsers() {
+  showToast('正在查找疑似重复账号…');
+  const { ok, data } = await api('GET', '/admin/users/similar');
+  if (!ok) { await uiAlert(data?.error || '加载失败'); return; }
+  const groups = data.groups || [];
+  const facts = u => [u.admin ? '<b style="color:var(--ac);">管理员</b>' : '', u.has_pw ? '有密码' : '', u.kyc ? '已实名' : '', u.twofa ? '两步验证' : '',
+    u.bindings ? '三方绑定 ' + u.bindings : '', u.orgs ? '组织 ' + u.orgs : '', u.points ? '积分 ' + u.points : '', u.status === 'disabled' ? '<span style="color:var(--warn);">已停用</span>' : ''].filter(Boolean).join(' · ') || '<span style="color:var(--txd);">没有登录方式和资料</span>';
+  const gHtml = (g, gi) => `<div class="sim-g" data-gi="${gi}" style="border:1px solid var(--bd);border-radius:6px;margin-bottom:10px;">
+      <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--sf2);border-radius:6px 6px 0 0;cursor:pointer;">
+        <input type="checkbox" class="sim-cb" ${g.strong && !g.conflict ? 'checked' : ''} ${g.conflict ? 'disabled' : ''}>
+        <span style="flex:1;font-size:12px;">${g.users.length} 个账号 · ${g.reasons.map(r => `<span class="badge ${['kyc','union','corp'].includes(r.kind) ? 'ac' : 'grey'}" style="font-size:10px;">${esc(r.label)}</span>`).join(' ')}</span>
+        ${g.strong ? '' : '<span style="font-size:10px;color:var(--txd);">线索较弱，请核对</span>'}</label>
+      ${g.conflict ? `<div style="font-size:11px;color:var(--err);padding:4px 10px;">${esc(g.conflict)}</div>` : ''}
+      ${g.users.map(u => `<label class="sim-u" data-id="${esc(u.id)}" style="display:flex;gap:8px;align-items:flex-start;padding:6px 10px;border-top:1px solid var(--bd);${u.can_be_target ? 'cursor:pointer;' : 'opacity:.6;'}">
+        <input type="radio" name="sim-keep-${gi}" value="${esc(u.id)}" ${u.id === g.suggested ? 'checked' : ''} ${u.can_be_target ? '' : 'disabled'} style="margin-top:3px;">
+        <span style="flex:1;min-width:0;"><b>${esc(u.name || '（无名）')}</b> <span style="color:var(--txd);font-size:11px;">${esc(u.uid)}</span> <span class="sim-tag" style="font-size:10px;"></span>
+          <div style="font-size:11px;color:var(--txd);word-break:break-all;">${esc([u.email, u.phone].filter(Boolean).join(' · ') || '无邮箱 / 手机')}</div>
+          <div style="font-size:11px;color:var(--tx);">${facts(u)}</div><div class="sim-err" style="font-size:11px;color:var(--err);"></div></span></label>`).join('')}
+    </div>`;
+  const ov = document.createElement('div'); ov.className = 'ui-dlg-mask';
+  ov.innerHTML = `<div class="ui-dlg" style="max-width:640px;"><div class="ui-dlg-title">疑似重复账号（${groups.length} 组）</div>
+    <div class="ui-dlg-msg" style="white-space:normal;">
+      <div style="font-size:12px;color:var(--txd);line-height:1.7;margin-bottom:8px;">按同一实名、同一三方 unionid、企业微信同一 UserId、姓名相同、邮箱前缀相同找出来的。线索强的组默认勾选，<b>姓名 / 邮箱前缀相同只是线索</b>，请逐组核对。每组选一个保留账号，其余并入后删除${data.undo_days ? `，${data.undo_days} 天内可在「注销与删除 → 账号合并记录」逐组撤销` : '（当前未开启撤销日志，合并后不能撤销）'}。${data.ignored ? `<br>已有 ${data.ignored} 对账号被标记为不是同一人，不再提示（<a href="javascript:void 0" id="sim-unignore">恢复提示</a>）。` : ''}</div>
+      ${groups.length ? `<label style="display:block;font-size:12px;margin-bottom:6px;"><input type="checkbox" id="sim-all"> 全选</label>
+      <div style="max-height:56vh;overflow:auto;">${groups.map(gHtml).join('')}</div>` : '<div style="padding:16px;text-align:center;color:var(--txd);">没有发现疑似重复的账号</div>'}
+      <div id="sim-msg" style="font-size:12px;color:var(--err);margin-top:6px;"></div></div>
+    <div class="ui-dlg-btns"><button class="btn" data-x="0">关闭</button>${groups.length ? '<button class="btn" id="sim-ignore">不是同一人（<span class="sim-n">0</span>）</button><button class="btn primary" id="sim-merge">合并所选（<span class="sim-n">0</span>）</button>' : ''}</div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.addEventListener('click', e => { if (e.target === ov || e.target.getAttribute?.('data-x') === '0') close(); });
+  ov.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  const gEls = [...ov.querySelectorAll('.sim-g')];
+  const picked = () => gEls.filter(el => el.querySelector('.sim-cb').checked).map(el => { const g = groups[+el.dataset.gi]; return { g, el, keep: el.querySelector(`input[name=sim-keep-${el.dataset.gi}]:checked`)?.value || '' }; });
+  const refresh = () => {
+    let bad = 0;
+    gEls.forEach(el => {
+      const g = groups[+el.dataset.gi], on = el.querySelector('.sim-cb').checked, k = el.querySelector(`input[name=sim-keep-${el.dataset.gi}]:checked`)?.value;
+      el.querySelectorAll('.sim-u').forEach(r => {
+        const u = g.users.find(x => x.id === r.dataset.id);
+        r.querySelector('.sim-tag').innerHTML = !on || !k ? '' : u.id === k ? '<span style="color:var(--ok);">保留</span>' : '<span style="color:var(--warn);">并入后删除</span>';
+        const e = on && k && u.id !== k && !u.can_be_source ? u.source_error : '';
+        r.querySelector('.sim-err').textContent = e ? '不能被并入：' + e : '';
+        if (e || (on && !k)) bad++;
+      });
+    });
+    const n = picked().length;
+    ov.querySelectorAll('.sim-n').forEach(x => x.textContent = n);
+    const m = ov.querySelector('#sim-merge'); if (m) m.disabled = !n || !!bad;
+    const ig = ov.querySelector('#sim-ignore'); if (ig) ig.disabled = !n;
+    ov.querySelector('#sim-msg').textContent = bad ? `所选组里有 ${bad} 处不能合并，改选保留账号或取消勾选这组` : '';
+    const all = ov.querySelector('#sim-all'); if (all) all.checked = gEls.length > 0 && gEls.every(el => el.querySelector('.sim-cb').checked || el.querySelector('.sim-cb').disabled);
+  };
+  ov.querySelectorAll('input').forEach(i => { if (i.id !== 'sim-all') i.addEventListener('change', refresh); });
+  ov.querySelector('#sim-all')?.addEventListener('change', e => { gEls.forEach(el => { const c = el.querySelector('.sim-cb'); if (!c.disabled) c.checked = e.target.checked; }); refresh(); });
+  ov.querySelector('#sim-unignore')?.addEventListener('click', async () => {
+    if (!await uiConfirm('恢复所有被标记为「不是同一人」的提示？')) return;
+    await api('POST', '/admin/users/similar/unignore', {}); close(); openSimilarUsers();
+  });
+  ov.querySelector('#sim-ignore')?.addEventListener('click', async () => {
+    const sel = picked(); if (!sel.length) return;
+    if (!await uiConfirm(`把所选 ${sel.length} 组标记为「不是同一人」？之后这些账号不会再被分到一组（可以恢复提示）。`)) return;
+    const r = await api('POST', '/admin/users/similar/ignore', { groups: sel.map(x => ({ ids: x.g.users.map(u => u.id) })) });
+    if (!r.ok) { showToast(r.data?.error || '操作失败'); return; }
+    showToast(`已标记 ${sel.length} 组`); close(); openSimilarUsers();
+  });
+  ov.querySelector('#sim-merge')?.addEventListener('click', async () => {
+    const sel = picked(); if (!sel.length) return;
+    const lines = sel.map(x => { const t = x.g.users.find(u => u.id === x.keep); return `· 保留「${t.name}」${t.uid}，并入 ${x.g.users.filter(u => u.id !== x.keep).map(u => u.uid).join('、')}`; });
+    if (!await uiConfirm(`合并 ${sel.length} 组账号：\n\n${lines.slice(0, 30).join('\n')}${lines.length > 30 ? `\n…等 ${lines.length} 组` : ''}`, { title: '确认合并', danger: true })) return;
+    const v = await uiPrompt('请原样输入「合并账号」确认', '', { title: '再次确认' });
+    if (v == null) return;
+    if (v.trim() !== '合并账号') { showToast('确认内容不正确，已取消'); return; }
+    const r = await api('POST', '/admin/users/similar/merge', { confirm: '合并账号', groups: sel.map(x => ({ ids: x.g.users.map(u => u.id), target: x.keep })) });
+    if (!r.ok) { await uiAlert(r.data?.error || '合并失败'); return; }
+    close();
+    showToast(`已合并 ${r.data.done} 组` + (r.data.failed ? `，${r.data.failed} 组失败` : ''));
+    const fails = (r.data.results || []).filter(x => !x.ok);
+    if (fails.length) await uiAlert('以下组没有合并：\n' + fails.map(x => `· ${x.name || '（未知）'}：${x.error}`).join('\n'), { title: '部分失败' });
+    _uSel.clear();
+    loadAdmUsers(document.getElementById('adm-user-search')?.value.trim() || '');
+  });
+  refresh();
 }
 
 let _searchTimer;
@@ -7028,7 +7116,7 @@ const AUDIT_EVENT_LABEL = {
   'backup.run':'数据备份', 'backup.target_added':'添加备份目标', 'backup.target_removed':'删除备份目标', 'backup.downloaded':'下载备份',
   'account.deletion_requested':'申请注销 / 删除账号', 'account.deletion_approved':'批准删除账号', 'account.deletion_cancelled':'撤回注销 / 删除', 'account.deletion_rejected':'驳回删除账号',
   'account.deleted':'账号已删除', 'account.restored':'恢复账号', 'account.purged':'彻底清除账号', 'account.external_removed':'在企业微信中删除成员', 'account.handover_done':'交接项处理', 'user.merge_undone':'撤销合并', 'account.external_suspended':'同步禁用企业微信成员', 'account.external_resumed':'同步启用企业微信成员', 'kyc.account_limit':'同一实名账号数超限',
-  'admin.grant_added':'授予管理权限', 'admin.grant_removed':'撤销管理权限', 'user.merged':'合并账号',
+  'admin.grant_added':'授予管理权限', 'admin.grant_removed':'撤销管理权限', 'user.merged':'合并账号', 'user.similar_ignored':'标记不是同一人', 'user.similar_unignored':'恢复疑似重复提示',
   'site.verify_file_added':'添加域名验证文件', 'site.verify_file_replaced':'替换域名验证文件', 'site.verify_file_extended':'域名验证文件延期', 'site.verify_file_removed':'删除域名验证文件',
   'kyc.verified':'实名认证通过', 'kyc.reverified':'二次实名通过', 'kyc.session_started':'发起实名会话',
   'kyc.reverify_requested':'发起二次核验', 'kyc.realname_deleted':'清除实名信息',
