@@ -1593,16 +1593,16 @@ POST /api/v1/orgs/:sid/members/import     scope: org:sync
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `members` | array | ✅ | 每项 `{ email?, phone?, name?, org_uid? }`；按 email/phone 找用户，找不到则建号；`org_uid` 留空按组织规则自动生成 |
+| `members` | array | ✅ | 每项 `{ email?, phone?, emails?[], phones?[], name?, org_uid? }`；`emails`/`phones` 可传多个（第一个有效值做登录主字段，其余写入成员多联系方式表，去重 + 按组织上限）。按任一邮箱/手机找用户，找不到则建号；`org_uid` 留空按组织规则自动生成 |
 | `remove_missing` | bool | ❌ | 为 `true` 时，清除「本次未出现**且** source=import」的成员；**手动加入的（source=manual）绝不动** |
 
 ```json
 { "success": true, "total": 2, "ok": 2, "removed": 0,
-  "results": [ { "email": "a@x.com", "status": "created", "org_uid": "EMP0001" },
-               { "email": "b@x.com", "status": "updated", "org_uid": "EMP0002" } ] }
+  "results": [ { "email": "a@x.com", "status": "created", "org_uid": "EMP0001", "contacts": 3 },
+               { "email": "b@x.com", "status": "updated", "org_uid": "EMP0002", "contacts": 1 } ] }
 ```
 
-- 命中公共账号会跳过；坏邮箱/缺标识的行 `status:'error'`。组织不存在返回 `404`。写防篡改审计 `org.members_imported`。
+- `contacts` 为该行灌入成员多联系方式的手机+邮箱总数。命中公共账号会跳过；坏邮箱/缺标识的行 `status:'error'`。组织不存在返回 `404`。写防篡改审计 `org.members_imported`。
 
 ---
 

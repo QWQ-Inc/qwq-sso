@@ -2004,14 +2004,22 @@ function importOrgMembers(subject, rows, opts = {}) {
   const results = [];
   const seen = new Set();
   for (const raw of (Array.isArray(rows) ? rows : [])) {
-    const email = String(raw?.email || '').trim();
-    const phone = String(raw?.phone || '').trim();
+    // 多手机/多邮箱：email/phone 为主值；emails[]/phones[] 为可选的更多联系方式（写进 user_contacts）
+    const emailsIn = [raw?.email, ...(Array.isArray(raw?.emails) ? raw.emails : [])].map(x => String(x || '').trim()).filter(Boolean);
+    const phonesIn = [raw?.phone, ...(Array.isArray(raw?.phones) ? raw.phones : [])].map(x => String(x || '').trim()).filter(Boolean);
+    const goodEmails = [...new Set(emailsIn.map(e => e.toLowerCase()).filter(isEmail))];
+    const goodPhones = [...new Set(phonesIn.filter(isPhone))];
+    const email = goodEmails[0] || '';   // 第一个有效邮箱做主字段
+    const phone = goodPhones[0] || '';    // 第一个有效手机做主字段
     const name = String(raw?.name || '').trim();
     let orgUid = String(raw?.org_uid || '').trim() || null;
-    if (email && !isEmail(email)) { results.push({ email, status: 'error', error: '邮箱格式不正确' }); continue; }
-    if (phone && !isPhone(phone)) { results.push({ phone, status: 'error', error: '手机号格式不正确' }); continue; }
+    // 有填但一个都不合法 → 报错；完全没填 → 报错
+    if (emailsIn.length && !goodEmails.length) { results.push({ email: emailsIn[0], status: 'error', error: '邮箱格式不正确' }); continue; }
+    if (phonesIn.length && !goodPhones.length) { results.push({ phone: phonesIn[0], status: 'error', error: '手机号格式不正确' }); continue; }
     if (!email && !phone) { results.push({ status: 'error', error: '缺少 email 或 phone' }); continue; }
     let user = (email && users.findByEmail.get(email)) || (phone && users.findByPhone.get(phone)) || null;
+    if (!user) { for (const e of goodEmails) { user = users.findByEmail.get(e); if (user) break; } }
+    if (!user) { for (const p of goodPhones) { user = users.findByPhone.get(p); if (user) break; } }
     if (user && user.is_public) { results.push({ email, phone, status: 'error', error: '命中公共账号，跳过' }); continue; }
     let created = false;
     if (!user) {
@@ -2020,6 +2028,9 @@ function importOrgMembers(subject, rows, opts = {}) {
     } else if (name && !user.name) {
       db.prepare('UPDATE users SET name=? WHERE id=?').run(name, user.id);
     }
+    // 把这一行的全部手机/邮箱灌进多联系方式（去重 + 按组织上限，静默跳过），包括已做主字段的那个
+    for (const e of goodEmails) { try { contactUtil.addContact(user.id, 'email', e, 'import', subject.id); } catch (_) {} }
+    for (const p of goodPhones) { try { contactUtil.addContact(user.id, 'phone', p, 'import', subject.id); } catch (_) {} }
     seen.add(user.id);
     if (orgUid && orgMembers.orgUidTaken.get(subject.id, orgUid, user.id)) {
       results.push({ email, phone, uid: user.uid_seq, status: 'error', error: '组织内 UID 冲突' }); continue;
@@ -2031,7 +2042,7 @@ function importOrgMembers(subject, rows, opts = {}) {
     } else if (orgUid) {
       orgMembers.setOrgUid.run(orgUid, subject.id, user.id);
     }
-    results.push({ email, phone, uid: user.uid_seq, org_uid: orgUid || existing?.org_uid || null, status: created ? 'created' : (existing ? 'updated' : 'added') });
+    results.push({ email, phone, uid: user.uid_seq, org_uid: orgUid || existing?.org_uid || null, contacts: goodEmails.length + goodPhones.length, status: created ? 'created' : (existing ? 'updated' : 'added') });
   }
   let removed = 0;
   if (opts.removeMissing) {

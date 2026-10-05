@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.65**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.66**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,19 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.66 批量导入支持多手机/多邮箱（企微回不了字段时用导入代替）（用户反馈）
+
+四级补丁。用户（带图：企业微信「通讯录同步」权限详情页）确认——该通讯录同步 Secret **「可读取全公司范围内的信息」只有 账号(userid) / 部门ID / 通讯录查看权限，没有手机/邮箱**（「可新增和修改」里虽列了手机邮箱，但那是写权限，不影响读；内置通讯录同步应用的敏感字段读取范围常锁死改不了）。所以企微拉取拿不到手机邮箱是企微侧权限天花板，**干脆用批量导入代替**。
+
+把已有的批量导入（`importOrgMembers`，`/admin/orgs/:sid/import` + 开放 API `/v1/orgs/:sid/members/import`）升级为支持**一人多手机/多邮箱**，灌进 v3.5.63 的 `user_contacts` 表：
+- 每行 `members[]` 项新增可选 `emails[]` / `phones[]`（与原 `email`/`phone` 兼容）。收集全部有效值：**第一个有效手机/邮箱做登录主字段**（`users.phone`/`email`），**全部手机/邮箱（含主字段那个）都灌进 `user_contacts`**（走 `contactUtil.addContact`，去重 + 按组织上限 + 静默跳过）。
+- 认人改为「数组里任一邮箱/手机命中即同一人」（原来只认第一个主值）——跨次导入不同联系方式也能落到同一账号。
+- 报错语义：有填但全不合法 → error；完全没填 → error。结果每行多返回 `contacts`（灌入的联系方式数）。
+- 前端粘贴格式扩展：第一列可填**多个手机/邮箱用分号 `;`（或 `；`/`|`）隔开**，如 `13800138000;a@x.com;a@corp.com, 张三, EMP0001`；`doOrgImport` 拆成 `phones[]`/`emails[]` 提交。导入面板说明文字 + placeholder 同步更新。dev mock 处理数组。
+- API-docs 的 `members/import` 参数表 + 响应示例更新（加 emails[]/phones[] + contacts 字段）。
+- ⚠️ 测试：`scratchpad/import-multi-test.js`（node:sqlite 真表 + 真实 addContact，复刻 importOrgMembers）10 项全过：主值取第一个有效、全部进多联系方式、同行重复去重、邮箱大小写归一、按数组任一旧标识命中同一人、非法/缺标识报错。`contacts`/`dirsync-contacts`/`similar-clues` 三套既有测试仍全过。
+- ⚠️ `importOrgMembers` 嵌在 api.js（better-sqlite3）无法独立 require，测试复刻其逻辑验证；真实 HTTP 层与既有 `/admin/orgs/:sid/import` 同构，未端到端跑。
 
 ## v3.5.65 疑似重复识别加跨平台线索（外部姓名/UID + 手机/邮箱跨多联系方式）+ 企微空字段提示（用户反馈）
 
