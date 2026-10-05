@@ -3207,7 +3207,7 @@ function mergeGroupView(list) {
 // 强线索：同一实名假名、同一平台 unionid（微信 / 飞书 union_id，含通讯录映射的 ext_union）、同一企业微信企业 + UserId；
 // 一般线索：姓名相同（NFKC、去空白、去掉结尾括号注记如「张三（企微）」）、邮箱 @ 前缀相同（≥4 位）。
 // 实名假名不同的两人绝不连在一起；被标记「不是同一人」的两两组合也不连。
-const SIMILAR_REASON = { kyc: '同一实名', union: '同一三方 unionid', corp: '企业微信同一 UserId', name: '姓名相同', email: '邮箱前缀相同' };
+const SIMILAR_REASON = { kyc: '同一实名', union: '同一三方 unionid', corp: '企业微信同一 UserId', dirname: '外部通讯录姓名/UID 相同', name: '姓名相同', email: '邮箱相同', phone: '手机相同' };
 const SIMILAR_STRONG = new Set(['kyc', 'union', 'corp']);
 const pairKey = (x, y) => x < y ? [x, y] : [y, x];
 function similarNameKey(n) {
@@ -3224,9 +3224,24 @@ function findSimilarUsers() {
   for (const u of rows) {
     if (u.kyc_verified && u.kyc_pseudonym) put('kyc', u.kyc_pseudonym, u.id);
     put('name', similarNameKey(u.name), u.id);
-    const lp = String(u.email || '').toLowerCase().split('@')[0];
-    if (lp.length >= 4) put('email', lp, u.id);
+    // 主字段邮箱/手机（完整值）作为线索；user_contacts 里的也一并纳入（见下）
+    const em = String(u.email || '').trim().toLowerCase();
+    if (em.includes('@')) put('email', em, u.id);
+    const ph = String(u.phone || '').trim();
+    if (ph.length >= 6) put('phone', ph, u.id);
   }
+  // 多联系方式（v3.5.65）：同一手机/邮箱（含企业微信/飞书同步灌入的）判为疑似同人——跨平台同人就靠这个连上
+  try {
+    for (const c of db.prepare("SELECT user_id, kind, value FROM user_contacts WHERE value <> ''").all()) {
+      const v = String(c.value || '').trim().toLowerCase();
+      if (c.kind === 'email' && v.includes('@')) put('email', v, c.user_id);
+      else if (c.kind === 'phone' && v.length >= 6) put('phone', v, c.user_id);
+    }
+  } catch (_) {}
+  // 外部通讯录「应用内姓名 / 组织内UID」相同（v3.5.65）：如企微 UserId=MilkSU 与飞书 应用内姓名=MilkSU → 疑似同人
+  const dirKey = s => { const k = String(s || '').normalize('NFKC').trim().toLowerCase(); return k.length >= 3 ? k : ''; };
+  try { for (const l of db.prepare("SELECT user_id, ext_name FROM dir_source_links WHERE ext_name IS NOT NULL AND ext_name <> ''").all()) put('dirname', dirKey(l.ext_name), l.user_id); } catch (_) {}
+  try { for (const m of db.prepare("SELECT user_id, org_uid FROM org_members WHERE org_uid IS NOT NULL AND org_uid <> ''").all()) put('dirname', dirKey(m.org_uid), m.user_id); } catch (_) {}
   for (const b of db.prepare("SELECT user_id, provider, union_id FROM user_oauth WHERE union_id IS NOT NULL AND union_id <> ''").all())
     put('union', String(b.provider).split(':')[0] + ':' + b.union_id, b.user_id);
   try { for (const l of db.prepare("SELECT user_id, ext_union FROM dir_source_links WHERE ext_union IS NOT NULL AND ext_union <> ''").all()) put('union', 'feishu:' + l.ext_union, l.user_id); } catch (_) {}

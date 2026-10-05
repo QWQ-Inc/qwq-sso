@@ -312,7 +312,7 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
   const pwHash = cfg.default_pw_hash || null;
   const out = { total: 0, created: 0, linked: 0, added: 0, removed: 0, skipped: 0, errors: [],
     bind_provider: bindProvider, bind_providers: bindProviders,
-    bound: 0, pw_set: 0, kept: 0, conflicts: 0, unmatched: 0, force, limited: !!limited, warning: limited ? LIMITED_HINT : undefined };
+    bound: 0, pw_set: 0, kept: 0, conflicts: 0, unmatched: 0, no_contact: 0, force, limited: !!limited, warning: limited ? LIMITED_HINT : undefined };
   const seenUsers = new Set();
   const seenExt = new Set();
   const corpSc = corpScope(cfg.corp_id);
@@ -396,6 +396,8 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       seenUsers.add(user.id);
       // 多联系方式（v3.5.63）：把企业微信成员的手机/个人邮箱/企业邮箱灌进 user_contacts（去重+上限按组织，静默跳过）
       if (!m._idOnly) { try { importWecomContacts(user.id, m, subject.id); } catch (_) {} }
+      // 拿到了姓名但手机/邮箱都空：多半是企微自建应用/通讯录 Secret 没开放这些字段的读取权限（v3.5.65 提示）
+      if (!m._idOnly && !phone && !email) out.no_contact++;
       const existing = orgMembers.get.get(subject.id, user.id);
       if (!existing) {
         let orgUid = null;
@@ -427,6 +429,10 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
         orgMembers.remove.run(subject.id, mem.user_id); out.removed++;
       }
     }
+  }
+  // 有人拿到姓名但没手机/邮箱 → 提示管理员去企微后台开放字段权限（不覆盖「受限只拿到 ID」那条更严重的提示）
+  if (out.no_contact > 0 && !out.limited && !out.warning) {
+    out.warning = `有 ${out.no_contact} 名成员未取到手机/邮箱（姓名正常）。多半是企业微信「自建应用」或「通讯录同步」Secret 未开放手机号/邮箱字段的读取权限——请到企业微信后台对应应用的「可见范围 / 敏感信息」里开启后重新同步。`;
   }
   return out;
 }

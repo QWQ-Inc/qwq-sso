@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.64**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.65**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,22 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.65 疑似重复识别加跨平台线索（外部姓名/UID + 手机/邮箱跨多联系方式）+ 企微空字段提示（用户反馈）
+
+四级补丁。用户反馈（带两张图）：企业微信同步回来的成员**手机/邮箱是空的**，而且**同一人被拆成两个号**（企微「赵思达」org_uid=MilkSU 与 飞书「MilkSU」ext_name=MilkSU 是同一人，却没被识别）。两件事一起处理。
+
+### ① 企微手机/邮箱回空 → 根因是权限，加提示（代码绕不过）
+企业微信 `user/get` 回来有姓名、没手机/邮箱，是因为**自建应用 / 通讯录同步 Secret 没开放手机号/邮箱字段的读取权限**（企业微信后台「可见范围 / 敏感信息」里单独控制），不是代码问题。`dirsync-wecom.js` 的 `syncWecom` 加 `out.no_contact` 计数：拿到姓名但手机邮箱都空的成员计一笔，结束时若 `no_contact>0 && !limited` 就把 `out.warning` 设为「有 N 名成员未取到手机/邮箱……请到企业微信后台开放字段权限后重新同步」。该 warning 原本就在同步源 UI（`dashboard.html:6338` `src.state.warning`）显示，无需改前端。
+
+### ② 疑似重复识别加跨平台线索（findSimilarUsers，api.js）
+v3.5.62 的线索只有 kyc/union/corp/name/email前缀——跨平台同人（企微+飞书）没有可连的字段。新增：
+- **`dirname`（外部通讯录姓名/UID 相同）**：`dir_source_links.ext_name` + `org_members.org_uid` 进同一桶（NFKC+小写+去空白，长度≥3 才作线索防短值乱连）。企微 org_uid=MilkSU 与 飞书 ext_name=MilkSU 就靠这个连上。一般线索（非 strong），受 >8 人桶上限保护，归组后**管理员手动确认合并**。
+- **`phone`（手机相同）**：主字段 `users.phone` + `user_contacts` 里的手机，同号进同一桶（≥6 位）。
+- **`email` 改为完整邮箱匹配**（原来是 @前缀≥4 位，改为完整 email，更准、少误连）+ 纳入 `user_contacts` 里的邮箱（企微/飞书灌入的企业邮箱也能连）。
+- `SIMILAR_REASON` 加 dirname/phone 文案、email 文案改「邮箱相同」。dirname/phone/email 都是一般线索（strong 仍只有 kyc/union/corp），避免误并，靠人工确认兜底——正合用户「相似字段认为可能同一人、手动确认」的诉求。
+- ⚠️ 测试：`scratchpad/similar-clues-test.js`（node:sqlite 复刻线索收集+并查集）5 项全过：图里两账号因 dirname 归组、共享手机（主字段 vs user_contacts）归组、共享企业邮箱大小写不敏感归组、不同手机不误连、dirname 太短不连。`contacts-test.js` 18 + `dirsync-contacts-test.js` 6 仍全过。
+- ⚠️ `findSimilarUsers` 依赖整个 api.js（better-sqlite3），无法独立 require，故测试复刻其纯逻辑验证；真实并查集/视图在 v3.5.62 已有、未动。
 
 ## v3.5.64 企业微信通讯录「主动同步」也灌多联系方式（打通 syncWecom 与 user_contacts）（用户反馈）
 
