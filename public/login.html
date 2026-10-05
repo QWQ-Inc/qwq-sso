@@ -2046,7 +2046,13 @@
   const urlErr = new URLSearchParams(location.search).get('error');
   if (urlErr) {
     const msgs={wechat_failed:'微信登录失败',wecom_failed:'企业微信登录失败',feishu_failed:'飞书登录失败',dingtalk_failed:'钉钉登录失败',douyin_failed:'抖音登录失败',kuaishou_failed:'快手登录失败',xiaohongshu_failed:'小红书登录失败',bilibili_failed:'Bilibili 登录失败',google_failed:'Google 登录失败',apple_failed:'Apple 登录失败',account_disabled:'账号已停用，请联系管理员',account_deleted:'这个三方账号对应的账号已注销 / 删除，不能再用它登录',invalid_state:'登录已过期，请重新发起',ip_denied:'当前网络（IP）不在该登录主体的允许范围内',time_denied:'当前时间不在该登录主体的允许登录时段内',need_2fa:'该登录主体要求两步验证，请先用其他方式登录并在账号设定里开启两步验证后再试'};
-    showTip('login','error',msgs[urlErr]||('登录失败：'+urlErr));
+    msgs.wecom_not_member='你不是该企业微信企业的成员（或不在该应用的可见范围内），不能用企业微信登录';
+    msgs.wecom_not_configured='企业微信登录未配置（缺企业 ID），请联系管理员';
+    const _qs = new URLSearchParams(location.search);
+    const _hint = (_qs.get('hint') || '').slice(0, 200), _code = (_qs.get('code') || '').slice(0, 12);
+    let _msg = msgs[urlErr]||('登录失败：'+urlErr);
+    if (_hint || _code) _msg += '：' + (_hint || '') + (_code ? `（错误码 ${_code}）` : '');
+    showTip('login','error',_msg);
   }
 
   document.addEventListener('DOMContentLoaded', async () => {

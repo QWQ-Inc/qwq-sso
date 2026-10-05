@@ -153,7 +153,8 @@ function mergeScopeKeys(providerKey) {
   return rows.map(r => `${r.platform}:${r.id}`);
 }
 // 建号并绑定本次三方身份
-function createBoundUser({ provider, openId, unionId, name, email }) {
+// 建号和绑定在一个事务里：绑定失败就不留下一个没有任何登录方式的空账号（v3.5.58.1）
+const createBoundUser = db.transaction(({ provider, openId, unionId, name, email }) => {
   const newUser = users.create({ name: name || '', email: email || null });
   if (!name) {
     db.prepare("UPDATE users SET name=? WHERE id=?").run(`用户${newUser.uid_seq}`, newUser.id);
@@ -161,10 +162,12 @@ function createBoundUser({ provider, openId, unionId, name, email }) {
   }
   oauth.bind.run(uuidv4(), newUser.id, provider, openId, unionId);
   return newUser;
-}
+});
 
 /** 查找或创建 OAuth 绑定用户，返回用户行 */
 function findOrCreate({ provider, openId, unionId = null, name, avatar = null, email = null }) {
+  // 三方没给出身份（接口报错被吞掉之类）：绝不往下走建号
+  if (openId === undefined || openId === null || openId === '') throw new Error(`${provider}: 三方没有返回用户标识`);
   // 0. 绑定模式：把本次三方身份绑到「当前登录用户」（stash-bind 存进 session），而不是登录/建号
   const creq = reqCtx.getStore();
   if (creq) creq._loginProviderKey = provider;   // 供 loginSuccess 解析登录主体 + 执行其策略
@@ -363,14 +366,48 @@ router.get('/wechat/callback', async (req, res) => {
 // 企业微信自建应用
 // https://developer.work.weixin.qq.com/document/path/91335
 // ══════════════════════════════════════════
+// 企业微信回调地址：凭证里没填就用本次请求的域名（企业微信要求它的域名在应用「可信域名」里）
+function wecomRedirect(c, req) {
+  if (c.WECOM_REDIRECT_URI) return c.WECOM_REDIRECT_URI;
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  return `${proto}://${host}/auth/wecom/callback`;
+}
+// 企业微信登录常见报错 → 管理员看得懂的处理建议（v3.5.58.1：之前一律只显示「企业微信登录失败」）
+const WECOM_LOGIN_HINT = {
+  40001: '应用 Secret 不对：登录凭证里要填该自建应用的 Secret',
+  40013: '企业 ID（corpid）不对',
+  40014: '应用 Secret 不对或已重置，请在登录凭证里更新',
+  40029: '登录码已失效（被用过或超过 5 分钟），请重新登录',
+  40163: '登录码已被使用，请重新登录',
+  41001: '没拿到 access_token：检查企业 ID 和应用 Secret',
+  42001: 'access_token 已过期，请重试',
+  50001: '回调地址的域名不在该应用的「可信域名」里：企业微信后台 → 应用 → 网页授权及 JS-SDK 里设置可信域名',
+  60020: '本服务器出口 IP 不在企业微信可信 IP 里：企业微信后台 → 应用 → 企业可信 IP 里加上报错里的 from ip',
+};
+class WecomLoginError extends Error {
+  constructor(step, j) {
+    super(`${step}：${j.errcode} ${j.errmsg || ''}`.trim());
+    this.errcode = j.errcode;
+    this.hint = WECOM_LOGIN_HINT[j.errcode] || (j.errmsg ? String(j.errmsg).slice(0, 120) : '');
+    const ip = /from ip:\s*([0-9a-fA-F.:]+)/.exec(j.errmsg || '');
+    if (ip && WECOM_LOGIN_HINT[j.errcode]) this.hint += `（from ip: ${ip[1]}）`;
+  }
+}
+async function wecomApi(path, params) {
+  const r = await axios.get(dirsyncWecom.apiBase() + path, { params, timeout: 15000 });
+  return r.data || {};
+}
+
 router.get('/wecom', (req, res) => {
   const c = getCred('wecom', req.query.inst);
   if (!c || !c.WECOM_CORP_ID) return res.redirect('/login.html?error=wecom_not_configured');
   const state = genState();
   saveState(state, c._providerKey);
+  const redirect_uri = wecomRedirect(c, req);
   const p = new URLSearchParams({
-    appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID,
-    redirect_uri: c.WECOM_REDIRECT_URI,
+    appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID || '',
+    redirect_uri,
     // snsapi_base：企业微信内静默授权，不弹确认页（回调只用 userid，不需要敏感信息的 user_ticket）
     response_type: 'code', scope: 'snsapi_base', state,
   });
@@ -378,7 +415,7 @@ router.get('/wecom', (req, res) => {
   // 在浏览器里授权会跑到企业微信自己的浏览器、session 不在同一处 → 绑不上、反而新建账号（v3.5.42.1 修）。
   // 改走企业微信「网页登录」：扫码 / 电脑端一键登录，回调的 code 同样用 auth/getuserinfo 换 userid。
   if (!/wxwork/i.test(req.headers['user-agent'] || '')) {
-    const w = new URLSearchParams({ login_type: 'CorpApp', appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID, redirect_uri: c.WECOM_REDIRECT_URI, state });
+    const w = new URLSearchParams({ login_type: 'CorpApp', appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID || '', redirect_uri, state });
     return res.redirect(`https://login.work.weixin.qq.com/wwlogin/sso/login?${w}`);
   }
   res.redirect(`https://open.weixin.qq.com/connect/oauth2/authorize?${p}#wechat_redirect`);
@@ -390,23 +427,34 @@ router.get('/wecom/callback', async (req, res) => {
   if (!st) return res.redirect('/login.html?error=invalid_state');
   const c = credFromKey(st.provider);
   if (!c) return res.redirect('/login.html?error=wecom_not_configured');
+  // 用户在授权页点了拒绝 / 企业微信没带回 code
+  if (!code) return res.redirect('/login.html?error=wecom_failed&hint=' + encodeURIComponent('企业微信没有返回登录码（可能取消了授权），请重试'));
   try {
-    const { access_token } = (await axios.get('https://qyapi.weixin.qq.com/cgi-bin/gettoken', {
-      params: { corpid: c.WECOM_CORP_ID, corpsecret: c.WECOM_APP_SECRET },
-    })).data;
-    const ui = (await axios.get('https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo', {
-      params: { access_token, code },
-    })).data;
-    const userId = ui.userid || ui.openid;
+    // ⚠️ 企业微信出错时 HTTP 仍是 200、只在 errcode 里说明。之前没检查，拿不到 userid 也继续往下走：
+    //    建了一个空账号再绑定失败（open_id 为空）→ 留下一个无登录方式的异常账号，页面只显示「登录失败」（v3.5.58.1 修）
+    const tk = await wecomApi('/cgi-bin/gettoken', { corpid: c.WECOM_CORP_ID, corpsecret: c.WECOM_APP_SECRET });
+    if (!tk.access_token) throw new WecomLoginError('gettoken', tk);
+    const access_token = tk.access_token;
+    const ui = await wecomApi('/cgi-bin/auth/getuserinfo', { access_token, code });
+    if (ui.errcode) throw new WecomLoginError('auth/getuserinfo', ui);
+    // 非企业成员只有 openid / external_userid，没有 userid：不是本企业的人，不能登录（之前会拿 openid 建一个号）
+    if (!ui.userid) return res.redirect('/login.html?error=wecom_not_member');
+    const userId = ui.userid;
     let name = userId, avatar = null;
-    if (ui.userid) {
-      const d = (await axios.get('https://qyapi.weixin.qq.com/cgi-bin/user/get', {
-        params: { access_token, userid: userId },
-      })).data;
-      name = d.name || userId; avatar = d.avatar;
-    }
+    // 读成员详情只为姓名头像：应用可见范围外 / Secret 受限时读不到，照常用 UserId 登录
+    try {
+      const d = await wecomApi('/cgi-bin/user/get', { access_token, userid: userId });
+      if (!d.errcode) { name = d.name || userId; avatar = d.avatar || null; }
+    } catch (_) {}
     loginSuccess(res, findOrCreate({ provider: c._providerKey, openId: userId, name, avatar }));
-  } catch (e) { oauthError(res, 'wecom', e); }
+  } catch (e) {
+    console.error('[OAuth:wecom]', e.message || e, e.response?.data || '');
+    const hint = e.hint || (e.response ? `企业微信接口请求失败（HTTP ${e.response.status}）` : (e.code === 'ECONNABORTED' ? '连接企业微信超时' : ''));
+    const q = new URLSearchParams({ error: 'wecom_failed' });
+    if (e.errcode) q.set('code', String(e.errcode));
+    if (hint) q.set('hint', hint);
+    res.redirect('/login.html?' + q);
+  }
 });
 
 // ══════════════════════════════════════════
