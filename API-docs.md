@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.59　　最后更新：2026-10
+> 版本：v3.5.63　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -777,6 +777,7 @@ GET /api/apps/authed
 | 组织 | POST | `/v1/orgs/:sid/members/import` | `org:sync` | 外部通讯录批量导入组织成员 |
 | 组织 | POST | `/v1/orgs/:sid/dir-sync/run` | `org:sync` | 依次执行该组织所有启用的通讯录同步源（企业微信 / 飞书，v3.5.35/36/59） |
 | 用户 | GET | `/v1/users/:uid/org` | `users:read` | 该用户的分组 + 标签（仅名称/颜色） |
+| 用户 | GET | `/v1/users/:uid/contacts` | `users:read` | 该用户的多联系方式（手机/邮箱，含来源与是否主要） |
 | 积分 | GET | `/v1/users/:uid/points` | `points:read` | 积分余额 |
 | 积分 | GET | `/v1/users/:uid/points/logs` | `points:read` | 积分明细（最近 50） |
 | 积分 | POST | `/v1/users/:uid/points` | `points:write` | 调整积分（`delta`/`reason`） |

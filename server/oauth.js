@@ -20,6 +20,7 @@ const dirsyncWecom = require('./dirsync-wecom');
 const dirsyncFeishu = require('./dirsync-feishu');
 const { audit } = require('./audit');
 const { signToken, signShortToken, requireAuth } = require('./auth');
+const { importWecomContacts } = require('./contacts');
 const { subjectGateError } = require('./org-policy');
 
 const router = express.Router();
@@ -451,13 +452,19 @@ router.get('/wecom/callback', async (req, res) => {
     // 非企业成员只有 openid / external_userid，没有 userid：不是本企业的人，不能登录（之前会拿 openid 建一个号）
     if (!ui.userid) return res.redirect('/login.html?error=wecom_not_member');
     const userId = ui.userid;
-    let name = userId, avatar = null;
+    let name = userId, avatar = null, detail = null;
     // 读成员详情只为姓名头像：应用可见范围外 / Secret 受限时读不到，照常用 UserId 登录
     try {
       const d = await wecomApi('/cgi-bin/user/get', { access_token, userid: userId });
-      if (!d.errcode) { name = d.name || userId; avatar = d.avatar || null; }
+      if (!d.errcode) { name = d.name || userId; avatar = d.avatar || null; detail = d; }
     } catch (_) {}
-    loginSuccess(res, findOrCreate({ provider: c._providerKey, openId: userId, name, avatar }));
+    const resolved = findOrCreate({ provider: c._providerKey, openId: userId, name, avatar });
+    // 企业微信通讯录字段（mobile/email/biz_mail）作成员联系方式灌入——静默，权限不足/字段空则跳过
+    if (resolved && detail) {
+      try { importWecomContacts(resolved.id, detail, subjectOfProviderKey(c._providerKey)); }
+      catch (e) { console.warn('[wecom] 联系方式导入跳过:', e.message); }
+    }
+    loginSuccess(res, resolved);
   } catch (e) {
     console.error('[OAuth:wecom]', e.message || e, e.response?.data || '');
     const hint = e.hint || (e.response ? `企业微信接口请求失败（HTTP ${e.response.status}）` : (e.code === 'ECONNABORTED' ? '连接企业微信超时' : ''));

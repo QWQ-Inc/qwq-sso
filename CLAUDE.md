@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.62**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.63**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,29 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.63 企业微信回传成员联系方式 + 成员多手机/多邮箱（上限按组织可覆盖）（用户反馈）
+
+三级版本。用户问：企业微信回传组织数据时支不支持传回成员手机/邮箱？
+
+**事实**：支持，但前提是登录 scope=`snsapi_privateinfo`（`oauth.js` wecom 入口已满足）+ 自建应用有「通讯录读取」权限，且字段未设「仅本人可见」——满足后 `/cgi-bin/user/get`（登录拿 name/avatar 用的那个）才返回 `mobile`/`email`/`biz_mail`（`/cgi-bin/auth/getuserinfo` 只回 userid，不含）。企微**每成员只有 1 手机 + 1 个人邮箱 + 1 企业邮箱**，不是多值；用户要的「10 手机/20 邮箱」是**本系统自己的多联系方式能力**，企微登录只把那几个灌进来作初始数据。
+
+### 数据（db.js）
+- 新表 `user_contacts(id,user_id,kind[phone|email],value,source[manual|wecom|wecom_biz],is_primary,created_at)`，唯一索引 `(user_id,kind,value)` 去重。`contactStmts` 导出 `contacts`。
+- `oauth_subjects` 加 `max_phones`/`max_emails`（0=回退全局）；`oauthSubjectStmts.setContactLimits`。
+- ⚠️ 额外联系方式**只作资料，不用作登录标识符**（用户确认方式 1）；登录仍只认 `users.email`/`users.phone`，其中 is_primary=1 的那条镜像到主字段。
+
+### 后端（`server/contacts.js` 新文件 + oauth.js + api.js）
+- `contacts.js`（纯工具，便于单测）：`contactLimits(subjectId)`（组织 >0 用组织、否则回退全局 `MEMBER_MAX_PHONES`默认10/`MEMBER_MAX_EMAILS`默认20，夹1~50）、`normPhone`/`normEmail`、`addContact`（去重/超上限/非法均静默跳过返回结果对象，不抛）、`listContacts`、`importWecomContacts(userId,d,subjectId)`（从 user/get 响应取 mobile/email/biz_mail）。
+- `oauth.js` wecom 回调（现用 `wecomApi` 封装）：findOrCreate 拿到 user 后 `importWecomContacts(resolved.id, detail, subjectOfProviderKey(...))`——**静默**，权限不足/字段空跳过并 `console.warn`。
+- api.js：管理端 `GET/POST/DELETE /admin/users/:id/contacts`（读 Lv.3 写 Lv.2）；用户端 `GET/POST/DELETE /user/contacts` + `PUT /user/contacts/:cid/primary`（设主→镜像 users.email/phone + 占用检查）；开放 API `GET /v1/users/:uid/contacts`（复用 users:read，有 sandbox 桩）；`PATCH /admin/oauth-subjects/:id` 收 `max_phones`/`max_emails`、`GET` 回带。
+
+### 前端（dashboard.html）
+- 账号「登录方式绑定」：邮箱/手机主字段标「主要」+「+添加」；其它联系方式列出（来源标签 企业微信/企业邮箱/手动）带「设为主要」「删除」；三方凭证收进可展开 `<details>`（标题「其他登录凭证（N 个，已绑 M）」，有已绑则默认展开）。
+- 管理端用户详情加「联系方式」区（列表+来源标签+增删）。组织弹窗加「每人手机/邮箱上限（0=全局）」。系统配置「系统与页脚」加 `membercontact` 组（`MEMBER_MAX_PHONES`/`MEMBER_MAX_EMAILS`，init.js ENV_KEYS 同步）。
+- ⚠️ 测试：`scratchpad/contacts-test.js`（node:sqlite 建真表 mock ./db）18 项全过。dev 浏览器实测过（在初版 v3.5.24 开发时验证：账号页折叠+设为主要同步主字段、管理端增删、组织弹窗上限回填、membercontact env 组）。
+- ⚠️ 企业微信真实链路无凭据无法端到端（同既有约束），靠逻辑审查 + importWecomContacts 单测覆盖。
+- ⚠️ 版本号说明：本功能最初在本地老代码上开发为 v3.5.24，但远端早已推进到 v3.5.62（且 v3.5.24/v3.5.25 标签已被占用）。重新基于 v3.5.62 代码移植并发为 v3.5.63；v3.5.24/v3.5.25 号作废跳过。
 
 ## v3.5.62 疑似重复账号批量识别与合并（用户反馈）
 

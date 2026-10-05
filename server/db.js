@@ -389,6 +389,9 @@ try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN deny_code_login INTEGER NOT
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN org_code TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN direct_listed INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_subjects_org_code ON oauth_subjects(org_code) WHERE org_code IS NOT NULL'); } catch(_) {}
+// 成员多联系方式上限（v3.5.63）：按组织覆盖；0=回退全局 MEMBER_MAX_PHONES / MEMBER_MAX_EMAILS
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN max_phones INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN max_emails INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // 外部通讯录同步（v3.5.35，先做企业微信）：dir_sync=配置 JSON（含通讯录 secret），dir_sync_state=上次同步结果 JSON
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync_state TEXT'); } catch(_) {}
@@ -851,6 +854,21 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS devices (
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_devices_subject ON devices(subject_id)'); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(owner_user_id)'); } catch(_) {}
 
+// 成员多联系方式（v3.5.63）：一个成员可挂多个手机/邮箱（上限按组织/全局可配）。
+// 企业微信登录把成员的 mobile/email/biz_mail 作初始数据灌进来（source=wecom*），之后管理端/用户端可增删。
+// ⚠️ 额外联系方式只作资料，不用作登录标识符；登录仍只认 users.email/users.phone（is_primary=1 的那条镜像到主字段）。
+try { db.exec(`CREATE TABLE IF NOT EXISTS user_contacts (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  kind       TEXT NOT NULL,                        -- 'phone' | 'email'
+  value      TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'manual',        -- manual | wecom | wecom_biz ...
+  is_primary INTEGER NOT NULL DEFAULT 0,            -- 是否主联系方式（镜像到 users.email/phone）
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_user_contacts_uniq ON user_contacts(user_id, kind, value)'); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_user_contacts_user ON user_contacts(user_id)'); } catch(_) {}
+
 // 注：这里曾有一行 UPDATE api_keys SET status='revoked' WHERE status='active'，
 // 注释标称「一次性历史迁移」，实际没有任何条件保护，等于每次服务启动都作废全部密钥
 // （Zeabur 每次部署都重启 → 每次发版第三方密钥集体失效）。v3.3.0 已删除。
@@ -1137,6 +1155,7 @@ const oauthSubjectStmts = {
 
   setDirectListed: db.prepare('UPDATE oauth_subjects SET direct_listed=? WHERE id=?'),
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
+  setContactLimits: db.prepare('UPDATE oauth_subjects SET max_phones=?, max_emails=? WHERE id=?'),
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),
   // 组织管理员（v3.5.8，套用分组管理员的概念）
   admins:       db.prepare('SELECT user_id FROM oauth_subject_admins WHERE subject_id=?'),
@@ -1521,6 +1540,20 @@ const deviceStmts = {
   remove: db.prepare('DELETE FROM devices WHERE id=?'),
 };
 
+// 成员多联系方式（v3.5.63）
+const contactStmts = {
+  byUser:     db.prepare('SELECT * FROM user_contacts WHERE user_id=? ORDER BY kind, is_primary DESC, created_at'),
+  byUserKind: db.prepare('SELECT * FROM user_contacts WHERE user_id=? AND kind=? ORDER BY is_primary DESC, created_at'),
+  countKind:  db.prepare('SELECT COUNT(*) n FROM user_contacts WHERE user_id=? AND kind=?'),
+  exists:     db.prepare('SELECT 1 FROM user_contacts WHERE user_id=? AND kind=? AND value=?'),
+  getOne:     db.prepare('SELECT * FROM user_contacts WHERE id=? AND user_id=?'),
+  insert:     db.prepare('INSERT OR IGNORE INTO user_contacts (id,user_id,kind,value,source,is_primary) VALUES (?,?,?,?,?,?)'),
+  remove:     db.prepare('DELETE FROM user_contacts WHERE id=? AND user_id=?'),
+  removeByUser: db.prepare('DELETE FROM user_contacts WHERE user_id=?'),
+  clearPrimary: db.prepare('UPDATE user_contacts SET is_primary=0 WHERE user_id=? AND kind=?'),
+  setPrimary: db.prepare('UPDATE user_contacts SET is_primary=1 WHERE id=? AND user_id=?'),
+};
+
 // 域名验证文件（v3.5.40）；expires_at 为 NULL = 永久
 const verifyFileStmts = {
   all:    db.prepare('SELECT name, length(content) AS size, expires_at, note, created_by, created_at, updated_at FROM site_verify_files ORDER BY created_at DESC'),
@@ -1590,6 +1623,7 @@ module.exports = {
   memoAtt: memoAttStmts,
   access: accessStmts,
   devices: deviceStmts,
+  contacts: contactStmts,
   otp: otpStmts,
   state: stateStmts,
   logs: logStmts,

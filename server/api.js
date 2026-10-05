@@ -5,9 +5,10 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
+const contactUtil = require('./contacts');
 const wmBurn = require('./watermark-burn');
 wmBurn.prefetchFont();   // 开了「导出加水印」就在启动时把中文字体备好
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
@@ -1266,6 +1267,8 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     deny_code_login: !!s.deny_code_login,
     direct_listed: s.direct_listed == null ? true : !!s.direct_listed,
     org_code: s.allow_direct_login ? ensureOrgCode(s) : (s.org_code || ''),
+    // 成员多联系方式上限（0=用全局默认）
+    max_phones: s.max_phones || 0, max_emails: s.max_emails || 0,
     // 成员数 / 开放应用数（卡片上直接显示，更直观）
     member_count: orgMembers.countBySubject.get(s.id).n,
     dir_sources: dirSources.bySubject.all(s.id).map(x => dirSourceView(x, s)),   // 通讯录同步源（v3.5.36，secret 已打码）
@@ -1465,6 +1468,14 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   }
   if (folder !== undefined) orgFolders.setSubject.run(folder, row.id);   // 组织文件夹（v3.5.38），null = 移出到未归类
   if (req.body.direct_listed !== undefined) oauthSubjects.setDirectListed.run(req.body.direct_listed ? 1 : 0, row.id); // v3.5.18 登录页是否显性列出
+  // 成员多联系方式上限（v3.5.63；0=回退全局）
+  if (req.body.max_phones !== undefined || req.body.max_emails !== undefined) {
+    const clamp = v => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? Math.min(50, n) : 0; };
+    oauthSubjects.setContactLimits.run(
+      req.body.max_phones !== undefined ? clamp(req.body.max_phones) : (row.max_phones || 0),
+      req.body.max_emails !== undefined ? clamp(req.body.max_emails) : (row.max_emails || 0),
+      row.id);
+  }
   // 开了直登就确保有组织码（不显性组织靠它被搜索到）
   if (req.body.allow_direct_login) ensureOrgCode(oauthSubjects.get.get(row.id));
   res.json({ success: true });
@@ -1482,6 +1493,34 @@ router.delete('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   dirSources.removeBySubject.run(row.id);
   oauthSubjects.clearAdmins.run(row.id);         // 连带清组织管理员
   oauthSubjects.remove.run(row.id);
+  res.json({ success: true });
+});
+
+// ── 成员多联系方式（v3.5.63）──────────────────────────────
+// 用户所属组织的第一个（用于取联系方式上限；无则 null = 用全局）
+function firstSubjectOfUser(userId) {
+  try { const r = orgMembers.subjectIdsOfUser.all(userId); return (r[0] && r[0].subject_id) || null; } catch (_) { return null; }
+}
+const SKIP_MSG = { bad: '格式不正确', dup: '该联系方式已存在', limit: '已达到数量上限' };
+
+// 管理端：查看/增删某用户的联系方式
+router.get('/admin/users/:id/contacts', requireAdmin(3), (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  res.json({ success: true, data: contactUtil.listContacts(u.id) });
+});
+router.post('/admin/users/:id/contacts', requireAdmin(2), (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  const { kind, value } = req.body || {};
+  const r = contactUtil.addContact(u.id, kind, value, 'manual', firstSubjectOfUser(u.id));
+  if (!r.ok) return res.status(400).json({ error: SKIP_MSG[r.skip] || '添加失败' });
+  res.json({ success: true, id: r.id });
+});
+router.delete('/admin/users/:id/contacts/:cid', requireAdmin(2), (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  contacts.remove.run(req.params.cid, u.id);
   res.json({ success: true });
 });
 
@@ -3001,7 +3040,34 @@ router.post('/user/contact/verify', requireAuth, noPublic, (req, res) => {
   res.json({ success: true, [type]: value });
 });
 
-// ── 已登录用户：发送验证码（用于重置密码等场景）──
+// ── 用户端：成员多联系方式（v3.5.63）──────────────────────
+// 额外联系方式仅作资料；真正要改「主联系方式」（登录用）仍走上面的 /user/contact/send-code + verify 验证码流程。
+router.get('/user/contacts', requireAuth, noPublic, (req, res) => {
+  res.json({ success: true, data: contactUtil.listContacts(req.user.uid) });
+});
+router.post('/user/contacts', requireAuth, noPublic, (req, res) => {
+  const { kind, value } = req.body || {};
+  const r = contactUtil.addContact(req.user.uid, kind, value, 'manual', firstSubjectOfUser(req.user.uid));
+  if (!r.ok) return res.status(400).json({ error: SKIP_MSG[r.skip] || '添加失败' });
+  res.json({ success: true, id: r.id });
+});
+router.delete('/user/contacts/:cid', requireAuth, noPublic, (req, res) => {
+  contacts.remove.run(req.params.cid, req.user.uid);
+  res.json({ success: true });
+});
+// 设为主要方式 → 镜像到 users.email/phone（登录标识），同 kind 其余取消主标记
+router.put('/user/contacts/:cid/primary', requireAuth, noPublic, (req, res) => {
+  const user = users.findById.get(req.user.uid);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  const row = contacts.getOne.get(req.params.cid, user.id);
+  if (!row) return res.status(404).json({ error: '联系方式不存在' });
+  const occ = row.kind === 'email' ? users.findByEmail.get(row.value) : users.findByPhone.get(row.value);
+  if (occ && occ.id !== user.id) return res.status(400).json({ error: `该${row.kind === 'email' ? '邮箱' : '手机号'}已被其他账号占用` });
+  contacts.clearPrimary.run(user.id, row.kind);
+  contacts.setPrimary.run(row.id, user.id);
+  db.prepare(`UPDATE users SET ${row.kind}=?, updated_at=datetime('now') WHERE id=?`).run(row.value, user.id);
+  res.json({ success: true, kind: row.kind, value: row.value });
+});
 router.post('/user/send-otp', requireAuth, async (req, res) => {
   const { via } = req.body; // 'email' | 'sms'
   const user = users.findById.get(req.user.uid);
@@ -4987,6 +5053,13 @@ router.get('/v1/users/:uid', requireApiKey('users:read'), (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE (uid_seq=? OR id=? OR uid_code=?) AND is_public=0').get(req.params.uid, req.params.uid, req.params.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   res.json(levelTagUser(user));
+});
+// 某用户的多联系方式（v3.5.63；复用 users:read）
+router.get('/v1/users/:uid/contacts', requireApiKey('users:read'), (req, res) => {
+  if (req.isSandbox) return res.json({ _sandbox: true, phones: [{ value: '13800000000', source: 'wecom', is_primary: true }], emails: [{ value: 'a@x.com', source: 'wecom', is_primary: true }, { value: 'a@corp.com', source: 'wecom_biz', is_primary: false }] });
+  const user = findRealUserByUid(req.params.uid);
+  if (!user) return res.status(404).json({ error: '用户不存在' });
+  res.json(contactUtil.listContacts(user.id));
 });
 router.post('/v1/users/:uid/disable', requireApiKey('users:write'), (req, res) => {
   if (req.isSandbox) return res.json({ success: true, _sandbox: true });

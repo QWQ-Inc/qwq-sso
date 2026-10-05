@@ -584,6 +584,18 @@ function _devApi(method, path, body) {
     if (body && body.type && body.value) { db.myUser[body.type] = body.value; }
     return ok({ success:true });
   }
+  // 成员多联系方式（v3.5.63）演示
+  if (!db._contacts) db._contacts = { phones:[{ id:'ph1', value:'13800000001', source:'wecom', is_primary:true }], emails:[{ id:'em1', value:'me@corp.com', source:'wecom_biz', is_primary:true },{ id:'em2', value:'me@gmail.com', source:'manual', is_primary:false }] };
+  if (path === '/user/contacts' && method === 'GET') return ok({ success:true, data: db._contacts });
+  if (path === '/user/contacts' && method === 'POST') {
+    const k = body.kind === 'phone' ? 'phones' : 'emails';
+    db._contacts[k].push({ id:'c'+Date.now(), value:body.value, source:'manual', is_primary:false });
+    return ok({ success:true });
+  }
+  let dc = path.match(/^\/user\/contacts\/([^/]+)$/);
+  if (dc && method === 'DELETE') { ['phones','emails'].forEach(k=>db._contacts[k]=db._contacts[k].filter(x=>x.id!==dc[1])); return ok({ success:true }); }
+  let pc = path.match(/^\/user\/contacts\/([^/]+)\/primary$/);
+  if (pc && method === 'PUT') { ['phones','emails'].forEach(k=>{ if(db._contacts[k].some(x=>x.id===pc[1])){ db._contacts[k].forEach(x=>x.is_primary=(x.id===pc[1])); const m=db._contacts[k].find(x=>x.id===pc[1]); if(m) db.myUser[k==='phones'?'phone':'email']=m.value; } }); return ok({ success:true }); }
 
   // 登录主体（多主体）演示：主体 → 凭证 两级
   const _oauthPlatformsMeta = () => ([
@@ -632,6 +644,13 @@ function _devApi(method, path, body) {
   if (ao && method === 'GET') return ok({ success:true, subject_ids: db._appOrgs[ao[1]]||[] });
   if (ao && method === 'PUT') { db._appOrgs[ao[1]]=body.subject_ids||[]; return ok({ success:true }); }
   if (path === '/user/orgs') return ok({ success:true, orgs:[{ id:'S1', name:'示例集团', org_uid:'EMP0001' }] });
+  // 管理端用户联系方式演示（v3.5.63）
+  db._admContacts = db._admContacts || {};
+  let acm = path.match(/^\/admin\/users\/([^/]+)\/contacts$/);
+  if (acm && method === 'GET') { const d = db._admContacts[acm[1]] || { phones:[{ id:'ap1', value:'13900001111', source:'wecom', is_primary:true }], emails:[{ id:'ae1', value:'u@corp.com', source:'wecom_biz', is_primary:true }] }; db._admContacts[acm[1]] = d; return ok({ success:true, data:d }); }
+  if (acm && method === 'POST') { const d = db._admContacts[acm[1]] || { phones:[], emails:[] }; const k = body.kind === 'phone' ? 'phones' : 'emails'; d[k].push({ id:'c'+Date.now(), value:body.value, source:'manual', is_primary:false }); db._admContacts[acm[1]] = d; return ok({ success:true }); }
+  let acd = path.match(/^\/admin\/users\/([^/]+)\/contacts\/([^/]+)$/);
+  if (acd && method === 'DELETE') { const d = db._admContacts[acd[1]]; if (d) ['phones','emails'].forEach(k=>d[k]=d[k].filter(x=>x.id!==acd[2])); return ok({ success:true }); }
   // 设备管理演示（v3.5.21）
   db._devices = db._devices || [{ id:'d1', name:'前台门禁机', kind:'access_controller', serial:'AC-0001', status:'active', subject_name:'示例集团', subject_id:'S1', owner_name:null, door_id:'door1', door_name:'大门', tags:'一楼', last_seen:'2026-10-03 09:00' }];
   if (path.split('?')[0] === '/admin/devices' && method === 'GET') return ok({ success:true, devices:db._devices, orgs:[{id:'S1',name:'示例集团'}], doors:[{id:'door1',name:'大门'},{id:'door2',name:'侧门'}], kinds:['apple','google','microsoft','access_controller','card_reader'], can_all:true });
@@ -2967,6 +2986,21 @@ async function loadMe() {
       <div style="font-size:11px;color:var(--txd);margin-top:6px;">时段两者都填才生效；起&gt;止视为跨夜（如 22:00~06:00）。按服务器时间判定。</div>
     </div>
 
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--bd);">
+      <div style="font-size:12px;font-weight:700;color:var(--txt);margin-bottom:8px;">成员联系方式上限（0 = 用全局默认）</div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <div style="flex:1;">
+          <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">每人手机上限</label>
+          <input id="sm-maxphones" type="number" min="0" max="50" placeholder="0" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">每人邮箱上限</label>
+          <input id="sm-maxemails" type="number" min="0" max="50" placeholder="0" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--txd);margin-top:6px;">0 表示用全局默认（手机 10 / 邮箱 20，在「系统配置 → 成员联系方式」改）。企业微信登录会把成员手机/邮箱/企业邮箱灌入。</div>
+    </div>
+
     <details style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
       <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">组织专属凭证（短信/邮件）· 可选</summary>
       <div style="font-size:11px;color:var(--txd);margin:8px 0;">该组织上下文发短信/邮件时用这套凭证，留空则回退全局「系统配置 → 消息分发」。</div>
@@ -3765,24 +3799,47 @@ async function loadAccountBindings() {
     }
   });
 
+  // 成员多联系方式（v3.5.63）：主字段之外的其它手机/邮箱
+  let contacts = { phones: [], emails: [] };
+  try { const cr = await api('GET', '/user/contacts'); if (cr.ok && cr.data && cr.data.data) contacts = cr.data.data; } catch (_) {}
+  // 额外联系方式行（排除与主字段相同的值）
+  const extraRows = (kind, primaryVal) => {
+    const list = (kind === 'phone' ? contacts.phones : contacts.emails).filter(c => c.value !== primaryVal);
+    const srcTag = s => s === 'wecom' ? '企业微信' : (s === 'wecom_biz' ? '企业邮箱' : '手动');
+    return list.map(c => `
+      <div class="bind-row" style="padding-left:28px;background:var(--sf4);">
+        <div class="bind-icon" style="background:#F0F0F0;font-size:12px;">${kind === 'phone' ? '📞' : '✉️'}</div>
+        <div class="bind-name" style="font-size:12px;">${esc(c.value)}</div>
+        <div class="bind-val"><span class="badge grey" style="font-size:10px;">${srcTag(c.source)}</span></div>
+        <button class="btn" style="font-size:11px;" onclick="setPrimaryContact('${c.id}')">设为主要</button>
+        <button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="delContact('${c.id}')">删除</button>
+      </div>`).join('');
+  };
+
   // 邮箱和手机：可修改/绑定（走验证码验证新地址所有权）
   let html = `
     <div class="bind-row">
       <div class="bind-icon" style="background:#E6F9EE;">📧</div>
-      <div class="bind-name">邮箱账号</div>
+      <div class="bind-name">邮箱账号 <span style="font-size:10px;color:var(--ac);">主要</span></div>
       <div class="bind-val">${u.email || '未绑定'}</div>
       <span class="badge ${u.email ? 'ok' : 'grey'}">${u.email ? '已绑定' : '未绑定'}</span>
-      <button class="btn ${u.email ? '' : 'primary'}" style="font-size:11px;" onclick="openContactModal('email')">${u.email ? '修改' : '绑定'}</button>
+      <button class="btn" style="font-size:11px;" onclick="openContactModal('email')">${u.email ? '修改' : '绑定'}</button>
+      <button class="btn primary" style="font-size:11px;" onclick="addExtraContact('email')">+ 添加邮箱</button>
     </div>
+    ${extraRows('email', u.email)}
     <div class="bind-row">
       <div class="bind-icon" style="background:#E6F9EE;">📱</div>
-      <div class="bind-name">手机号码</div>
+      <div class="bind-name">手机号码 <span style="font-size:10px;color:var(--ac);">主要</span></div>
       <div class="bind-val">${u.phone || '未绑定'}</div>
       <span class="badge ${u.phone ? 'ok' : 'grey'}">${u.phone ? '已绑定' : '未绑定'}</span>
-      <button class="btn ${u.phone ? '' : 'primary'}" style="font-size:11px;" onclick="openContactModal('phone')">${u.phone ? '修改' : '绑定'}</button>
-    </div>`;
+      <button class="btn" style="font-size:11px;" onclick="openContactModal('phone')">${u.phone ? '修改' : '绑定'}</button>
+      <button class="btn primary" style="font-size:11px;" onclick="addExtraContact('phone')">+ 添加手机</button>
+    </div>
+    ${extraRows('phone', u.phone)}`;
 
-  // OAuth 平台（按登录主体列出：默认主体 + 各额外主体）
+  // OAuth 平台（按登录主体列出：默认主体 + 各额外主体）——折叠收纳
+  const boundCount = targets.filter(t => bound(t.providerKey)).length;
+  let oauthHtml = '';
   targets.forEach(t => {
     const meta = platforms.find(p => p.key === t.platform) || { name: PZH[t.platform] || t.platform, icon:'🔗', bg:'#eee' };
     const displayName = (PZH[t.platform] || meta.name) + (t.label ? ` · ${t.label}` : '');
@@ -3792,7 +3849,7 @@ async function loadAccountBindings() {
     const pkJson = JSON.stringify(t.providerKey);
     const nmJson = JSON.stringify(displayName);
     const instJson = JSON.stringify(t.instId || '');
-    html += `
+    oauthHtml += `
     <div class="bind-row" style="${b ? '' : 'background:var(--sf4);'}">
       <div class="bind-icon" style="${iconStyle}">${brand || meta.icon}</div>
       <div class="bind-name">${esc(displayName)}</div>
@@ -3804,8 +3861,33 @@ async function loadAccountBindings() {
       }
     </div>`;
   });
+  html += `
+    <details style="margin-top:10px;" ${boundCount ? 'open' : ''}>
+      <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--txt);padding:8px 0;">其他登录凭证（三方账号 · ${targets.length} 个，已绑 ${boundCount}）</summary>
+      ${oauthHtml}
+    </details>`;
 
   el.innerHTML = html;
+}
+
+// 设某联系方式为主要（镜像到主字段）
+async function setPrimaryContact(id) {
+  const { ok, data } = await api('PUT', '/user/contacts/' + id + '/primary');
+  if (ok) { showToast('✓ 已设为主要方式'); loadAccountBindings(); }
+  else showToast('设置失败：' + (data?.error || '未知错误'));
+}
+async function delContact(id) {
+  if (!await uiConfirm('确定删除该联系方式？')) return;
+  const { ok } = await api('DELETE', '/user/contacts/' + id);
+  if (ok) { showToast('✓ 已删除'); loadAccountBindings(); }
+}
+async function addExtraContact(kind) {
+  const label = kind === 'phone' ? '手机号' : '邮箱';
+  const value = await uiPrompt(`请输入要添加的${label}：`, '');
+  if (!value) return;
+  const { ok, data } = await api('POST', '/user/contacts', { kind, value: value.trim() });
+  if (ok) { showToast(`✓ 已添加${label}`); loadAccountBindings(); }
+  else showToast('添加失败：' + (data?.error || '未知错误'));
 }
 
 function closeBindModal() {
@@ -5118,6 +5200,9 @@ function renderUserDetailFromData(u) {
     <div class="detail-section"><h4>分组 / 标签 <span style="font-size:10px;color:var(--txd);font-weight:400;">（组织维度，与等级无关）</span></h4>
       <div id="ud-gt-${u.id}" style="font-size:12px;color:var(--txd);">加载中…</div>
     </div>
+    <div class="detail-section"><h4>联系方式 <span style="font-size:10px;color:var(--txd);font-weight:400;">（多手机/邮箱，企业微信登录会灌入）</span></h4>
+      <div id="ud-contacts-${u.id}" style="font-size:12px;color:var(--txd);">加载中…</div>
+    </div>
     <div id="ud-sib-${u.id}"></div>
     <div id="ud-del-${u.id}"></div>
     <div id="ud-mg-${u.id}"></div>
@@ -5133,6 +5218,44 @@ function renderUserDetailFromData(u) {
   renderUserDeletionSection(u);
   renderUserSiblings(u);
   renderUserMerges(u);
+  renderUserContactsSection(u);
+}
+
+// ── 用户详情内的联系方式管理（管理端）──
+async function renderUserContactsSection(u) {
+  const box = document.getElementById('ud-contacts-' + u.id);
+  if (!box) return;
+  const { ok, data } = await api('GET', '/admin/users/' + u.id + '/contacts');
+  const c = ok ? (data.data || { phones: [], emails: [] }) : { phones: [], emails: [] };
+  const srcTag = s => s === 'wecom' ? '企业微信' : (s === 'wecom_biz' ? '企业邮箱' : '手动');
+  const row = (kind, x) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+      <span style="font-size:11px;">${kind === 'phone' ? '📞' : '✉️'}</span>
+      <span style="flex:1;color:var(--txt);">${esc(x.value)}</span>
+      ${x.is_primary ? '<span class="badge ok" style="font-size:10px;">主要</span>' : ''}
+      <span class="badge grey" style="font-size:10px;">${srcTag(x.source)}</span>
+      <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick="admDelContact('${u.id}','${x.id}')">删除</button>
+    </div>`;
+  const list = [...c.phones.map(x => row('phone', x)), ...c.emails.map(x => row('email', x))].join('') || '<span style="color:var(--txd);">暂无额外联系方式</span>';
+  box.innerHTML = `${list}
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <select id="ud-ct-kind-${u.id}" style="padding:4px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--txt);font-size:11px;"><option value="phone">手机</option><option value="email">邮箱</option></select>
+      <input id="ud-ct-val-${u.id}" placeholder="手机号或邮箱" style="flex:1;padding:4px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--txt);font-size:11px;">
+      <button class="btn primary" style="font-size:11px;" onclick="admAddContact('${u.id}')">添加</button>
+    </div>`;
+}
+async function admAddContact(uid) {
+  const kind = document.getElementById('ud-ct-kind-' + uid).value;
+  const value = document.getElementById('ud-ct-val-' + uid).value.trim();
+  if (!value) return;
+  const { ok, data } = await api('POST', '/admin/users/' + uid + '/contacts', { kind, value });
+  if (ok) { showToast('✓ 已添加'); renderUserContactsSection({ id: uid }); }
+  else showToast('添加失败：' + (data?.error || '未知错误'));
+}
+async function admDelContact(uid, cid) {
+  if (!await uiConfirm('确定删除该联系方式？')) return;
+  const { ok } = await api('DELETE', '/admin/users/' + uid + '/contacts/' + cid);
+  if (ok) { showToast('✓ 已删除'); renderUserContactsSection({ id: uid }); }
 }
 // 用户详情：合并到这个账号的记录（可撤销）
 async function renderUserMerges(u) {
@@ -8691,6 +8814,8 @@ function openSubjectModal(subj) {
   document.getElementById('sm-req-orgpw').checked = editing ? !!subj.require_org_password : false;
   document.getElementById('sm-deny-code').checked = editing ? !!subj.deny_code_login : false;
   document.getElementById('sm-listed').checked = editing ? (subj.direct_listed !== false) : true;
+  document.getElementById('sm-maxphones').value = editing ? (subj.max_phones || '') : '';
+  document.getElementById('sm-maxemails').value = editing ? (subj.max_emails || '') : '';
   const ocRow = document.getElementById('sm-orgcode-row');
   if (editing && subj.allow_direct_login && subj.org_code) { document.getElementById('sm-orgcode').textContent = subj.org_code; ocRow.style.display = ''; }
   else ocRow.style.display = 'none';
@@ -8722,7 +8847,9 @@ async function saveSubject() {
   const require_org_password = document.getElementById('sm-req-orgpw').checked;
   const deny_code_login = document.getElementById('sm-deny-code').checked;
   const folder_id = document.getElementById('sm-folder').value || null;
-  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id };
+  const max_phones = parseInt(document.getElementById('sm-maxphones').value, 10) || 0;
+  const max_emails = parseInt(document.getElementById('sm-maxemails').value, 10) || 0;
+  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id, max_phones, max_emails };
   let res;
   if (id) {
     res = await api('PATCH', '/admin/oauth-subjects/' + id, { name, enabled, ...policy, ...extra });
@@ -10309,6 +10436,14 @@ const ENV_GROUPS = [
       { key: 'MEMO_LINK_DOMAINS', label: '外链白名单域', desc: '逗号分隔的允许域名/后缀（子域自动匹配），如 corp.local,intra.example.com。默认留空 = 备忘录里不允许任何外部链接（站内相对链接始终可用）', required: false, secret: false, placeholder: 'corp.local,intra.example.com', value: '' },
       { key: 'MEMO_MAX_ATTACH_MB', label: '单附件上限（MB）', desc: '单个附件的大小上限，默认 5，硬顶 12', required: false, secret: false, placeholder: '5', value: '' },
       { key: 'MEMO_ADMIN_LEVEL', label: '备忘录管理最低等级', desc: '哪一级（含）以上管理员能查看/管理全部用户的备忘录。默认 1 = 仅超级管理员；填 2 = Lv.1/Lv.2 都可。范围 1~9', required: false, secret: false, placeholder: '1', value: '' },
+    ]
+  },
+  {
+    key: 'membercontact', category: 'system', label: '成员联系方式', icon: '📇', color: '#16A085',
+    desc: '一个成员可挂多个手机/邮箱（企业微信登录会自动灌入其手机、个人邮箱、企业邮箱）。此处设全局默认上限，可在「组织管理」里按组织单独覆盖。',
+    vars: [
+      { key: 'MEMBER_MAX_PHONES', label: '每人手机上限', desc: '单个成员最多可挂多少个手机号。默认 10，范围 1~50', required: false, secret: false, placeholder: '10', value: '' },
+      { key: 'MEMBER_MAX_EMAILS', label: '每人邮箱上限', desc: '单个成员最多可挂多少个邮箱。默认 20，范围 1~50', required: false, secret: false, placeholder: '20', value: '' },
     ]
   },
   {
