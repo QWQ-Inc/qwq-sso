@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.66**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.67**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,21 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.67 组织成员管理补齐：按组织建成员 + 分配登录凭证 + 成员部门（用户反馈）
+
+三级版本。用户反馈组织成员管理三个缺口：① 不支持「按组织建成员」（只能加已有账号）；② 平台建号入组后「无法为其分配相应账号」（指绑三方登录凭证）；③「将其账号设置到某部门」没有手动部门概念。三件一起补。
+
+### ① 按组织建成员（新建账号 + 直接入组）
+此前 `POST /admin/orgs/:sid/members` 只走 `resolveUser` 认已有账号，找不到就 404。现加 `create:true` 分支：`{create,name,email?,phone?,password?,dept?,org_uid?}` → 校验（姓名必填、邮箱/手机至少一个、格式、占用、密码≥8 可空）→ `users.create` 建平台账号 → 主邮箱/手机灌进 user_contacts → 加入本组织（可带部门/org_uid）。路由改 async（要 bcrypt）。前端组织成员弹窗加「➕ 新建账号并加入本组织」折叠区（姓名/邮箱/手机/密码/部门/org_uid + `createOrgMember`）。
+
+### ② 为成员分配登录凭证（绑三方登录）
+组织密码（v3.5.20）、组织内UID 本就能设；缺的是把三方登录绑到成员。新增 `GET/POST/DELETE /admin/orgs/:sid/members/:uid/credentials`：POST `{provider, open_id}`（provider=平台名或 平台名:实例id，open_id=该成员在该平台的标识，如企微 UserId / 飞书 open_id）→ 校验平台合法 + 该 (provider,open_id) 未绑他人 → `oauth.bind`；DELETE 按 provider 解绑；GET 列当前绑定。前端成员行加「登录凭证」按钮 → 内联面板 `#orgmem-creds`（平台下拉来自 `/public/login-methods?raw=1` + 填标识 + 绑/解绑；`openOrgMemCreds`/`bindOrgMemCred`/`unbindOrgMemCred`）。绑定后该成员用那个三方登录即落到此账号——正好解决企微/飞书 UserId 对不上、同人多号的归并前置。
+
+### ③ 成员部门（手动，自由文本）
+`org_members` 加 `dept` 列（自由文本，如「技术部/后端组」，空=未分配；通讯录同步也可回填）。`orgMemberStmts.setDept` + `listBySubject` 回带 `m.dept`。`PATCH /admin/orgs/:sid/members/:uid` 现同时收 `org_uid` 与 `dept`（都 optional、各自判定）。前端成员行加部门输入 + 「存部门」按钮（`setOrgMemDept`）+ 名字旁 🏢 部门徽章；新建并加入也可带部门。
+- ⚠️ 用的是**自由文本部门**，不是正式树状部门表——够用且零迁移风险；要正式部门体系是另一档工作量，按需再上。
+- ⚠️ 测试：dev 浏览器实测——「新建并加入」建「赵思达」带部门「技术部/后端组」入列、登录凭证面板（平台下拉含 微信/企业微信/A公司微信，绑 MilkSU 后显示）、行内改部门「市场部」保存。无代码报错（仅既有 loadAcctDeletion/loadKycSiblings 的 dev-mock 缺失报错，与本功能无关）。db 层 ALTER + setDept 语法校验通过；后端 async 建号/凭证绑定逻辑审查（HTTP 层无 express 未端到端，与既有 members 接口同构）。
 
 ## v3.5.66 批量导入支持多手机/多邮箱（企微回不了字段时用导入代替）（用户反馈）
 

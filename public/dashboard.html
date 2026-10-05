@@ -622,12 +622,19 @@ function _devApi(method, path, body) {
   if (mm && method === 'GET') { const s=(db._oauthSubjects||[]).find(x=>x.id===mm[1])||{}; const r=db._orgUidRule[mm[1]]||{}; return ok({ success:true, org:{ id:mm[1], name:s.name, uid_prefix:r.prefix||'', uid_len:r.len||4, members_open:!!s.members_open }, members: db._orgMembers[mm[1]]||[] }); }
   let msh = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/shareable$/);
   if (msh && method === 'GET') return ok({ success:true, data:[{ uid:'#01008', name:'周可复用', email:'z**@corp.com', phone:'138****8899', from_orgs:'B集团,示例集团' }] });
-  if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:body.account, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid }); return ok({ success:true, org_uid:uid }); }
+  if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } const nm=body.create?(body.name||body.email||body.phone):body.account; db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:nm, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid, dept:body.dept||null, has_pw:body.create&&body.password?1:0 }); return ok({ success:true, org_uid:uid }); }
   let mmg = path.match(/^\/admin\/orgs\/([^/]+)\/members\/merge$/);
   if (mmg && method === 'POST') { const arr=db._orgMembers[mmg[1]]||[]; const t=arr.find(x=>x.user_id===body.target); const src=arr.filter(x=>(body.sources||[]).includes(x.user_id)); if(t){ t.ext_ids=[...(t.ext_ids||[]),...src.flatMap(x=>x.ext_ids||[])]; } db._orgMembers[mmg[1]]=arr.filter(x=>!(body.sources||[]).includes(x.user_id)); return ok({ success:true, merged:src.map(x=>({id:x.user_id,uid_seq:x.uid_seq,name:x.name})), target:t?{id:t.user_id}:null, moved:{} }); }
   let mp = path.match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)$/);
-  if (mp && method === 'PATCH') { const arr=db._orgMembers[mp[1]]||[]; const m=arr.find(x=>String(x.uid_seq)===mp[2]); if(m)m.org_uid=body.org_uid||null; return ok({ success:true }); }
+  if (mp && method === 'PATCH') { const arr=db._orgMembers[mp[1]]||[]; const m=arr.find(x=>String(x.uid_seq)===mp[2]); if(m){ if(body.org_uid!==undefined)m.org_uid=body.org_uid||null; if(body.dept!==undefined)m.dept=body.dept||null; } return ok({ success:true }); }
   if (mp && method === 'DELETE') { db._orgMembers[mp[1]]=(db._orgMembers[mp[1]]||[]).filter(x=>String(x.uid_seq)!==mp[2]); return ok({ success:true }); }
+  // 成员登录凭证（v3.5.67）
+  let mc = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)\/credentials$/);
+  if (mc) { db._orgMemCreds = db._orgMemCreds || {}; const key = mc[1]+'|'+mc[2]; db._orgMemCreds[key] = db._orgMemCreds[key] || [];
+    if (method === 'GET') return ok({ success:true, data: db._orgMemCreds[key] });
+    if (method === 'POST') { db._orgMemCreds[key].push({ provider:body.provider, open_id:body.open_id }); return ok({ success:true }); }
+    if (method === 'DELETE') { const prov=(path.split('provider=')[1]||''); const p=decodeURIComponent(prov); db._orgMemCreds[key]=db._orgMemCreds[key].filter(x=>x.provider!==p&&x.provider!==body.provider); return ok({ success:true }); }
+  }
   let mpw = path.match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)\/password$/);
   if (mpw && method === 'PUT') { const m=(db._orgMembers[mpw[1]]||[]).find(x=>String(x.uid_seq)===mpw[2]); if(m)m.has_pw=1; return ok({ success:true }); }
   if (mpw && method === 'DELETE') { const m=(db._orgMembers[mpw[1]]||[]).find(x=>String(x.uid_seq)===mpw[2]); if(m)m.has_pw=0; return ok({ success:true }); }
@@ -3064,10 +3071,23 @@ async function loadMe() {
     <h3 id="orgmem-title" style="margin-bottom:6px;">组织成员</h3>
     <div style="font-size:11px;color:var(--txd);margin-bottom:12px;">同组织不同凭证登录的用户视为同一批人；组织内 UID 仅用于组织内身份辨认与必要认证，平台通用 UID 不受影响。</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-      <input id="orgmem-account" placeholder="邮箱 / 手机 / UID / 用户名" style="flex:1;min-width:150px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+      <input id="orgmem-account" placeholder="邮箱 / 手机 / UID / 用户名（加入已有账号）" style="flex:1;min-width:150px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
       <input id="orgmem-uid" placeholder="组织内UID(留空按规则)" style="width:150px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
       <button class="btn primary" style="font-size:12px;" onclick="addOrgMember()">加入</button>
     </div>
+    <details style="margin-bottom:8px;font-size:12px;">
+      <summary style="cursor:pointer;color:var(--txm);">➕ 新建账号并加入本组织</summary>
+      <div style="font-size:11px;color:var(--txd);margin:6px 0;">为还没有平台账号的人直接建号 + 入组。姓名必填，邮箱/手机至少填一个（作登录标识）；密码可留空（之后可设组织密码或绑三方登录）。</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <input id="orgmem-new-name" placeholder="姓名" style="width:110px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <input id="orgmem-new-email" placeholder="邮箱" style="flex:1;min-width:130px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <input id="orgmem-new-phone" placeholder="手机" style="width:120px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <input id="orgmem-new-pw" type="password" placeholder="密码(可空)" style="width:100px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <input id="orgmem-new-dept" placeholder="部门(可空)" style="width:110px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <input id="orgmem-new-uid" placeholder="组织内UID(可空)" style="width:130px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+        <button class="btn primary" style="font-size:12px;" onclick="createOrgMember()">新建并加入</button>
+      </div>
+    </details>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:11px;color:var(--txd);">
       组织内 UID 规则：前缀 <input id="orgmem-prefix" style="width:70px;padding:3px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
       位数 <input id="orgmem-len" type="number" min="1" max="24" style="width:52px;padding:3px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
@@ -3080,6 +3100,7 @@ async function loadMe() {
       <button class="btn" style="font-size:11px;padding:2px 9px;" onclick="clearOrgMemSel()">取消选择</button>
     </div>
     <div id="orgmem-merge" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);font-size:12px;"></div>
+    <div id="orgmem-creds" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--ac);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;">加载中…</div>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);">📇 批量导入（外部通讯录）</summary>
@@ -8901,14 +8922,18 @@ async function loadOrgMembers() {
   box.innerHTML = rows.length ? rows.map(m => {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
     const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
+    const deptShow = m.dept ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">🏢 ${esc(m.dept)}</span>` : '';
     const ext = (m.ext_ids || []).length ? `<br><span style="color:var(--txd);font-size:10px;">外部账号：${m.ext_ids.map(x => esc(x.id) + (x.source ? '（' + esc(x.source) + '）' : '')).join('、')}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
       <input type="checkbox" class="omsel" data-id="${esc(m.user_id)}" ${_orgMemSel.has(m.user_id) ? 'checked' : ''} onchange="toggleOrgMemSel(this)" title="勾选多个 → 合并为同一人">
-      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
-      <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:120px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
+      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${deptShow}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
+      <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:110px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemUid(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存UID</button>
+      <input value="${esc(m.dept || '')}" placeholder="部门" id="omd-${esc(m.user_id)}" style="width:100px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
+      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemDept(${JSON.stringify(m.uid_seq)})'>存部门</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>组织密码</button>
       ${m.has_pw ? `<button class="btn" style="font-size:11px;padding:2px 7px;" onclick='clearOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>清除</button>` : ''}
+      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='openOrgMemCreds(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>登录凭证</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='delOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>移出</button>
     </div>`;
   }).join('') : '<div style="color:var(--txd);padding:8px 4px;">该组织还没有成员。</div>';
@@ -8993,6 +9018,23 @@ async function addOrgMember() {
   if (ok) { showToast('已加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : '')); document.getElementById('orgmem-account').value = ''; document.getElementById('orgmem-uid').value = ''; loadOrgMembers(); }
   else showToast('加入失败：' + (data?.error || '未知错误'));
 }
+// 新建账号并加入本组织（v3.5.67）
+async function createOrgMember() {
+  const name = document.getElementById('orgmem-new-name').value.trim();
+  const email = document.getElementById('orgmem-new-email').value.trim();
+  const phone = document.getElementById('orgmem-new-phone').value.trim();
+  const password = document.getElementById('orgmem-new-pw').value;
+  const dept = document.getElementById('orgmem-new-dept').value.trim();
+  const org_uid = document.getElementById('orgmem-new-uid').value.trim();
+  if (!name) { showToast('请填写姓名'); return; }
+  if (!email && !phone) { showToast('邮箱/手机至少填一个'); return; }
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { create: true, name, email, phone, password, dept, org_uid, auto_uid: !org_uid });
+  if (ok) {
+    showToast('已新建并加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : ''));
+    ['name', 'email', 'phone', 'pw', 'dept', 'uid'].forEach(f => { const el = document.getElementById('orgmem-new-' + f); if (el) el.value = ''; });
+    loadOrgMembers();
+  } else showToast('新建失败：' + (data?.error || '未知错误'));
+}
 // 从开放组织复用成员（v3.5.18）
 async function loadShareable() {
   const box = document.getElementById('orgmem-share-list');
@@ -9032,6 +9074,63 @@ async function delOrgMember(uidSeq, name) {
   if (!await uiConfirm(`把「${name}」移出该组织？`)) return;
   const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq);
   if (ok) { showToast('已移出'); loadOrgMembers(); } else showToast('移出失败：' + (data?.error || '未知错误'));
+}
+// 成员所属部门（v3.5.67）
+async function setOrgMemDept(uidSeq) {
+  const m = _orgMemRows.find(x => String(x.uid_seq) === String(uidSeq));
+  const dept = document.getElementById('omd-' + (m ? m.user_id : uidSeq)).value.trim();
+  const { ok, data } = await api('PATCH', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq, { dept });
+  if (ok) { showToast('已保存部门'); loadOrgMembers(); } else showToast('保存失败：' + (data?.error || '未知错误'));
+}
+// 成员登录凭证：绑定/解绑三方登录（v3.5.67）
+async function openOrgMemCreds(uidSeq, name) {
+  // 拉可选登录平台（启用中的登录方式）
+  let methods = [];
+  try { const cp = await api('GET', '/public/login-methods?raw=1'); if (cp.ok) methods = cp.data.methods || []; } catch (_) {}
+  const PZH = { wechat:'微信', wecom:'企业微信', feishu:'飞书', dingtalk:'钉钉', douyin:'抖音', kuaishou:'快手', xiaohongshu:'小红书', bilibili:'Bilibili', google:'Google', apple:'Apple', github:'GitHub', microsoft:'Microsoft', qq:'QQ' };
+  const opts = methods.map(mth => {
+    const pk = mth.instance_id ? `${mth.platform}:${mth.instance_id}` : mth.platform;
+    const label = (PZH[mth.platform] || mth.platform) + (mth.label ? ' · ' + mth.label : '');
+    return `<option value="${esc(pk)}">${esc(label)}</option>`;
+  }).join('') || '<option value="">（没有启用的登录方式）</option>';
+  const cur = await api('GET', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/credentials');
+  const binds = (cur.ok && cur.data.data) || [];
+  const curHtml = binds.length ? binds.map(b => {
+    const pz = PZH[b.provider.split(':')[0]] || b.provider.split(':')[0];
+    return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px;">
+      <span style="flex:1;color:var(--txt);">${esc(pz)} <span style="color:var(--txd);font-size:11px;">${esc(b.open_id)}</span></span>
+      <button class="btn" style="font-size:11px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='unbindOrgMemCred(${JSON.stringify(uidSeq)},${JSON.stringify(b.provider)})'>解绑</button>
+    </div>`;
+  }).join('') : '<div style="color:var(--txd);font-size:12px;">还没有绑定任何三方登录。</div>';
+  const html = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <b style="color:var(--txt);">「${esc(name)}」的登录凭证</b>
+      <button class="btn" style="font-size:11px;padding:1px 8px;" onclick="document.getElementById('orgmem-creds').style.display='none'">收起</button>
+    </div>
+    <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">给成员绑定三方登录：选平台 + 填他在该平台的标识（企业微信填 UserId，飞书填 open_id 等）。绑定后该成员用这个三方登录会落到此账号。</div>
+    <div style="margin-bottom:10px;">${curHtml}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;border-top:1px solid var(--bd);padding-top:10px;">
+      <select id="omcred-platform" style="padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">${opts}</select>
+      <input id="omcred-openid" placeholder="该成员在此平台的标识 / UserId" style="flex:1;min-width:140px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+      <button class="btn primary" style="font-size:12px;" onclick='bindOrgMemCred(${JSON.stringify(uidSeq)},${JSON.stringify(name)})'>绑定</button>
+    </div>`;
+  const panel = document.getElementById('orgmem-creds');
+  panel.innerHTML = html;
+  panel.style.display = 'block';
+  panel.scrollIntoView({ block: 'nearest' });
+}
+async function bindOrgMemCred(uidSeq, name) {
+  const provider = document.getElementById('omcred-platform').value;
+  const open_id = document.getElementById('omcred-openid').value.trim();
+  if (!provider) { showToast('没有可选的登录平台'); return; }
+  if (!open_id) { showToast('请填写该成员在此平台的标识'); return; }
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/credentials', { provider, open_id });
+  if (ok) { showToast('已绑定'); openOrgMemCreds(uidSeq, name); } else showToast('绑定失败：' + (data?.error || '未知错误'));
+}
+async function unbindOrgMemCred(uidSeq, provider) {
+  if (!await uiConfirm('解绑该三方登录？')) return;
+  const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/credentials?provider=' + encodeURIComponent(provider));
+  if (ok) { showToast('已解绑'); const m = _orgMemRows.find(x => String(x.uid_seq) === String(uidSeq)); openOrgMemCreds(uidSeq, m ? m.name : ''); } else showToast('解绑失败：' + (data?.error || '未知错误'));
 }
 async function saveOrgUidRule() {
   const uid_prefix = document.getElementById('orgmem-prefix').value.trim();

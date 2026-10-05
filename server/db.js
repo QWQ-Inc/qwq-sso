@@ -360,6 +360,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS org_members (
 try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_org_uid ON org_members(subject_id, org_uid) WHERE org_uid IS NOT NULL'); } catch(_) {}
 // 组织自有密码（v3.5.20）：组织给该成员设的、独立于平台密码的组织内登录密码（bcrypt）。空=无组织密码。
 try { db.exec('ALTER TABLE org_members ADD COLUMN password_hash TEXT'); } catch(_) {}
+// 成员所属部门（v3.5.67）：组织内手动分部门（自由文本，如「技术部/后端组」）。通讯录同步也会回填。空=未分配。
+try { db.exec('ALTER TABLE org_members ADD COLUMN dept TEXT'); } catch(_) {}
 // 组织内 org_uid 自动生成规则 + per-组织自增计数（挂在主体上）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_prefix TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_len INTEGER NOT NULL DEFAULT 4'); } catch(_) {}
@@ -1170,7 +1172,7 @@ const oauthSubjectStmts = {
 
 // 组织成员（org=主体）
 const orgMemberStmts = {
-  listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at,
+  listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept,
       (m.password_hash IS NOT NULL) AS has_pw,
       u.name, u.email, u.uid_seq, u.uid_code
     FROM org_members m JOIN users u ON m.user_id=u.id
@@ -1182,6 +1184,7 @@ const orgMemberStmts = {
   removeUser: db.prepare('DELETE FROM org_members WHERE user_id=?'),
   setOrgUid:  db.prepare('UPDATE org_members SET org_uid=? WHERE subject_id=? AND user_id=?'),
   setPassword: db.prepare('UPDATE org_members SET password_hash=? WHERE subject_id=? AND user_id=?'),  // v3.5.20 组织自有密码
+  setDept:    db.prepare('UPDATE org_members SET dept=? WHERE subject_id=? AND user_id=?'),             // v3.5.67 成员所属部门
   countBySubject: db.prepare('SELECT COUNT(*) n FROM org_members m JOIN users u ON m.user_id=u.id WHERE m.subject_id=? AND u.is_public=0'),
   orgUidTaken: db.prepare('SELECT 1 FROM org_members WHERE subject_id=? AND org_uid=? AND user_id<>?'),
   // 某用户所属的（启用中的）组织 + 其组织内 uid

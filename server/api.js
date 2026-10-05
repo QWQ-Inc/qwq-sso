@@ -1653,24 +1653,47 @@ router.get('/admin/orgs/:sid/shareable', requireAuth, (req, res) => {
 });
 
 // 加成员：account 支持邮箱/手机/UID/用户名；org_uid 可指定，留空则按规则自动生成
-router.post('/admin/orgs/:sid/members', requireAuth, (req, res) => {
+router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
-  const r = resolveUser(String(req.body?.account || '').trim());
-  if (r === 'AMBIGUOUS') return res.status(400).json({ error: '账号有重名，请改用邮箱/手机号/UID' });
-  if (!r) return res.status(404).json({ error: '用户不存在' });
-  if (r.is_public) return res.status(400).json({ error: '公共账号不能作为组织成员' });
-  if (orgMembers.get.get(s.id, r.id)) return res.status(400).json({ error: '该用户已是本组织成员' });
+  let r;
+  if (req.body?.create) {
+    // 按组织建成员（v3.5.67）：直接建一个平台账号并加入本组织
+    const name = String(req.body?.name || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const phone = String(req.body?.phone || '').trim();
+    const password = String(req.body?.password || '');
+    if (!name) return res.status(400).json({ error: '请填写姓名' });
+    if (!email && !phone) return res.status(400).json({ error: '请至少填写邮箱或手机号' });
+    if (email && !isEmail(email)) return res.status(400).json({ error: '邮箱格式不正确' });
+    if (phone && !isPhone(phone)) return res.status(400).json({ error: '手机号格式不正确' });
+    if (password && password.length < 8) return res.status(400).json({ error: '密码至少 8 位' });
+    if (email && users.findByEmail.get(email)) return res.status(400).json({ error: '该邮箱已被注册' });
+    if (phone && users.findByPhone.get(phone)) return res.status(400).json({ error: '该手机号已被注册' });
+    const hash = password ? await bcrypt.hash(password, 12) : null;
+    r = users.create({ name, email: email || null, phone: phone || null, password_hash: hash, role: 'user', user_level: 4 });
+    // 把主邮箱/手机也灌进多联系方式，保持与导入一致
+    if (email) { try { contactUtil.addContact(r.id, 'email', email, 'manual', s.id); } catch (_) {} }
+    if (phone) { try { contactUtil.addContact(r.id, 'phone', phone, 'manual', s.id); } catch (_) {} }
+  } else {
+    r = resolveUser(String(req.body?.account || '').trim());
+    if (r === 'AMBIGUOUS') return res.status(400).json({ error: '账号有重名，请改用邮箱/手机号/UID' });
+    if (!r) return res.status(404).json({ error: '用户不存在（如需新建请用「新建并加入」）' });
+    if (r.is_public) return res.status(400).json({ error: '公共账号不能作为组织成员' });
+    if (orgMembers.get.get(s.id, r.id)) return res.status(400).json({ error: '该用户已是本组织成员' });
+  }
   let orgUid = String(req.body?.org_uid || '').trim() || null;
-  let source = 'manual';
+  let source = req.body?.create ? 'manual' : 'manual';
   if (orgUid) {
     if (orgMembers.orgUidTaken.get(s.id, orgUid, '')) return res.status(400).json({ error: '该组织内 UID 已被占用' });
   } else if (s.uid_prefix || req.body?.auto_uid) {
     orgUid = genOrgUid(s); source = 'auto';
   }
   orgMembers.add.run(s.id, r.id, orgUid, source);
-  res.json({ success: true, org_uid: orgUid });
+  const dept = String(req.body?.dept || '').trim();
+  if (dept) orgMembers.setDept.run(dept, s.id, r.id);
+  res.json({ success: true, org_uid: orgUid, uid_seq: r.uid_seq });
 });
 
 router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
@@ -1679,9 +1702,14 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
   const target = findRealUserByUid(req.params.uid);
   if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
-  const orgUid = String(req.body?.org_uid || '').trim() || null;
-  if (orgUid && orgMembers.orgUidTaken.get(s.id, orgUid, target.id)) return res.status(400).json({ error: '该组织内 UID 已被占用' });
-  orgMembers.setOrgUid.run(orgUid, s.id, target.id);
+  if (req.body?.org_uid !== undefined) {
+    const orgUid = String(req.body?.org_uid || '').trim() || null;
+    if (orgUid && orgMembers.orgUidTaken.get(s.id, orgUid, target.id)) return res.status(400).json({ error: '该组织内 UID 已被占用' });
+    orgMembers.setOrgUid.run(orgUid, s.id, target.id);
+  }
+  if (req.body?.dept !== undefined) {
+    orgMembers.setDept.run(String(req.body.dept || '').trim() || null, s.id, target.id);   // v3.5.67 部门
+  }
   res.json({ success: true });
 });
 
@@ -1690,6 +1718,45 @@ router.delete('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   const target = findRealUserByUid(req.params.uid);
   if (!target) return res.status(404).json({ error: '成员不存在' });
   orgMembers.remove.run(req.params.sid, target.id);
+  res.json({ success: true });
+});
+
+// 成员登录凭证（v3.5.67）：给成员手动绑定/解绑一个三方登录（providerKey + open_id，如企业微信 UserId、飞书 open_id）。
+// 以后该成员用这个三方登录就落到这个账号。同一 (provider, open_id) 已绑别人则拒绝。
+router.get('/admin/orgs/:sid/members/:uid/credentials', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
+  const target = findRealUserByUid(req.params.uid);
+  if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
+  const binds = oauth.findByUser.all(target.id).map(b => ({ provider: b.provider, open_id: b.open_id }));
+  res.json({ success: true, data: binds });
+});
+router.post('/admin/orgs/:sid/members/:uid/credentials', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const target = findRealUserByUid(req.params.uid);
+  if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
+  const provider = String(req.body?.provider || '').trim();     // 平台名 或 平台名:实例id
+  const openId = String(req.body?.open_id || '').trim();
+  const platform = provider.split(':')[0];
+  if (!OAUTH_META[platform]) return res.status(400).json({ error: '未知登录平台' });
+  if (!openId) return res.status(400).json({ error: '请填写该成员在此平台的标识（如企业微信 UserId、飞书 open_id）' });
+  const owner = oauth.findByProvider.get(provider, openId);
+  if (owner && owner.id !== target.id) return res.status(400).json({ error: '该三方账号已绑定到其他用户' });
+  oauth.bind.run(uuidv4(), target.id, provider, openId, null);
+  res.json({ success: true });
+});
+router.delete('/admin/orgs/:sid/members/:uid/credentials', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const target = findRealUserByUid(req.params.uid);
+  if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
+  const provider = String(req.body?.provider || req.query?.provider || '').trim();
+  if (!provider) return res.status(400).json({ error: '缺少 provider' });
+  oauth.unbind.run(target.id, provider);
   res.json({ success: true });
 });
 
