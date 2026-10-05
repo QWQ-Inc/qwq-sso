@@ -1,4 +1,4 @@
-// 飞书通讯录同步（v3.5.59）：用飞书「企业自建应用」的通讯录接口，把所选部门（含子部门）的成员同步成本系统某个组织的成员。
+// 飞书通讯录同步（v3.5.59；v3.5.60 起可放在组织文件夹上，文件夹里的组织套用、各选部门）：用飞书「企业自建应用」的通讯录接口，把所选部门（含子部门）的成员同步成本系统某个组织的成员。
 // 免费版（基础版）即可：自建应用的「通讯录」「认证及授权」「事件订阅」类接口不计入飞书的 API 调用额度。
 //
 // 和企业微信那套（dirsync-wecom.js）的对应关系——配置字段沿用同名，管理端 / 接口都不用分两套：
@@ -33,6 +33,9 @@ const credsStmt = db.prepare(`SELECT p.id, p.label, p.config, p.folder_id, f.nam
   WHERE p.platform='feishu' AND (p.subject_id=? OR p.id IN (SELECT provider_id FROM folder_cred_orgs WHERE subject_id=?))
   ORDER BY (p.folder_id IS NOT NULL AND p.folder_id<>''), p.sort_weight, p.created_at`);
 const blockedDir = db.prepare("SELECT 1 FROM identity_blocks WHERE kind='dir' AND conn_id=? AND ext_id=?");
+// 同一份文件夹通讯录的其他「套用」里的映射（v3.5.60）：一人同时在两个组织的部门里时落到同一账号
+const siblingLink = db.prepare(`SELECT l.user_id FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
+  WHERE d.parent_id=? AND d.id<>? AND l.ext_id=? LIMIT 1`);
 const appliedGet = db.prepare('SELECT value FROM dir_sync_applied WHERE source_id=? AND user_id=? AND kind=? AND key=?');
 const appliedSet = db.prepare(`INSERT INTO dir_sync_applied (source_id,user_id,kind,key,value,updated_at) VALUES (?,?,?,?,?,datetime('now'))
   ON CONFLICT(source_id,user_id,kind,key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')`);
@@ -310,6 +313,10 @@ async function syncFeishu(source, subject, cfg, helpers, fetcher = fetchDirector
       let user = null;
       const link = linkGet.get(source.id, extId);
       if (link) user = users.findById.get(link.user_id) || null;
+      if (!user && source.parent_id) {                       // 同一份文件夹通讯录，别的组织已经认出这个人
+        const sib = siblingLink.get(source.parent_id, source.id, extId);
+        if (sib) user = users.findById.get(sib.user_id) || null;
+      }
       for (const p of bindProviders) { if (!user) user = oauth.findByProvider.get(p, extId) || null; }
       if (!user) user = corpUsers(cfg.corp_id, extId, { unionId: m.union_id, scope: sc })[0] || null;
       if (!user && m.email && helpers.isEmail(m.email)) user = users.findByEmail.get(m.email) || null;

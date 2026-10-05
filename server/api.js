@@ -2061,19 +2061,21 @@ function dirSourceView(src, subject) {
     running: _dirSyncRunning.has(src.subject_id), created_at: src.created_at };
 }
 // 文件夹上的通讯录连接（v3.5.47）：企业 ID / Secret / 回调；下面挂着各组织的「套用」
+const cbReady = (type, cfg) => type === 'feishu' ? !!cfg.cb_token : !!(cfg.cb_token && cfg.cb_aes_key);
 function dirConnView(conn) {
   const cfg = parseJ(conn.config) || {};
+  const drv = drvOf(conn.type);
   return { id: conn.id, folder_id: conn.folder_id, type: conn.type, type_label: DIR_TYPES[conn.type] || conn.type,
     label: conn.label || DIR_TYPES[conn.type] || conn.type, enabled: !!conn.enabled,
     config: { corp_id: cfg.corp_id || '', secret: cfg.secret ? SECRET_MASK : '', write_secret: cfg.write_secret ? SECRET_MASK : '', push_suspend: !!cfg.push_suspend,
       cb_token: cfg.cb_token || '', cb_aes_key: cfg.cb_aes_key ? SECRET_MASK : '' },
-    callback_path: '/api/public/dirsync/wecom/' + conn.id,
-    callback_ready: !!(cfg.cb_token && cfg.cb_aes_key),
+    callback_path: `/api/public/dirsync/${conn.type === 'feishu' ? 'feishu' : 'wecom'}/` + conn.id,
+    callback_ready: cbReady(conn.type, cfg),
     event_state: parseJ(conn.event_state),
     uses: dirSources.children.all(conn.id).map(u => {
       const o = oauthSubjects.get.get(u.subject_id); const uc = parseJ(u.config) || {};
       return { id: u.id, subject_id: u.subject_id, org_name: o ? o.name : '（已删除的组织）', label: u.label, enabled: !!u.enabled,
-        dept_ids: dirsyncWecom.deptIdsOf(uc), dept_names: uc.dept_names || {}, state: parseJ(u.state), running: _dirSyncRunning.has(u.subject_id) };
+        dept_ids: drv.deptIdsOf(uc), dept_names: uc.dept_names || {}, state: parseJ(u.state), running: _dirSyncRunning.has(u.subject_id) };
     }),
     created_at: conn.created_at };
 }
@@ -2115,14 +2117,14 @@ function applyCbFields(cfg, b, old, type = 'wecom') {
   return null;
 }
 // 文件夹通讯录连接的配置：只有连接字段
-function buildDirConnCfg(b, old) {
+function buildDirConnCfg(b, old, type = 'wecom') {
   old = old || {};
-  const r = dirSourceCfgFromBody(b, old);
+  const r = dirSourceCfgFromBody(b, old, type);
   if (r.error) return r;
   const cfg = { corp_id: r.cfg.corp_id, secret: r.cfg.secret };
   if (r.cfg.write_secret) cfg.write_secret = r.cfg.write_secret;
   if (r.cfg.push_suspend) cfg.push_suspend = true;
-  const e = applyCbFields(cfg, b, old);
+  const e = applyCbFields(cfg, b, old, type);
   return e ? { error: e } : { cfg };
 }
 // opts.use = 套用的文件夹连接配置（v3.5.47）：企业 ID / Secret 用文件夹的，自己只存组织级字段
@@ -2258,7 +2260,7 @@ router.post('/admin/orgs/:sid/dir-sources/scope-tree', requireAuth, async (req, 
   } else if (b.parent_id) {   // 新建「套用」时：用文件夹连接的企业 ID / Secret
     const conn = dirSources.get.get(b.parent_id);
     if (!isFolderConn(conn) || conn.folder_id !== s.folder_id) return res.status(404).json({ error: '文件夹通讯录不存在' });
-    old = parseJ(conn.config) || {}; fromFolder = true;
+    old = parseJ(conn.config) || {}; fromFolder = true; type = conn.type;
   }
   if (fromFolder) {   // 文件夹通讯录：企业 ID / Secret 只用文件夹的；看整个企业的部门树只给系统管理员
     if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '套用文件夹通讯录的同步范围需要系统管理员修改' });
@@ -2280,14 +2282,15 @@ router.post('/admin/orgs/:sid/dir-sources', requireAuth, async (req, res) => {
   if (dirSources.bySubject.all(s.id).length >= 20) return res.status(400).json({ error: '同步源太多了（上限 20）' });
   // 套用文件夹通讯录（v3.5.47）：只有系统管理员能挑部门（文件夹的 Secret 看得到整个企业，组织管理员不能自己选范围）
   let conn = null;
-  if (req.body?.parent_id && type !== 'wecom') return res.status(400).json({ error: '飞书同步源暂不支持套用文件夹通讯录' });
   if (req.body?.parent_id) {
     if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '套用文件夹通讯录需要系统管理员操作' });
     conn = dirSources.get.get(String(req.body.parent_id));
     if (!isFolderConn(conn) || !s.folder_id || conn.folder_id !== s.folder_id) return res.status(400).json({ error: '只能套用本组织所在文件夹的通讯录' });
     if (dirSources.children.all(conn.id).some(u => u.subject_id === s.id)) return res.status(400).json({ error: '本组织已经套用了这份通讯录' });
+    if (req.body?.type && String(req.body.type) !== conn.type) return res.status(400).json({ error: `这份文件夹通讯录是${DIR_TYPES[conn.type] || conn.type}的` });
   }
-  const { cfg, error } = await buildDirSourceCfg(req.body || {}, null, s, conn ? { use: parseJ(conn.config) || {}, type } : { type });
+  const useType = conn ? conn.type : type;   // 套用时类型跟着文件夹那份走
+  const { cfg, error } = await buildDirSourceCfg(req.body || {}, null, s, conn ? { use: parseJ(conn.config) || {}, type: useType } : { type });
   if (error) return res.status(400).json({ error });
   const id = uuidv4();
   const label = String(req.body?.label || '').trim().slice(0, 40) || (conn ? (conn.label || DIR_TYPES[type]) : DIR_TYPES[type]);
@@ -2350,7 +2353,7 @@ function folderMigrations(folderId) {
   const items = [];
   for (const o of orgs) {
     for (const src of dirSources.bySubject.all(o.id)) {
-      if (src.parent_id || src.type !== 'wecom') continue;   // 飞书同步源暂不支持放到文件夹上
+      if (src.parent_id || !DIR_TYPES[src.type]) continue;
       const cfg = parseJ(src.config) || {};
       const same = conns.find(c => c.type === src.type && (parseJ(c.config) || {}).corp_id === cfg.corp_id);
       items.push({ kind: 'dir_source', id: src.id, org_id: o.id, org_name: o.name, type: src.type, label: src.label || DIR_TYPES[src.type],
@@ -2382,11 +2385,11 @@ router.post('/admin/org-folders/:id/dir-sources', requireAdmin(2), (req, res) =>
   const f = orgFolders.get.get(req.params.id);
   if (!f) return res.status(404).json({ error: '文件夹不存在' });
   const type = String(req.body?.type || 'wecom');
-  if (type !== 'wecom') return res.status(400).json({ error: '文件夹共用通讯录目前只支持企业微信（飞书请在组织里单独添加同步源）' });
+  if (!DIR_TYPES[type]) return res.status(400).json({ error: '暂不支持该类型的同步源' });
   if (dirSources.byFolder.all(f.id).length >= 20) return res.status(400).json({ error: '通讯录连接太多了（上限 20）' });
-  const { cfg, error } = buildDirConnCfg(req.body || {}, null);
+  const { cfg, error } = buildDirConnCfg(req.body || {}, null, type);
   if (error) return res.status(400).json({ error });
-  if (dirSources.byFolder.all(f.id).some(c => c.type === type && (parseJ(c.config) || {}).corp_id === cfg.corp_id)) return res.status(400).json({ error: '这个文件夹已经有这家企业的通讯录了' });
+  if (dirSources.byFolder.all(f.id).some(c => c.type === type && (parseJ(c.config) || {}).corp_id === cfg.corp_id)) return res.status(400).json({ error: type === 'feishu' ? '这个文件夹已经有这个飞书应用的通讯录了' : '这个文件夹已经有这家企业的通讯录了' });
   const id = uuidv4();
   const label = String(req.body?.label || '').trim().slice(0, 40) || DIR_TYPES[type];
   dirSources.insertFolder.run(id, f.id, type, label, JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1);
@@ -2399,9 +2402,9 @@ router.patch('/admin/folder-dir-sources/:id', requireAdmin(2), (req, res) => {
   let cfg = parseJ(conn.config) || {};
   const onlyToggle = Object.keys(b).every(k => k === 'enabled');
   if (!onlyToggle) {
-    const r = buildDirConnCfg(b, cfg);
+    const r = buildDirConnCfg(b, cfg, conn.type);
     if (r.error) return res.status(400).json({ error: r.error });
-    if (r.cfg.corp_id !== cfg.corp_id && dirSources.children.all(conn.id).length) return res.status(400).json({ error: '已有组织在套用这份通讯录，不能改企业 ID（要换企业请新建一份）' });
+    if (r.cfg.corp_id !== cfg.corp_id && dirSources.children.all(conn.id).length) return res.status(400).json({ error: conn.type === 'feishu' ? '已有组织在套用这份通讯录，不能改 App ID（要换应用请新建一份）' : '已有组织在套用这份通讯录，不能改企业 ID（要换企业请新建一份）' });
     cfg = r.cfg;
   }
   const label = b.label !== undefined ? (String(b.label).trim().slice(0, 40) || DIR_TYPES[conn.type]) : conn.label;
@@ -2425,7 +2428,8 @@ router.post('/admin/folder-dir-sources/:id/scope-tree', requireAdmin(2), async (
   const corp_id = String(b.corp_id || old.corp_id || '').trim();
   let secret = String(b.secret || '').trim();
   if (!secret || /^•+$/.test(secret)) secret = old.secret || '';
-  try { const nodes = await dirsyncWecom.fetchScopeTree({ corp_id, secret }); res.json({ success: true, nodes, limited: !!nodes.limited, warning: nodes.limited ? dirsyncWecom.LIMITED_HINT : undefined }); }
+  const drv = drvOf(conn.type);
+  try { const nodes = await drv.fetchScopeTree({ corp_id, secret }); res.json({ success: true, nodes, limited: !!nodes.limited, warning: nodes.limited ? drv.LIMITED_HINT : undefined }); }
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 // 立即同步：依次跑套用这份通讯录的所有启用组织
@@ -2488,7 +2492,7 @@ router.post('/admin/org-folders/:id/migrate', requireAdmin(2), (req, res) => {
       // 并进已有连接：它没设回调 / 管理用 Secret 时，把这一份的带过去；原同步源删掉，旧回调地址转到这份连接
       const cc = parseJ(conn.config) || {};
       let changed = false;
-      if (!(cc.cb_token && cc.cb_aes_key) && cfg.cb_token && cfg.cb_aes_key) { cc.cb_token = cfg.cb_token; cc.cb_aes_key = cfg.cb_aes_key; changed = true; }
+      if (!cbReady(conn.type, cc) && cbReady(src.type, cfg)) { cc.cb_token = cfg.cb_token; if (cfg.cb_aes_key) cc.cb_aes_key = cfg.cb_aes_key; else delete cc.cb_aes_key; changed = true; }
       if (!cc.write_secret && cfg.write_secret) { cc.write_secret = cfg.write_secret; changed = true; }
       if (changed) dirSources.update.run(conn.label, JSON.stringify(cc), conn.enabled, conn.id);
       // 映射挪到连接上：不参与任何组织的同步 / 移出，只作为「企业 + UserId → 账号」的认人依据，以后套用时认回同一账号
@@ -2542,13 +2546,17 @@ router.post('/admin/orgs/:sid/folder-credentials/:cid', requireAdmin(2), (req, r
 router.post('/admin/folder-dir-sources/:id/create-orgs', requireAdmin(2), async (req, res) => {
   const conn = folderConnFor(req, res); if (!conn) return;
   const ccfg = parseJ(conn.config) || {};
+  const feishu = conn.type === 'feishu';
+  // 部门 ID：企业微信是正整数；飞书是 open_department_id 字符串（根部门 "0" 不能建成组织）
   const depts = (Array.isArray(req.body?.depts) ? req.body.depts : []).slice(0, 100)
-    .map(d => ({ id: parseInt(d && d.id, 10), name: String((d && d.name) || '').trim().slice(0, 60) })).filter(d => d.id > 0);
+    .map(d => ({ id: feishu ? String((d && d.id) || '').trim() : parseInt(d && d.id, 10), name: String((d && d.name) || '').trim().slice(0, 60) }))
+    .filter(d => feishu ? /^[A-Za-z0-9_-]{1,64}$/.test(d.id) && d.id !== '0' : d.id > 0);
   if (!depts.length) return res.status(400).json({ error: '请勾选要建成组织的部门' });
   const bindCreds = req.body?.bind_creds !== false;
+  const credKey = feishu ? 'FEISHU_APP_ID' : 'WECOM_CORP_ID';
   const creds = bindCreds ? oauthProviders.byFolder.all(conn.folder_id).filter(c => {
-    if (c.platform !== 'wecom') return false;
-    try { return String(JSON.parse(c.config || '{}').WECOM_CORP_ID || '').toLowerCase() === String(ccfg.corp_id || '').toLowerCase(); } catch (_) { return false; }
+    if (c.platform !== conn.type) return false;
+    try { return String(JSON.parse(c.config || '{}')[credKey] || '').toLowerCase() === String(ccfg.corp_id || '').toLowerCase(); } catch (_) { return false; }
   }) : [];
   const created = [], skipped = [], seen = new Set();
   for (const d of depts) {
@@ -2718,9 +2726,13 @@ router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit:
 //   和企业微信一样：不逐条改库，只记事件 + 防抖后跑一次全量同步
 const FEISHU_SYNC_EVENTS = /^contact\.(user|department|scope)\./;
 router.post('/public/dirsync/feishu/:id', express.text({ type: () => true, limit: '256kb' }), (req, res) => {
-  const src = dirSources.get.get(req.params.id);
+  // v3.5.60：地址可以是组织自己的同步源、文件夹连接，或迁移前的旧同步源（alias）/ 套用 id（都转到文件夹连接）
+  let src = dirSources.get.get(req.params.id);
+  if (!src) { const al = db.prepare('SELECT conn_id FROM dir_source_alias WHERE old_id=?').get(req.params.id); if (al) src = dirSources.get.get(al.conn_id); }
+  if (src && src.parent_id) src = dirSources.get.get(src.parent_id);
   if (!src || src.type !== 'feishu') return res.status(404).json({ error: 'not configured' });
   const cfg = drvOf('feishu').effectiveCfg(src);
+  const targets = isFolderConn(src) ? dirSources.children.all(src.id) : [src];
   if (!cfg.cb_token) {
     noteVerifyAttempt(src, false, '本同步源还没保存 Verification Token（先在本系统保存，再去飞书后台保存请求地址）', req);
     return res.status(404).json({ error: 'not configured' });
@@ -2733,7 +2745,12 @@ router.post('/public/dirsync/feishu/:id', express.text({ type: () => true, limit
   const state = { ...prev, at: new Date().toISOString(), event: ev.event_type, change_type: ev.event_type, count: (prev.count || 0) + 1, ignored: false };
   if (ev.app_id && ev.app_id !== cfg.corp_id) { state.ignored = true; state.error = `事件来自应用 ${ev.app_id}，本同步源是 ${cfg.corp_id}`; }
   else if (!FEISHU_SYNC_EVENTS.test(ev.event_type) || !src.enabled) state.ignored = true;
-  else { scheduleEventSync(src.id); state.queued = true; }
+  else {
+    let queued = 0;
+    for (const t of targets) { if (!t.enabled) continue; scheduleEventSync(t.id); queued++; }
+    state.queued = queued > 0;
+    if (!queued) state.ignored = true;   // 文件夹连接还没有组织套用 / 都停用了
+  }
   dirSources.setEventState.run(JSON.stringify(state), src.id);
   res.json({ success: true });
 });

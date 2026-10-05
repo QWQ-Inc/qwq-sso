@@ -5981,11 +5981,12 @@ async function loadDirSources() {
 async function openDirSourceModal(sid, srcId, presetParent) {
   const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
   if (src && src.type === 'feishu') return openFeishuSourceModal(sid, srcId);   // v3.5.59
+  if (presetParent && _folderConnType(presetParent) === 'feishu') return openFeishuSourceModal(sid, null, presetParent);   // v3.5.60
   const c = src ? src.config : { dept_ids: [], uid_mode: 'userid', interval_hours: 0, remove_missing: true, bind_mode: 'auto' };
   // 可绑定的登录凭证（本组织的企业微信凭证 + 本站默认企业微信）
   let choices = [], conns = [], canUseFolder = false;
   if (_IS_DEV) choices = [{ key: 'wecom:demo', label: '企业微信 · A公司', corp_id: 'wwdemo' }, { key: 'wecom', label: '企业微信（本站默认凭证）', corp_id: 'wwhq' }];
-  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) { choices = r.data.bind_choices || []; conns = r.data.folder_connections || []; canUseFolder = !!r.data.can_use_folder; } }
+  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) { choices = r.data.bind_choices || []; conns = (r.data.folder_connections || []).filter(x => x.type !== 'feishu'); canUseFolder = !!r.data.can_use_folder; } }
   // 套用文件夹通讯录（v3.5.47）：企业 ID / Secret / 回调都用文件夹那份，这里只选本组织的部门等
   const parentId = src ? (src.parent_id || '') : '';
   // 同步范围：已选部门（id → 名称）
@@ -6138,12 +6139,14 @@ async function openDirSourceModal(sid, srcId, presetParent) {
   };
 }
 // ── 飞书通讯录同步源（v3.5.59）：企业自建应用的 App ID / App Secret；部门是 open_department_id（根部门 "0"）──
-async function openFeishuSourceModal(sid, srcId) {
+async function openFeishuSourceModal(sid, srcId, presetParent) {
   const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
   const c = src ? src.config : { dept_ids: [], uid_mode: 'userid', interval_hours: 0, remove_missing: true, bind_mode: 'auto' };
-  let choices = [];
+  let choices = [], conns = [], canUseFolder = false;
   if (_IS_DEV) choices = [{ key: 'feishu', label: '飞书（本站默认凭证）', corp_id: 'cli_demo1234' }];
-  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) choices = r.data.bind_choices_feishu || []; }
+  else { const r = await api('GET', '/admin/orgs/' + sid + '/dir-sources'); if (r.ok) { choices = r.data.bind_choices_feishu || []; conns = (r.data.folder_connections || []).filter(x => x.type === 'feishu'); canUseFolder = !!r.data.can_use_folder; } }
+  // 套用文件夹里的飞书通讯录（v3.5.60）：App ID / Secret / 事件订阅都用文件夹那份，这里只选本组织的部门等
+  const parentId = src ? (src.parent_id || '') : '';
   const picked = new Map((c.dept_ids || []).map(id => [String(id), (c.dept_names || {})[id] || (String(id) === '0' ? '全部（企业根部门）' : '')]));
   let visibleIds = null;
   const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
@@ -6162,9 +6165,13 @@ async function openFeishuSourceModal(sid, srcId) {
         <li>要用飞书登录：「安全设置 → 重定向 URL」加上 <code>${esc(location.origin)}/auth/feishu/callback</code>，并在「组织管理」给本组织加一个同 App ID 的飞书登录凭证（或配本站默认飞书凭证）。</li>
         <li>「版本管理与发布」创建版本并发布（权限改了要重新发布才生效）。</li>
       </ol></details>
+    ${src ? (parentId ? `<div style="margin-top:10px;padding:8px 10px;background:var(--sf2);border-radius:4px;font-size:12px;color:var(--tx);">📁 套用文件夹通讯录「${esc(src.parent_label || '（已删除）')}」<span style="color:var(--txd);">${esc(c.corp_id || '')}</span>——App ID / Secret / 事件订阅在文件夹上改。</div>` : '')
+      : (conns.length ? `${lab('通讯录来源')}<select id="fsm-parent" style="${inp}"><option value="">本组织单独配置（自己填 App ID / Secret）</option>${conns.map(x => `<option value="${esc(x.id)}" data-app="${esc(x.corp_id)}" ${canUseFolder ? '' : 'disabled'}>📁 套用文件夹通讯录：${esc(x.label)}（${esc(x.corp_id)}）${x.enabled ? '' : ' · 已停用'}${canUseFolder ? '' : ' · 需系统管理员'}</option>`).join('')}</select>` : '')}
     ${lab('名称（如「A 公司飞书」）')}<input id="fsm-label" value="${esc(src ? src.label : '')}" placeholder="飞书" style="${inp}">
+    <div id="fsm-conn">
     ${lab('App ID')}<input id="fsm-app" value="${esc(c.corp_id || '')}" placeholder="cli_ 开头" style="${inp}">
     ${lab('App Secret')}<input id="fsm-secret" type="password" autocomplete="new-password" placeholder="${src ? '已配置，留空不修改' : ''}" style="${inp}">
+    </div>
     ${lab('同步范围（勾父部门即含其全部子部门；选「全部」= 应用通讯录权限范围内所有人）')}
     <div style="display:flex;gap:6px;align-items:flex-start;">
       <div id="fsm-chips" style="flex:1;display:flex;flex-wrap:wrap;gap:6px;min-height:30px;padding:4px;border:1px solid var(--bd);border-radius:4px;"></div>
@@ -6189,7 +6196,7 @@ async function openFeishuSourceModal(sid, srcId) {
       <input id="fsm-pw" type="password" autocomplete="new-password" placeholder="${c.has_default_pw ? '已设置，留空不修改' : '留空 = 不设默认组织密码'}" style="${inp}">
       ${c.has_default_pw ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="fsm-pwclear"> 清除默认组织密码（已给成员设的不受影响）</label>' : ''}
     </div>
-    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
+    <div id="fsm-cb-box" style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
       <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 事件订阅（实时同步 · 可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">飞书通讯录一有变动就推送过来，约 10 秒后自动同步一次；不配置则只靠定时 / 手动同步。<br>
         步骤：① 飞书开发者后台「事件与回调 → 加密策略」复制 Verification Token（和 Encrypt Key，如果设了）填到下面并<b>先保存本页</b> ②「事件配置」请求地址填下面的 URL 并保存（飞书会立即校验，需要公网 HTTPS）③ 添加事件：员工信息变化、员工离职、员工入职、部门新建 / 修改 / 删除、通讯录权限范围变更（开对应权限后才能选）。</div>
@@ -6202,7 +6209,7 @@ async function openFeishuSourceModal(sid, srcId) {
       ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:6px;">${_dirEventText(src)}</div>` : ''}
     </div>
     <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="fsm-remove" ${c.remove_missing !== false ? 'checked' : ''}> 离职 / 暂停 / 移出部门的成员，同步时从本组织移出</label>
-    <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="fsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步暂停对应的飞书成员（恢复时再恢复；应用要开通「更新通讯录」）</label>
+    <label id="fsm-suspend-row" style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="fsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步暂停对应的飞书成员（恢复时再恢复；应用要开通「更新通讯录」）</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="fsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
     ${src && src.state ? `<div style="font-size:12px;margin-top:8px;">上次同步：${_dirStateText(src.state)}${src.state.error ? `<div style="color:var(--err);">${esc(src.state.error)}</div>` : ''}</div>` : ''}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
@@ -6211,8 +6218,13 @@ async function openFeishuSourceModal(sid, srcId) {
   </div>`;
   document.body.appendChild(ov);
   const $ = (q) => ov.querySelector(q);
+  const curParent = () => parentId || ($('#fsm-parent') ? $('#fsm-parent').value : '');
+  const curApp = () => { const p = curParent(); if (!p) return $('#fsm-app').value.trim(); if (parentId) return c.corp_id || ''; const o = $('#fsm-parent').selectedOptions[0]; return o ? o.dataset.app : ''; };
+  const applyParent = () => { const on = !!curParent(); ['#fsm-conn', '#fsm-cb-box', '#fsm-suspend-row'].forEach(q => { const el = $(q); if (el) el.style.display = on ? 'none' : ''; }); };
+  if (presetParent && $('#fsm-parent')) $('#fsm-parent').value = presetParent;
+  applyParent();
   const renderBindList = () => {   // 只列同一 App ID 的凭证
-    const app = $('#fsm-app').value.trim();
+    const app = curApp();
     const list = choices.filter(x => !app || x.corp_id === app);
     $('#fsm-bindlist').innerHTML = list.length ? list.map(x => `<label style="display:block;font-size:13px;color:var(--tx);margin:3px 0;"><input type="checkbox" class="fsm-bindcb" value="${esc(x.key)}" ${bindSet.has(x.key)?'checked':''}> ${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.corp_id || '')}</span></label>`).join('')
       : '<div style="font-size:12px;color:var(--txd);">本组织没有同一 App ID 的飞书登录凭证（可在组织卡片「+ 添加凭证」加一个飞书凭证）。</div>';
@@ -6220,6 +6232,7 @@ async function openFeishuSourceModal(sid, srcId) {
   };
   renderBindList();
   $('#fsm-app').oninput = renderBindList;
+  if ($('#fsm-parent')) $('#fsm-parent').onchange = () => { applyParent(); renderBindList(); visibleIds = null; $('#fsm-tree').style.display = 'none'; renderChips(); };
   const renderChips = () => {
     $('#fsm-chips').innerHTML = [...picked].map(([id, name]) => { const bad = visibleIds && !visibleIds.has(id); return `<span ${bad ? 'title="这个应用看不到该部门（不在通讯录权限范围里），同步会报无权限"' : ''} style="font-size:12px;background:var(--sf2);border:1px solid ${bad ? 'var(--err)' : 'var(--bd)'};${bad ? 'color:var(--err);' : ''}border-radius:12px;padding:2px 4px 2px 10px;">${bad ? '⚠ ' : ''}${esc(name || id)} <button data-id="${esc(id)}" class="fsm-chipx" style="border:none;background:none;cursor:pointer;color:var(--txd);">×</button></span>`; }).join('') || '<span style="font-size:12px;color:var(--txd);padding:3px;">未选择（将同步「全部」）</span>';
     ov.querySelectorAll('.fsm-chipx').forEach(b => b.onclick = () => { picked.delete(b.dataset.id); renderChips(); syncTree(); });
@@ -6231,7 +6244,7 @@ async function openFeishuSourceModal(sid, srcId) {
     let nodes;
     if (_IS_DEV) nodes = [{ id: '0', name: '全部（企业根部门）', parent: null, order: -1 }, { id: 'od-rd', name: '研发部', parent: '0' }, { id: 'od-fe', name: '前端组', parent: 'od-rd' }];
     else {
-      const { ok, data } = await api('POST', '/admin/orgs/' + sid + '/dir-sources/scope-tree', { type: 'feishu', source_id: src ? src.id : undefined, corp_id: $('#fsm-app').value.trim(), secret: $('#fsm-secret').value.trim() });
+      const { ok, data } = await api('POST', '/admin/orgs/' + sid + '/dir-sources/scope-tree', curParent() && !src ? { type: 'feishu', parent_id: curParent() } : { type: 'feishu', source_id: src ? src.id : undefined, corp_id: $('#fsm-app').value.trim(), secret: $('#fsm-secret').value.trim() });
       if (!ok) { box.innerHTML = '<span style="color:var(--err);">' + esc(data.error || '加载失败') + '</span>'; return; }
       nodes = data.nodes || [];
     }
@@ -6261,11 +6274,16 @@ async function openFeishuSourceModal(sid, srcId) {
       bind_mode: $('#fsm-bindmode').value, bind_providers: [...bindSet],
       cb_token: $('#fsm-cb-token').value.trim(),
     };
+    if (curParent()) {   // 套用文件夹通讯录：连接字段不在组织上
+      if (!src) body.parent_id = curParent();
+      ['corp_id', 'secret', 'push_suspend', 'cb_token'].forEach(k => delete body[k]);
+    } else {
     if (!/^cli_[A-Za-z0-9]{4,60}$/.test(body.corp_id)) { showToast('请填写正确的飞书 App ID（cli_ 开头）'); return; }
     const key = $('#fsm-cb-key').value.trim();
     if (key) body.cb_aes_key = key;
     if ($('#fsm-cb-keyclear')?.checked) body.cb_aes_clear = true;
     if ($('#fsm-cb-clear')?.checked) { body.cb_clear = true; delete body.cb_token; delete body.cb_aes_key; }
+    }
     const pw = $('#fsm-pw').value;
     if (pw) { if (pw.length < 6) { showToast('默认组织密码至少 6 位'); return; } body.default_password = pw; }
     if ($('#fsm-pwclear')?.checked) body.clear_default_password = true;
@@ -6685,7 +6703,7 @@ async function openFolderCredOrgs(fid, cid) {
   if (!ok) { showToast(data.error || '保存失败'); return; }
   showToast('已保存'); loadOauthSubjects();
 }
-async function openConnUseModal(fid, connId) {
+async function openConnUseModal(fid, connId) {   // 飞书连接也走这里：openDirSourceModal 会按连接类型转到飞书配置页
   const f = _orgFolders.find(x => x.id === fid); const x = (f?.dir_connections || []).find(c => c.id === connId); if (!x) return;
   const used = new Set((x.uses || []).map(u => u.subject_id));
   const orgs = _oauthSubjects.filter(o => o.folder_id === fid && !used.has(o.id));
@@ -6699,21 +6717,22 @@ async function openConnUseModal(fid, connId) {
 const _orgNameKey = (n) => String(n || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
 async function openConnCreateOrgs(fid, connId) {
   const f = _orgFolders.find(x => x.id === fid); const x = (f?.dir_connections || []).find(c => c.id === connId); if (!x) return;
-  showToast('正在从企业微信加载部门…');
+  const feishu = x.type === 'feishu';
+  showToast(`正在从${feishu ? '飞书' : '企业微信'}加载部门…`);
   const { ok, data } = await api('POST', `/admin/folder-dir-sources/${connId}/scope-tree`, {});
   if (!ok) { showToast('加载部门失败：' + (data.error || '')); return; }
-  const nodes = data.nodes || [];
+  const nodes = (data.nodes || []).filter(n => !(feishu && String(n.id) === '0'));   // 飞书根部门「全部」不能建成组织
   const byParent = {}; nodes.forEach(n => { (byParent[n.parent] = byParent[n.parent] || []).push(n); });
   const ids = new Set(nodes.map(n => n.id));
   const roots = nodes.filter(n => !ids.has(n.parent));
   const taken = new Set((_oauthSubjects || []).map(o => _orgNameKey(o.name)));
   const row = (n, d) => { const dup = taken.has(_orgNameKey(n.name || ('部门 ' + n.id)));
-    return `<label style="display:block;padding:2px 0 2px ${d * 16}px;${dup ? 'color:var(--txd);' : ''}"><input type="checkbox" data-id="${n.id}" data-name="${esc(n.name || '')}"${dup ? ' disabled' : ''}> ${esc(n.name || ('部门 #' + n.id))} <span style="color:var(--txd);font-size:11px;">#${n.id}</span>${dup ? ' <span style="color:var(--warn);font-size:11px;">已有同名组织</span>' : ''}</label>` + (byParent[n.id] || []).map(c => row(c, d + 1)).join(''); };
+    return `<label style="display:block;padding:2px 0 2px ${d * 16}px;${dup ? 'color:var(--txd);' : ''}"><input type="checkbox" data-id="${esc(String(n.id))}" data-name="${esc(n.name || '')}"${dup ? ' disabled' : ''}> ${esc(n.name || ('部门 #' + n.id))} ${feishu ? '' : `<span style="color:var(--txd);font-size:11px;">#${n.id}</span>`}${dup ? ' <span style="color:var(--warn);font-size:11px;">已有同名组织</span>' : ''}</label>` + (byParent[n.id] || []).map(c => row(c, d + 1)).join(''); };
   const ov = await _pickOverlay('按部门建组织', `<div style="font-size:12px;color:var(--txd);margin-bottom:6px;">勾选的每个部门建一个同名组织（放进本文件夹），套用这份通讯录、只同步该部门（含子部门）；同企业的文件夹登录凭证一并设定给新组织使用。${data.limited ? '<br><span style="color:var(--warn);">⚠️ 这个 Secret 读不到部门名，组织名会用「部门 #ID」，建好后可改名。</span>' : ''}</div>
     <div style="max-height:46vh;overflow:auto;border:1px solid var(--bd);border-radius:4px;padding:6px 8px;">${roots.map(n => row(n, 0)).join('') || '没有可见的部门'}</div>
     <label style="display:block;margin-top:8px;font-size:13px;"><input type="checkbox" id="co-run" checked> 建好后立即同步</label>`, '建组织');
   if (!ov) return;
-  const depts = [...ov.querySelectorAll('input[data-id]:checked')].map(i => ({ id: +i.dataset.id, name: i.dataset.name }));
+  const depts = [...ov.querySelectorAll('input[data-id]:checked')].map(i => ({ id: feishu ? i.dataset.id : +i.dataset.id, name: i.dataset.name }));
   const run = ov.querySelector('#co-run').checked; ov.remove();
   if (!depts.length) { showToast('没有勾选部门'); return; }
   if (!await uiConfirm(`建 ${depts.length} 个组织：${depts.map(d => d.name || ('部门 #' + d.id)).join('、')}？`, { title: '按部门建组织' })) return;
@@ -6744,9 +6763,22 @@ async function runFolderConn(id) {
   showToast((data.results || []).map(r => `${r.org_name || ''}：${r.state ? '在册 ' + r.state.total + '，新加入 ' + r.state.added + '，移出 ' + r.state.removed : '失败 ' + r.error}`).join('；'));
   loadOauthSubjects();
 }
-function openDirConnModal(fid, connId) {
+// 文件夹连接的类型（v3.5.60）
+function _folderConnType(connId) {
+  for (const f of (_orgFolders || [])) { const x = (f.dir_connections || []).find(c => c.id === connId); if (x) return x.type; }
+  return null;
+}
+async function openDirConnModal(fid, connId, type) {
   const f = _orgFolders.find(x => x.id === fid);
   const x = connId ? ((f && f.dir_connections) || []).find(c => c.id === connId) : null;
+  if (x && x.type === 'feishu') return openFeishuConnModal(fid, connId);
+  if (!x && !type) {   // 新建：先选类型
+    const ov = await _pickOverlay('添加文件夹通讯录', `<label style="display:block;padding:4px 0;"><input type="radio" name="dc-type" value="wecom" checked> 企业微信</label>
+      <label style="display:block;padding:4px 0;"><input type="radio" name="dc-type" value="feishu"> 飞书（企业自建应用）</label>`, '下一步');
+    if (!ov) return;
+    const t = ov.querySelector('input[name=dc-type]:checked').value; ov.remove();
+    if (t === 'feishu') return openFeishuConnModal(fid);
+  }
   const c = x ? x.config : {};
   const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
   const lab = (t) => `<label style="display:block;font-size:12px;color:var(--txd);margin:10px 0 4px;">${t}</label>`;
@@ -6784,6 +6816,54 @@ function openDirConnModal(fid, connId) {
     if (aes) body.cb_aes_key = aes;
     else if (body.cb_token && !c.cb_aes_key) { showToast('请同时填写 EncodingAESKey（可点「随机生成」）'); return; }
     if ($('#dcm-cb-clear')?.checked) { body.cb_clear = true; delete body.cb_token; }
+    const { ok, data } = x ? await api('PATCH', '/admin/folder-dir-sources/' + x.id, body) : await api('POST', '/admin/org-folders/' + fid + '/dir-sources', body);
+    if (!ok) { showToast(data.error || '保存失败'); return; }
+    ov.remove(); showToast('已保存'); loadOauthSubjects();
+  };
+}
+
+// 文件夹上的飞书通讯录连接（v3.5.60）：App ID / Secret / 事件订阅只在这里存一份，文件夹里的组织各自套用、各选部门
+function openFeishuConnModal(fid, connId) {
+  const f = _orgFolders.find(x => x.id === fid);
+  const x = connId ? ((f && f.dir_connections) || []).find(c => c.id === connId) : null;
+  const c = x ? x.config : {};
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
+  const lab = (t) => `<label style="display:block;font-size:12px;color:var(--txd);margin:10px 0 4px;">${t}</label>`;
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:420px;max-width:560px;text-align:left;">
+    <h3 style="margin-bottom:6px;">${x ? '编辑文件夹飞书通讯录' : '添加文件夹飞书通讯录'} · ${esc(f ? f.name : '')}</h3>
+    <div style="font-size:11px;color:var(--txd);line-height:1.7;">飞书企业自建应用的 App ID、App Secret、事件订阅只在这里存一份；文件夹里的组织在自己的「+ 通讯录同步」里选「套用文件夹通讯录」，各自挑要同步的部门。应用的「通讯录权限范围」要覆盖各组织要同步的部门。</div>
+    ${lab('名称')}<input id="fcm-label" value="${esc(x ? x.label : '')}" placeholder="飞书" style="${inp}">
+    ${lab('App ID')}<input id="fcm-app" value="${esc(c.corp_id || '')}" placeholder="cli_ 开头" style="${inp}" ${x ? 'readonly' : ''}>
+    ${x ? '<div style="font-size:11px;color:var(--txd);margin-top:2px;">App ID 不能改（open_id 跟着应用走）；换应用请另建一份。</div>' : ''}
+    ${lab('App Secret')}<input id="fcm-secret" type="password" autocomplete="new-password" placeholder="${x ? '已配置，留空不修改' : ''}" style="${inp}">
+    <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
+      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 事件订阅（可选）</div>
+      <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">飞书后台「事件与回调 → 事件配置」填下面的请求地址，订阅通讯录的员工 / 部门变更事件；推过来后套用它的各组织都会自动同步一次。</div>
+      ${lab('请求地址（填到飞书）')}
+      <div style="display:flex;gap:6px;"><input id="fcm-cb-url" readonly value="${x ? esc(location.origin + x.callback_path) : ''}" placeholder="保存后生成" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" ${x ? '' : 'disabled'} onclick="_dsmCopy('fcm-cb-url')">复制</button></div>
+      ${lab('Verification Token')}<input id="fcm-cb-token" value="${esc(c.cb_token || '')}" placeholder="从飞书后台「加密策略」复制" style="${inp}">
+      ${lab('Encrypt Key（飞书后台设了才填）')}<input id="fcm-cb-key" value="" placeholder="${c.cb_aes_key ? '已设置，留空不修改' : '没设就留空'}" style="${inp}">
+      ${c.cb_aes_key ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="fcm-cb-keyclear"> 清除 Encrypt Key（飞书后台也要一起去掉）</label>' : ''}
+      ${c.cb_token ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="fcm-cb-clear"> 关闭事件订阅（清除 Token / Encrypt Key）</label>' : ''}
+      ${x ? `<div style="font-size:11px;color:var(--txd);margin-top:6px;">${_dirEventText(x)}</div>` : ''}
+    </div>
+    <label style="display:block;margin-top:10px;font-size:13px;color:var(--tx);"><input type="checkbox" id="fcm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步暂停对应的飞书成员（应用要开「更新通讯录」权限）</label>
+    <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="fcm-enabled" ${!x || x.enabled ? 'checked' : ''}> 启用</label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;"><button class="btn" id="fcm-cancel">取消</button><button class="btn primary" id="fcm-save">保存</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const $ = (q) => ov.querySelector(q);
+  $('#fcm-cancel').onclick = () => ov.remove();
+  $('#fcm-save').onclick = async () => {
+    const body = { type: 'feishu', label: $('#fcm-label').value.trim(), corp_id: $('#fcm-app').value.trim(), secret: $('#fcm-secret').value.trim(),
+      push_suspend: $('#fcm-suspend').checked, enabled: $('#fcm-enabled').checked, cb_token: $('#fcm-cb-token').value.trim() };
+    if (!x && !/^cli_/.test(body.corp_id)) { showToast('App ID 应以 cli_ 开头'); return; }
+    if (!x && !body.secret) { showToast('请填写 App Secret'); return; }
+    const key = $('#fcm-cb-key').value.trim();
+    if (key) body.cb_aes_key = key;
+    if ($('#fcm-cb-keyclear')?.checked) body.cb_aes_clear = true;
+    if ($('#fcm-cb-clear')?.checked) { body.cb_clear = true; delete body.cb_token; delete body.cb_aes_key; }
     const { ok, data } = x ? await api('PATCH', '/admin/folder-dir-sources/' + x.id, body) : await api('POST', '/admin/org-folders/' + fid + '/dir-sources', body);
     if (!ok) { showToast(data.error || '保存失败'); return; }
     ov.remove(); showToast('已保存'); loadOauthSubjects();

@@ -1575,7 +1575,7 @@ GET/POST /api/public/dirsync/wecom/:source_id      # 公开，无需鉴权；靠
 - `GET /api/admin/orgs/:sid/dir-sources` 多回 `bind_choices_feishu`；`types` 含 `feishu`。
 - 事件订阅地址：`POST /api/public/dirsync/feishu/:id`（同步源视图 `callback_path`）。`url_verification` 原样回 `{challenge}`；配了 Encrypt Key 时内容为 `{"encrypt":…}`（AES-256-CBC，key = sha256(Encrypt Key)，iv = 密文前 16 字节），事件推送校验 `X-Lark-Signature` = sha256(timestamp + nonce + Encrypt Key + 原始 body)；`header.token` 必须等于 Verification Token；`header.app_id` 与 App ID 不符的只记录不同步。`contact.user.*` / `contact.department.*` / `contact.scope.*` 事件防抖后跑一次全量同步。校验失败原因记在 `event_state.last_verify`。
 - 注销与删除的交接项、「异常账号」补绑 / 删除、「残留成员」都支持飞书成员（`memberStatus`：在职 / 暂停 / 离职 / 已不存在）。残留成员批量操作请求体加 `platform: "feishu"`，确认语为「禁用|删除 N 个飞书成员」；同一次只能处理同一种平台。
-- 暂不支持：飞书通讯录放到组织文件夹上共用（`POST /api/admin/org-folders/:id/dir-sources` 只收企业微信）。
+- **文件夹共用（v3.5.60）**：`POST /api/admin/org-folders/:id/dir-sources` 传 `type:'feishu'` + App ID / Secret / 事件订阅字段，建文件夹飞书连接（同一文件夹同一 App ID 只能一份；有组织套用时不能改 App ID）。组织套用：`POST /api/admin/orgs/:sid/dir-sources {parent_id, dept_ids:['od-…']}`（类型跟连接走，传了别的 `type` 400）。套用之间按 open_id 互认，同一人同在两个组织的部门只有一个账号。连接的事件地址 `/api/public/dirsync/feishu/<连接 id>` 收到通讯录事件后，套用它的各组织各同步一次；用套用 id 或迁移前的旧同步源 id 推过来也转到连接。迁移（`/org-folders/:id/migrate`）、按部门建组织（`/folder-dir-sources/:id/create-orgs`，部门 id 为字符串、根 `"0"` 跳过，只把同 App ID 的文件夹飞书凭证设定给新组织）与企业微信一致。
 - 常见错误码：10003 / 10014（App ID / Secret 不对）、99991672（应用没开权限或没发布版本）、40004（部门不在通讯录权限范围）、41050（成员不在权限范围）。
 
 > v3.5.59 同时修了飞书**登录**：`authen/v2/oauth/token` 的 `access_token` 在响应顶层，之前从 `data.access_token` 取，导致飞书登录一直失败；现在失败时登录页显示飞书返回的错误码和原因，凭证没填回调地址时按当前访问域名拼 `/auth/feishu/callback`。

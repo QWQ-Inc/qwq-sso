@@ -6,16 +6,16 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.59**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.60**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.59，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.60，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
-- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、**飞书通讯录同步**（企业自建应用，v3.5.59）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
+- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、**飞书通讯录同步**（企业自建应用，v3.5.59；v3.5.60 起也可放在组织文件夹上）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
 - **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、系统通知（经消息分发推到 Webhook / 群机器人）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接项系统核验 + 三方账号摘除封存 + 审批 + 批量操作）、账号合并（可撤销）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
@@ -438,6 +438,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.60 飞书通讯录也能放在组织文件夹上（用户反馈）
+
+三级版本。用户问 v3.5.59「为什么文件夹不行？」——那是范围取舍不是技术限制，用户：「下一班做掉。」
+- 后端（api.js）：文件夹连接建 / 改 / 部门树 / 迁移 / 按部门建组织全部按 `conn.type` 走驱动（`drvOf`）。`cbReady(type, cfg)`（飞书只要 Token 即就绪）；`dirConnView` 回调地址按类型；`buildDirConnCfg(b, old, type)`；同文件夹同 App ID 只能一份，有套用时不能改 App ID。组织侧套用：`useType = conn.type`，传了不一样的 type → 400；套用的 scope-tree 也用连接的类型。迁移的候选覆盖所有 `DIR_TYPES`，并入已有连接时回调字段按 `cbReady` 带过去。create-orgs：飞书部门 id 保持字符串、跳过根 `"0"`，凭证按 `FEISHU_APP_ID` 筛同 App ID 的文件夹飞书凭证。`/api/public/dirsync/feishu/:id`：先查 `dir_source_alias`、套用 id → 父连接，连接收到事件后给所有启用套用各 `scheduleEventSync`（actor `feishu:event`）。
+- `dirsync-feishu.js`：`siblingLink`——同一父连接下的其他套用已映射这个 open_id → 同一账号（与企业微信 v3.5.47 同理）。
+- 前端：`openFeishuConnModal(fid, connId)`（`fcm-*`：App ID 编辑时只读、Secret 打码、事件订阅 URL / Token / Encrypt Key + 清除、暂停同步、启用）；`openDirConnModal` 新建时先用 `_pickOverlay` 选类型、编辑飞书连接转过去；`openFeishuSourceModal(sid, srcId, presetParent)` 加「通讯录来源」`#fsm-parent`（选套用后隐藏 App ID / Secret / 事件订阅、绑定只列连接 App ID 的凭证），`openDirSourceModal` 预选飞书连接时转过去、企业微信弹窗的来源列表不含飞书连接；`openConnCreateOrgs` 飞书不显示根「全部」、id 保持字符串。
+- ⚠️ 测试：run36f 37 项（权限、App ID 校验、打码、同 App ID 重复、编辑不覆盖、组织侧可见、部门树、组织管理员不能套用、不在文件夹 / 类型不符 400、套用不存连接字段、两组织同步 + 同一人一个号、union_id、绑定、连接 / 套用 id 校验 challenge、Token 错、事件后两组织各同步、连接停用套用 400、迁移提示 / 并入 / 成员保留 / 旧地址可用 / 再套用不建号、有套用不能改 App ID、按部门建组织跳过根 + 只设定同 App ID 凭证 + 不重复建号、有套用不能删）；playwright ui36f 13 项（选类型、建连接、面板显示、编辑只读打码、套用隐藏连接字段、保存只存部门、编辑套用、按部门建组织，零 JS 报错、无原生弹窗）；回归 run35f 44（「文件夹暂不支持飞书」改为能建）/ ui35f 12 / run22 62 / run 35。run24（2 项）/ run25（3 项）在 v3.5.58.1 代码上同样失败，是测试脚本与当前种子数据脱节，与本版无关。真实飞书未联调。
 
 ## v3.5.59 飞书通讯录同步 + 修飞书登录（用户反馈）
 
