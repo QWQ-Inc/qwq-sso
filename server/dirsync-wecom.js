@@ -22,6 +22,7 @@
 //     靠 dir_sync_applied 记住「同步上次给他设了什么」来判断是不是被人动过；除非强确认的「全部覆盖同步」（force）
 const crypto = require('crypto');
 const { db, users, oauth, orgMembers, oauthSubjects } = require('./db');
+const { importWecomContacts } = require('./contacts');
 
 const linkGet    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND ext_id=?');
 const linkUpsert = db.prepare(`INSERT INTO dir_source_links (source_id, ext_id, user_id, depts, ext_name, updated_at) VALUES (?,?,?,?,?,datetime('now'))
@@ -393,6 +394,8 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       if (corpUsers(cfg.corp_id, extId, { scope: corpSc }).some(u => u.id !== user.id)) out.duplicates = (out.duplicates || 0) + 1;   // 以前留下的重复账号，等管理员合并
       for (const p of bindProviders) applyBind(user, extId, p);
       seenUsers.add(user.id);
+      // 多联系方式（v3.5.63）：把企业微信成员的手机/个人邮箱/企业邮箱灌进 user_contacts（去重+上限按组织，静默跳过）
+      if (!m._idOnly) { try { importWecomContacts(user.id, m, subject.id); } catch (_) {} }
       const existing = orgMembers.get.get(subject.id, user.id);
       if (!existing) {
         let orgUid = null;

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.63**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.64**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.64 企业微信通讯录「主动同步」也灌多联系方式（打通 syncWecom 与 user_contacts）（用户反馈）
+
+四级补丁（承接 v3.5.63）。用户问：能不能像拉通讯录一样直接把成员手机/邮箱传回来，不靠用户登录授权？
+
+**核查发现：主动拉通讯录能力早就有**——`server/dirsync-wecom.js`（v3.5.39+）已完整实现：用通讯录同步 Secret 主动拉全员（`fetchDirectory`：`user/list`，受限自动降级 `list_id`+`user/get`）→ 建号（`syncWecom`）→ 绑定 UserId → 加入组织 → 离职移出（`remove_missing`）；**连回调实时同步都做好了**（`cbVerify`/`cbDecrypt`/`cbEncrypt`/`xmlField`，企业微信「接收事件服务器」的 URL 握手 + AES-256-CBC 解密；回调去抖后调 `runDirSource`→`syncWecom`）。管理端「组织管理 → 成员 → 通讯录同步」里配置。
+
+**唯一缺口**：`syncWecom` 建号时只把 `email||biz_mail` 之一塞进 `users.email` 主字段，没把多出来的手机/个人邮箱/企业邮箱写进 v3.5.63 新建的 `user_contacts` 多联系方式表——于是「主动同步进来的人」在多联系方式里是空的，只有「登录过的人」才有。
+
+**本版修**：`syncWecom` 在解析出 user 后调 `importWecomContacts(user.id, m, subject.id)`（`dirsync-wecom.js` 第 ~396 行，`!m._idOnly` 才灌——只拿到 UserId 的受限情况没有联系方式字段）。于是主动同步 / 回调实时 / 登录灌入三条路的联系方式数据统一，上限仍按组织（`contactLimits` 读 subject 的 max_phones/max_emails）、去重、静默跳过。
+- ⚠️ 测试：`scratchpad/dirsync-contacts-test.js`（node:sqlite 兜 syncWecom 用到的表 + stub ./contacts spy）6 项全过：同步建 2 号、正常成员触发 importWecomContacts 且带 biz_mail + 正确 subjectId、`_idOnly` 成员不灌。`contacts-test.js` 18 项仍全过。
+- ⚠️ 真实企业微信通讯录链路无凭据无法端到端（同既有约束）；靠 syncWecom 集成单测 + importWecomContacts 单测覆盖。
 
 ## v3.5.63 企业微信回传成员联系方式 + 成员多手机/多邮箱（上限按组织可覆盖）（用户反馈）
 
