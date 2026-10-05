@@ -1799,6 +1799,7 @@ async function loadMe() {
             <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('tags_add')">加标签…</button>
             <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('tags_remove')">去标签…</button>
             <button class="btn" style="font-size:11px;padding:3px 9px;" onclick="userBulk('points')">调整积分…</button>
+            <button class="btn" id="user-bulk-merge" style="font-size:11px;padding:3px 9px;display:none;" onclick="userBulkMerge()" title="把勾选的账号合并成一个（仅超级管理员）">合并为一人…</button>
             <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--warn);" onclick="userBulk('disable')">停用…</button>
             <button class="btn" style="font-size:11px;padding:3px 9px;color:var(--err);" onclick="userBulk('delete')">删除…</button>
           </div>
@@ -4819,6 +4820,8 @@ function _userBulkSync() {
   const bar = document.getElementById('user-bulk'); if (!bar) return;
   bar.style.display = _uSel.size ? 'flex' : 'none';
   document.getElementById('user-bulk-n').textContent = _uSel.size;
+  const mb = document.getElementById('user-bulk-merge');
+  if (mb) mb.style.display = (typeof adminRole !== 'undefined' && adminRole === 'superadmin' && _uSel.size >= 2) ? '' : 'none';
   const all = document.getElementById('user-sel-all');
   if (all) { const rows = _admUserRows.filter(u => !u.is_public); all.checked = rows.length > 0 && rows.every(u => _uSel.has(u.id)); }
 }
@@ -4873,6 +4876,68 @@ async function userBulk(act) {
   if (fails.length) await uiAlert('以下没有成功：\n' + fails.map(x => `· ${x.name || x.id} ${x.uid || ''}：${x.error}`).join('\n'), { title: '部分失败' });
   fails.length ? (() => { _uSel.clear(); fails.forEach(x => _uSel.set(x.id, sel.find(u => u.id === x.id) || { id: x.id })); })() : _uSel.clear();
   loadAdmUsers(document.getElementById('adm-user-search')?.value.trim() || '');
+}
+
+// ── 勾选合并（v3.5.61）：选保留账号 → 名单确认 → 输入「合并账号」；可在期限内到「注销与删除 → 账号合并记录」撤销 ──
+async function userBulkMerge() {
+  const sel = [..._uSel.values()];
+  if (sel.length < 2) { showToast('至少勾选两个账号'); return; }
+  const { ok, data } = await api('POST', '/admin/users/merge/preview', { ids: sel.map(u => u.id) });
+  if (!ok) { await uiAlert(data?.error || '加载失败', { title: '不能合并' }); return; }
+  if (data.conflict) { await uiAlert(data.conflict, { title: '不能合并' }); return; }
+  const us = data.users;
+  const def = (us.find(u => u.id === data.suggested && u.can_be_target) || us.find(u => u.can_be_target) || {}).id;
+  const facts = u => [u.admin ? '<b style="color:var(--ac);">管理员</b>' : '', u.has_pw ? '有密码' : '', u.kyc ? '已实名' + (u.kyc_name ? '（' + esc(u.kyc_name) + '）' : '') : '', u.twofa ? '两步验证' : '',
+    u.passkeys ? 'Passkey ' + u.passkeys : '', u.bindings ? '三方绑定 ' + u.bindings : '', u.orgs ? '组织 ' + u.orgs : '', u.points ? '积分 ' + u.points : '', u.status === 'disabled' ? '<span style="color:var(--warn);">已停用</span>' : ''].filter(Boolean).join(' · ') || '<span style="color:var(--txd);">没有登录方式和资料</span>';
+  const row = u => `<label class="um-row" data-id="${esc(u.id)}" style="display:flex;gap:8px;align-items:flex-start;padding:7px 4px;border-bottom:1px solid var(--bd);${u.can_be_target ? 'cursor:pointer;' : 'opacity:.6;'}">
+      <input type="radio" name="um-keep" value="${esc(u.id)}" ${u.id === def ? 'checked' : ''} ${u.can_be_target ? '' : 'disabled'} style="margin-top:3px;">
+      <span style="flex:1;min-width:0;"><b>${esc(u.name || '（无名）')}</b> <span style="color:var(--txd);font-size:11px;">${esc(u.uid)}</span>${u.id === def ? ' <span class="badge ac" style="font-size:10px;">建议保留</span>' : ''}
+        <span class="um-tag" style="font-size:10px;margin-left:4px;"></span>
+        <div style="font-size:11px;color:var(--txd);word-break:break-all;">${esc([u.email, u.phone].filter(Boolean).join(' · ') || '无邮箱 / 手机')}</div>
+        <div style="font-size:11px;color:var(--tx);">${facts(u)}</div>
+        ${u.target_error ? `<div style="font-size:11px;color:var(--err);">不能作保留账号：${esc(u.target_error)}</div>` : ''}
+        <div class="um-err" style="font-size:11px;color:var(--err);"></div></span></label>`;
+  const ov = document.createElement('div'); ov.className = 'ui-dlg-mask';
+  ov.innerHTML = `<div class="ui-dlg" style="max-width:560px;"><div class="ui-dlg-title">合并 ${us.length} 个账号为一人</div>
+    <div class="ui-dlg-msg" style="white-space:normal;">
+      <div style="font-size:12px;color:var(--txd);line-height:1.7;margin-bottom:6px;">选一个<b>保留账号</b>，其余账号的三方绑定、通讯录映射、组织成员、Passkey、备忘录、积分等都转到它上面，然后被删除；保留账号缺的邮箱 / 手机 / 实名会从它们那里补上。${data.undo_days ? `合并后 ${data.undo_days} 天内可到「注销与删除 → 账号合并记录」撤销。` : '<b style="color:var(--warn);">当前未开启撤销日志（MERGE_UNDO_DAYS=0），合并后不能撤销。</b>'}</div>
+      <div style="max-height:52vh;overflow:auto;border:1px solid var(--bd);border-radius:4px;padding:0 6px;">${us.map(row).join('')}</div>
+      <div id="um-msg" style="font-size:12px;color:var(--err);margin-top:6px;"></div></div>
+    <div class="ui-dlg-btns"><button class="btn" data-x="0">取消</button><button class="btn primary ui-dlg-ok" id="um-ok" data-x="1">下一步</button></div></div>`;
+  document.body.appendChild(ov);
+  const keepId = () => ov.querySelector('input[name=um-keep]:checked')?.value || '';
+  const refresh = () => {
+    const k = keepId(); let bad = 0;
+    ov.querySelectorAll('.um-row').forEach(r => {
+      const u = us.find(x => x.id === r.dataset.id);
+      r.querySelector('.um-tag').innerHTML = !k ? '' : u.id === k ? '<span style="color:var(--ok);">保留</span>' : '<span style="color:var(--warn);">并入后删除</span>';
+      const e = (k && u.id !== k && !u.can_be_source) ? u.source_error : '';
+      if (e) bad++;
+      r.querySelector('.um-err').textContent = e ? '不能被并入：' + e : '';
+    });
+    const msg = !k ? '没有可以作保留账号的账号' : bad ? `有 ${bad} 个账号不能被并入，取消勾选它们或改选保留账号` : '';
+    ov.querySelector('#um-msg').textContent = msg;
+    ov.querySelector('#um-ok').disabled = !!msg;
+  };
+  ov.querySelectorAll('input[name=um-keep]').forEach(i => i.onchange = refresh);
+  refresh();
+  const keep = await new Promise(resolve => {
+    const done = v => { ov.remove(); resolve(v); };
+    ov.addEventListener('click', e => { if (e.target === ov) done(null); const x = e.target.getAttribute && e.target.getAttribute('data-x'); if (x === '0') done(null); if (x === '1' && !e.target.disabled) done(keepId()); });
+    ov.addEventListener('keydown', e => { if (e.key === 'Escape') done(null); });
+  });
+  if (!keep) return;
+  const t = us.find(u => u.id === keep), src = us.filter(u => u.id !== keep);
+  if (!await uiConfirm(`保留「${t.name}」${t.uid}，把下面 ${src.length} 个账号并进来并删除：\n\n${src.map(u => '· ' + (u.name || '（无名）') + ' ' + u.uid + (u.email || u.phone ? '（' + (u.email || u.phone) + '）' : '')).join('\n')}`, { title: '确认合并', danger: true })) return;
+  const v = await uiPrompt('请原样输入「合并账号」确认', '', { title: '再次确认' });
+  if (v == null) return;
+  if (v.trim() !== '合并账号') { showToast('确认内容不正确，已取消'); return; }
+  const r = await api('POST', '/admin/users/merge', { target_id: keep, source_ids: src.map(u => u.id), confirm: '合并账号' });
+  if (!r.ok) { await uiAlert(r.data?.error || '合并失败', { title: '合并失败' }); return; }
+  showToast(`已合并 ${(r.data.merged || []).length} 个账号到「${t.name}」` + (data.undo_days ? `，${data.undo_days} 天内可撤销` : ''));
+  _uSel.clear();
+  await loadAdmUsers(document.getElementById('adm-user-search')?.value.trim() || '');
+  loadAdmUserDetail(keep);
 }
 
 let _searchTimer;

@@ -3109,22 +3109,64 @@ router.post('/user/kyc/merge', requireAuth, noPublic, (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 // 超级管理员：任意两个（或多个）账号合并为同一人（不限组织）
+// 用户管理勾选合并（v3.5.61）：先预览——每个账号的资料、能不能被并进别人、建议保留哪个
+const mergeKeepScore = (u) => (u.role === 'admin' ? 64 : 0) + (u.password_hash ? 16 : 0) + (u.kyc_verified ? 8 : 0)
+  + (u.twofa_enabled ? 4 : 0) + (u.email ? 2 : 0) + (u.phone ? 1 : 0);
+router.post('/admin/users/merge/preview', requireAdmin(1), (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))];
+  if (ids.length < 2) return res.status(400).json({ error: '至少勾选两个账号才能合并' });
+  if (ids.length > 21) return res.status(400).json({ error: '一次最多合并 21 个账号（1 个保留 + 20 个并入）' });
+  const list = ids.map(id => users.findById.get(id));
+  const miss = ids.filter((id, i) => !list[i]);
+  if (miss.length) return res.status(404).json({ error: '有账号不存在（可能刚被删除或合并），请刷新列表' });
+  const orgCnt = db.prepare('SELECT COUNT(*) n FROM org_members WHERE user_id=?');
+  const bindCnt = db.prepare('SELECT COUNT(*) n FROM user_oauth WHERE user_id=?');
+  const pkCnt = db.prepare('SELECT COUNT(*) n FROM webauthn_credentials WHERE user_id=?');
+  const show = x => x.uid_code || '#' + String(x.uid_seq).padStart(5, '0');
+  const sorted = [...list].sort((a, b) => mergeKeepScore(b) - mergeKeepScore(a) || (a.uid_seq || 0) - (b.uid_seq || 0));
+  const view = list.map(u => {
+    // 作为「被并入」的一方是否可以：用一个没有任何限制的虚拟保留账号试一下（只看它自己的条件）
+    const err = userMerge.checkMerge({ id: '\0', name: '', status: 'active' }, [u]);
+    const terr = userMerge.checkMerge(u, [{ id: '\0', name: '', status: 'active' }]);
+    let pc = 0; try { pc = pkCnt.get(u.id).n; } catch (_) {}
+    return { id: u.id, uid: show(u), name: u.name, email: u.email || null, phone: u.phone || null, status: u.status,
+      admin: u.role === 'admin', has_pw: !!u.password_hash, kyc: !!u.kyc_verified, kyc_name: u.kyc_verified ? (u.kyc_name || '') : '',
+      twofa: !!u.twofa_enabled, passkeys: pc, points: u.points || 0, orgs: orgCnt.get(u.id).n, bindings: bindCnt.get(u.id).n,
+      created_at: u.created_at, can_be_source: !err, source_error: err || null, can_be_target: !terr, target_error: terr || null };
+  });
+  // 实名不同的人互相不能合并：两两比较
+  const ps = list.filter(u => u.kyc_verified && u.kyc_pseudonym).map(u => u.kyc_pseudonym);
+  const conflict = new Set(ps).size > 1 ? '勾选的账号里有实名信息不同的人，不能合并成一个账号' : null;
+  const admins = list.filter(u => u.role === 'admin');
+  res.json({ users: view, suggested: sorted[0].id, conflict: conflict || (admins.length > 1 ? '勾选了两个以上管理员账号，管理员账号不能被合并（只能当保留账号）' : null),
+    undo_days: userMerge.undoDays() });
+});
 router.post('/admin/users/merge', requireAdmin(1), (req, res) => {
-  const target = resolveUser(String(req.body?.target || '').trim());
-  if (!target || target === 'AMBIGUOUS') return res.status(400).json({ error: '保留账号找不到（或重名），请用 UID / 邮箱 / 手机' });
-  const sources = [];
-  for (const a of (Array.isArray(req.body?.sources) ? req.body.sources : [])) {
-    const s = resolveUser(String(a || '').trim());
-    if (!s || s === 'AMBIGUOUS') return res.status(400).json({ error: `账号「${a}」找不到（或重名）` });
-    if (s.id !== target.id) sources.push(s);
+  let target, sources = [];
+  if (req.body?.target_id) {   // 勾选合并直接传账号 id（不会因重名认错人）
+    target = users.findById.get(String(req.body.target_id));
+    if (!target) return res.status(400).json({ error: '保留账号不存在' });
+    for (const id of [...new Set((Array.isArray(req.body.source_ids) ? req.body.source_ids : []).map(String))]) {
+      const s = users.findById.get(id);
+      if (!s) return res.status(400).json({ error: '要合并的账号不存在（可能刚被删除或合并），请刷新列表' });
+      if (s.id !== target.id) sources.push(s);
+    }
+  } else {
+    target = resolveUser(String(req.body?.target || '').trim());
+    if (!target || target === 'AMBIGUOUS') return res.status(400).json({ error: '保留账号找不到（或重名），请用 UID / 邮箱 / 手机' });
+    for (const a of (Array.isArray(req.body?.sources) ? req.body.sources : [])) {
+      const s = resolveUser(String(a || '').trim());
+      if (!s || s === 'AMBIGUOUS') return res.status(400).json({ error: `账号「${a}」找不到（或重名）` });
+      if (s.id !== target.id) sources.push(s);
+    }
   }
   if (String(req.body?.confirm || '').trim() !== '合并账号') return res.status(400).json({ error: '请输入「合并账号」确认' });
   try {
     const r = userMerge.mergeUsers(target.id, sources.map(s => s.id), {
       onAppRevoked: (a, from, to) => deprovisionPush(a, { event: 'user.merged', sub: from.id, uid: from.uid_seq, merged_into: to.id, merged_into_uid: to.uid_seq }),
-      actor: actorOf(req), actorUid: req.user.uid, via: 'super_admin',
+      actor: actorOf(req), actorUid: req.user.uid, via: req.body?.target_id ? 'user_list' : 'super_admin',
     });
-    audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: 'super_admin', merge_id: r.merge_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
+    audit('user.merged', { subject: String(target.uid_seq), actor: actorOf(req), detail: { via: req.body?.target_id ? 'user_list' : 'super_admin', merge_id: r.merge_id, sources: r.merged.map(m => m.uid_seq), moved: r.moved } });
     res.json({ success: true, ...r });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });

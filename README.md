@@ -1,9 +1,9 @@
-# QWQ SSO — 统一登录系统 v3.5.60
+# QWQ SSO — 统一登录系统 v3.5.61
 
 > 多渠道登录 · 用户/管理控制台 · 积分商城 · KYC 实名认证 · 开放 API · OIDC 身份提供方
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.5.60-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
+[![Version](https://img.shields.io/badge/version-3.5.61-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen.svg)](https://nodejs.org)
 
 ---
@@ -36,7 +36,7 @@
 - **备忘录**：个人备忘录，可打标签、转交给某用户，支持图片 / PDF / Word(.docx) 等附件与外部链接（默认仅白名单内网域），宏文档与可执行文件一律拒绝
 
 ### 管理端功能
-- **用户管理**：搜索、新建、详情、积分划转、重置密码、停用（含级别保护）、分组 / 标签分配
+- **用户管理**：搜索、新建、详情、积分划转、重置密码、停用（含级别保护）、分组 / 标签分配、勾选批量操作、勾选多个账号合并为一人（超级管理员，可撤销）
 - **分组标签**：用户分组（互斥）与标签（可叠加）的增删改，分组可指定分组管理员、挂载公共账号
 - **应用管理（OIDC）**：CRUD、审核通过/拒绝、接入凭据（client_id/secret + 四端点）、发起地址、必传字段、删除（清除所有授权）
 - **登录日志**：按状态筛选、导出 CSV

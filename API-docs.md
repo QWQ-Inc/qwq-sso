@@ -1900,6 +1900,19 @@ DELETE /api/admin/oauth-providers/:id   # 删凭证
 - secret 字段读取时打码为 `••••••••`；提交时打码串一律不覆盖原值（编辑时留着圆点即保留）。
 - 主体停用 → 其下所有凭证的登录入口整体关闭（登录页隐藏 + 后端 `/auth/<平台>?inst=` 直连也拒绝）。
 
+**用户管理勾选合并**（v3.5.61，Lv.1 超级管理员）：
+
+```
+POST /api/admin/users/merge/preview  { ids:[账号 id…] }   # 2~21 个
+  → { users:[{id, uid, name, email, phone, status, admin, has_pw, kyc, kyc_name, twofa, passkeys, points, orgs, bindings, created_at,
+              can_be_source, source_error, can_be_target, target_error}], suggested, conflict, undo_days }
+POST /api/admin/users/merge  { target_id, source_ids:[…], confirm:"合并账号" }   # 也仍可用 { target, sources }（UID / 邮箱 / 手机 / 用户名）
+```
+
+- `suggested`：建议保留的账号（管理员 > 有密码 > 已实名 > 两步验证 > 有邮箱 > 有手机，再按编号最小）。
+- `conflict`：整批不能合并的原因（实名不同的人、两个以上管理员）；`source_error` / `target_error`：这个账号不能被并入 / 不能当保留账号的原因（公共账号、管理员不能被并入、已合并、注销中或已删除）。
+- 传 `target_id` 时合并记录与审计的 `via` 为 `user_list`；可在 `MERGE_UNDO_DAYS` 期限内撤销（见下）。
+
 **账号合并记录 / 撤销合并**（v3.5.48）：
 
 ```
