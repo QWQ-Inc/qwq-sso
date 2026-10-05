@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.68**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.68.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,13 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.68.1 修部署失败：删掉未使用的 upsertExt（ON CONFLICT 部分索引不匹配）
+
+四级补丁（修 bug）。v3.5.68 推上去后 Zeabur 部署失败——根因是 `db.js` 的 `deptStmts.upsertExt` 这个 prepared statement 用了 `ON CONFLICT(subject_id, source, ext_id)`，但对应唯一索引是**部分索引**（`CREATE UNIQUE INDEX ... WHERE ext_id IS NOT NULL`），SQLite 报 `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`；better-sqlite3 在 `db.prepare()` 时就编译 SQL、抛异常 → 整个 db.js require 失败 → 服务启动崩溃。
+- 修：**删除 upsertExt**——它本就没被用到（v3.5.68 里 syncWecom/syncFeishu 实际用的是 `getByExt` 查询 + 分开的 `insert`/`update`，不是 upsertExt）。
+- ⚠️ 教训：**部分唯一索引（带 WHERE）不能作为不带 WHERE 的 `ON CONFLICT (cols)` 冲突目标**。要么把冲突目标写成 `ON CONFLICT(cols) WHERE ...`，要么（更简单）像这次一样用「先查再 insert/update」。
+- 验证：node:sqlite 确认其余 dept SQL（bySubject 子查询 / listBySubject JOIN / setDeptId / deptOfUser）全部能 prepare；grep 确认 upsertExt 无残留引用。
 
 ## v3.5.68 正式树状部门体系（成员按部门归属 + 通讯录同步自动建部门 + 门禁部门授权）（用户反馈）
 

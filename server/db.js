@@ -1583,9 +1583,6 @@ const deptStmts = {
   update:    db.prepare('UPDATE org_departments SET name=?, parent_id=? WHERE id=?'),
   remove:    db.prepare('DELETE FROM org_departments WHERE id=?'),
   childrenOf: db.prepare('SELECT id FROM org_departments WHERE parent_id=?'),
-  upsertExt: db.prepare(`INSERT INTO org_departments (id,name,subject_id,parent_id,source,ext_id,sort_order)
-    VALUES (@id,@name,@subject_id,@parent_id,@source,@ext_id,@sort_order)
-    ON CONFLICT(subject_id, source, ext_id) DO UPDATE SET name=excluded.name, parent_id=excluded.parent_id, sort_order=excluded.sort_order`),
   clearMemberDeptByDept: db.prepare('UPDATE org_members SET dept_id=NULL WHERE dept_id=?'),
 };
 
