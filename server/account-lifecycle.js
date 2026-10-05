@@ -74,7 +74,8 @@ const reqStmts = {
   get:       db.prepare('SELECT * FROM account_deletions WHERE id=?'),
 };
 // 清单项是否完成：能核验的按数据库实际情况算，存的勾选只对 app 项有效
-const DONE_WITH = { gone: '企业微信里已没有该成员', disabled: '企业微信里已禁用', quit: '企业微信里已退出企业', kept: '管理员确认只删本系统账号，企业微信成员保留' };
+const DONE_WITH = { gone: '{p}里已没有该成员', disabled: '{p}里已禁用', quit: '{p}里已退出企业 / 离职', kept: '管理员确认只删本系统账号，{p}成员保留' };
+const srcPlat = (sourceId) => PLATFORM_ZH[db.prepare('SELECT type FROM dir_sync_sources WHERE id=?').get(sourceId)?.type] || '企业微信';
 function itemCheck(i) {
   if (!i.check) {   // v3.5.48 之前生成的清单项：从 key 推回去
     const [k] = String(i.key).split(':');
@@ -86,13 +87,15 @@ function itemCheck(i) {
 }
 // 企业微信登录绑定对应的通讯录（同一企业配了同步源 / 文件夹通讯录才有）：有就能实时核验、禁用、删除这个成员（v3.5.57）
 // 返回同步源 id（文件夹通讯录返回连接 id），优先有「管理用 Secret」的、启用的
+// v3.5.59：飞书登录绑定同理（按 App ID 找飞书同步源）
 function wecomSourceFor(provider) {
-  const W = require('./dirsync-wecom');
+  const W = require('./dirsync').driverOfProvider(provider);
+  if (!W) return null;
   const corp = W.corpOfProvider(provider);
   if (!corp) return null;
   const rows = [...W.corpScope(corp).sources].map(id => db.prepare('SELECT * FROM dir_sync_sources WHERE id=?').get(id)).filter(Boolean)
     .map(s => (s.parent_id && db.prepare('SELECT * FROM dir_sync_sources WHERE id=?').get(s.parent_id)) || s);
-  const score = s => { const c = W.effectiveCfg(s); return (c.write_secret ? 4 : 0) + (s.enabled ? 2 : 0) + (c.secret ? 1 : 0); };
+  const score = s => { const c = W.effectiveCfg(s); return (c.write_secret || s.type === 'feishu' ? 4 : 0) + (s.enabled ? 2 : 0) + (c.secret ? 1 : 0); };
   rows.sort((a, b) => score(b) - score(a));
   return rows[0] ? rows[0].id : null;
 }
@@ -107,11 +110,13 @@ function upgradeBind(i) {
     if (cid && db.prepare("SELECT 1 FROM oauth_providers WHERE id=? AND platform='wecom'").get(cid)) { provider = 'wecom:' + cid; ext = m[1].slice(j + 1); }
     else { provider = 'wecom'; ext = m[1]; }
   }
-  if (String(provider).split(':')[0] !== 'wecom') return i;
+  const plat = String(provider).split(':')[0];
+  if (plat !== 'wecom' && plat !== 'feishu') return i;
   const sid = wecomSourceFor(provider);
   if (!sid) return i;
+  const zh = PLATFORM_ZH[plat];
   return { ...i, check: 'ext', auto: false, provider, ext_id: ext, source_id: sid,
-    label: `企业微信登录账号 ${ext}：在企业微信里删除或禁用该成员（系统核验）` };
+    label: `${zh}登录账号 ${ext}：在${zh}里删除或禁用该成员（系统核验）` };
 }
 function evalItem(userId, i, executed) {
   if (!executed) i = upgradeBind(i);
@@ -125,9 +130,10 @@ function evalItem(userId, i, executed) {
       ? db.prepare('SELECT 1 FROM user_oauth WHERE provider=? AND open_id=? AND user_id=?').get(i.provider, i.ext_id, userId)
       : db.prepare('SELECT 1 FROM dir_source_links WHERE source_id=? AND ext_id=? AND user_id=?').get(i.source_id, i.ext_id, userId);
     const v = i.verified;
-    if (v && DONE_WITH[v.status]) { done = true; note = DONE_WITH[v.status] + `（${String(v.at).slice(0, 16)} 核验）`; }
+    const pz = srcPlat(i.source_id);
+    if (v && DONE_WITH[v.status]) { done = true; note = DONE_WITH[v.status].replace('{p}', pz) + `（${String(v.at).slice(0, 16)} 核验）`; }
     else if (!linked) { done = true; note = executed ? '已解除并封存' : '同步已不再包含该成员'; }
-    else note = v ? (v.status === 'active' ? `企业微信里该成员仍在职（${String(v.at).slice(0, 16)} 核验）` : `核验失败：${v.error || v.status}`) : '尚未核验';
+    else note = v ? (v.status === 'active' ? `${pz}里该成员仍在职（${String(v.at).slice(0, 16)} 核验）` : `核验失败：${v.error || v.status}`) : '尚未核验';
   }
   else if (c === 'orgadmin') { done = !db.prepare('SELECT 1 FROM oauth_subject_admins WHERE subject_id=? AND user_id=?').get(id, userId); note = done ? '已不是组织管理员' : '仍是组织管理员'; }
   else if (c === 'groupadmin') { done = !db.prepare('SELECT 1 FROM group_admins WHERE group_id=? AND user_id=?').get(id, userId); note = done ? '已不是分组管理员' : '仍是分组管理员'; }

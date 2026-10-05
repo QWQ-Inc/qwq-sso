@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.58.1　　最后更新：2026-10
+> 版本：v3.5.59　　最后更新：2026-10
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -775,7 +775,7 @@ GET /api/apps/authed
 | 存证 | GET | `/v1/audit/verify` | `audit:read` | 校验存证链完整性 |
 | 存证 | GET | `/v1/users/:uid/audit` | `audit:read` | 查某用户的存证事件 |
 | 组织 | POST | `/v1/orgs/:sid/members/import` | `org:sync` | 外部通讯录批量导入组织成员 |
-| 组织 | POST | `/v1/orgs/:sid/dir-sync/run` | `org:sync` | 依次执行该组织所有启用的通讯录同步源（v3.5.35/36） |
+| 组织 | POST | `/v1/orgs/:sid/dir-sync/run` | `org:sync` | 依次执行该组织所有启用的通讯录同步源（企业微信 / 飞书，v3.5.35/36/59） |
 | 用户 | GET | `/v1/users/:uid/org` | `users:read` | 该用户的分组 + 标签（仅名称/颜色） |
 | 积分 | GET | `/v1/users/:uid/points` | `points:read` | 积分余额 |
 | 积分 | GET | `/v1/users/:uid/points/logs` | `points:read` | 积分明细（最近 50） |
@@ -1555,6 +1555,30 @@ GET/POST /api/public/dirsync/wecom/:source_id      # 公开，无需鉴权；靠
 管理端接口（v3.5.36）：`GET/POST /api/admin/orgs/:sid/dir-sources`（列表 / 新增；`secret` 读取时打码；列表另回 `bind_choices` 可选登录凭证、`force_confirm` 确认口令）、`POST /api/admin/orgs/:sid/dir-sources/scope-tree`（v3.5.37，`{corp_id, secret}` 或 `{source_id}` 用已存 secret → 该 Secret 能看到的部门 `nodes[{id,name,parent,order}]`）、`PATCH /api/admin/dir-sources/:id`（编辑，或只传 `{enabled}` 启停；打码串/留空不覆盖 secret）、`DELETE /api/admin/dir-sources/:id`（删除同步源，已同步成员保留）、`POST /api/admin/dir-sources/:id/run`（立即同步，停用的源 400，同组织并发 409）。
 
 本站（默认主体）三方登录凭证（v3.5.36，Lv.1）：`GET /api/admin/oauth-defaults`（按平台列出，密钥只给「是否已设置」）、`PUT /api/admin/oauth-defaults/:platform`（`{values, enabled}`；密钥留空不改，`enabled:false` 只关闭登录入口、凭证保留——记在 `OAUTH_DEFAULT_DISABLED`）、`DELETE /api/admin/oauth-defaults/:platform`（清空该平台配置）。
+
+### 6.18.1 飞书通讯录同步（v3.5.59）
+
+同一套同步源接口，`type: "feishu"`。用飞书**企业自建应用**（免费版即可：通讯录、认证授权、事件订阅类接口不计入飞书 API 调用额度）。字段沿用同名：
+
+| 字段 | 飞书含义 |
+|---|---|
+| `corp_id` | App ID（`cli_` 开头） |
+| `secret` | App Secret（读写用同一个应用；在飞书里暂停 / 删除成员要给应用开「更新通讯录」权限，没有 `write_secret`） |
+| `dept_ids` | 部门 `open_department_id` 字符串数组，根部门 `"0"` = 应用通讯录权限范围内所有人（权限没开到根部门时自动按 `contact/v3/scopes` 里的部门 + 单独授权的成员同步） |
+| `cb_token` / `cb_aes_key` | 事件订阅的 Verification Token（开实时同步必填）/ Encrypt Key（可选，飞书后台设了才填；`cb_aes_clear: true` 清除） |
+| `uid_mode: "userid"` | 组织内 UID 用飞书工号（`employee_no`），没有则用飞书 `user_id` |
+| `push_suspend` | 本系统停用 / 删除账号时把飞书成员设为暂停（`is_frozen`），恢复时取消暂停 |
+
+认人：映射的 `ext_id` = 同步应用里的 `open_id`，另存 `ext_union`（`union_id`，同一企业的各应用共用）。顺序：本源映射 → 同一 App ID 的飞书登录凭证已绑这个 open_id → 任一飞书同步源 / 飞书登录绑定的 union_id → 企业邮箱 / 邮箱 → 手机（去掉 `+86`）→ 新建。同步后把 open_id 绑到**同一 App ID** 的飞书登录凭证（带 union_id）；用别的 App ID 的飞书凭证登录时按 union_id 认到同一账号并补绑。离职（`is_resigned`）/ 暂停（`is_frozen`）/ 主动退出（`is_exited`）视为离开。组织成员 `source='feishu'`，移出规则与企业微信一致。
+
+- `POST /api/admin/orgs/:sid/dir-sources/scope-tree` 传 `{type:'feishu', corp_id, secret}`（或 `{source_id}`）→ `nodes`（能看到根部门时首项为 `{id:'0', name:'全部（企业根部门）'}`）。
+- `GET /api/admin/orgs/:sid/dir-sources` 多回 `bind_choices_feishu`；`types` 含 `feishu`。
+- 事件订阅地址：`POST /api/public/dirsync/feishu/:id`（同步源视图 `callback_path`）。`url_verification` 原样回 `{challenge}`；配了 Encrypt Key 时内容为 `{"encrypt":…}`（AES-256-CBC，key = sha256(Encrypt Key)，iv = 密文前 16 字节），事件推送校验 `X-Lark-Signature` = sha256(timestamp + nonce + Encrypt Key + 原始 body)；`header.token` 必须等于 Verification Token；`header.app_id` 与 App ID 不符的只记录不同步。`contact.user.*` / `contact.department.*` / `contact.scope.*` 事件防抖后跑一次全量同步。校验失败原因记在 `event_state.last_verify`。
+- 注销与删除的交接项、「异常账号」补绑 / 删除、「残留成员」都支持飞书成员（`memberStatus`：在职 / 暂停 / 离职 / 已不存在）。残留成员批量操作请求体加 `platform: "feishu"`，确认语为「禁用|删除 N 个飞书成员」；同一次只能处理同一种平台。
+- 暂不支持：飞书通讯录放到组织文件夹上共用（`POST /api/admin/org-folders/:id/dir-sources` 只收企业微信）。
+- 常见错误码：10003 / 10014（App ID / Secret 不对）、99991672（应用没开权限或没发布版本）、40004（部门不在通讯录权限范围）、41050（成员不在权限范围）。
+
+> v3.5.59 同时修了飞书**登录**：`authen/v2/oauth/token` 的 `access_token` 在响应顶层，之前从 `data.access_token` 取，导致飞书登录一直失败；现在失败时登录页显示飞书返回的错误码和原因，凭证没填回调地址时按当前访问域名拼 `/auth/feishu/callback`。
 
 ---
 

@@ -556,6 +556,9 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_identity_blocks ON identity_blocks
 try { db.exec('ALTER TABLE apps ADD COLUMN handover_required INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // v3.5.43：外部系统里的姓名（「应用内姓名」，不可靠，只展示；真实姓名以实名认证为准）
 try { db.exec('ALTER TABLE dir_source_links ADD COLUMN ext_name TEXT'); } catch(_) {}
+// 飞书成员的 union_id（同一企业的各个应用共用，open_id 则每个应用一份；v3.5.59）
+try { db.exec('ALTER TABLE dir_source_links ADD COLUMN ext_union TEXT'); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_dir_links_union ON dir_source_links(ext_union) WHERE ext_union IS NOT NULL'); } catch(_) {}
 // v3.5.37：同步给成员设过什么（kind=bind/key=provider/value=UserId；kind=pw/key=''/value=密码哈希）。
 // 当前值 ≠ 记录值 = 被人单独改过 → 普通同步不覆盖，只有强确认的「全部覆盖同步」才覆盖。
 try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_applied (

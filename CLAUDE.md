@@ -6,16 +6,16 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.58.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.59**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
 - 版权方：QWQ INC.（美国特拉华州），中国共同开发者：海南省儋州市许白网络文化传媒有限公司
 - 许可证：MIT License（版权行 `Copyright © 2026 QWQ INC.` 不可删除/修改，遵循协议见 README.md 底部）
 
-功能范围（截至 v3.5.58.1，详见 `README.md` / `CHANGELOG.md`）：
+功能范围（截至 v3.5.59，详见 `README.md` / `CHANGELOG.md`）：
 - **登录**：13 个三方登录平台（多主体/多组织）、邮箱/手机验证码、账号密码（多标识符）、2FA(TOTP)、Passkey(WebAuthn)、忘记密码、应用内自动登录（企业微信/微信/飞书/钉钉内打开即用该平台凭证登录）；**登录到组织（IAM 用户）**：复用平台账号限定到某组织、组织自有密码、独立安全策略（org-scoped 不可切换）。
-- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
+- **身份/组织（IAM）**：等级管理、分组/标签、分组管理员、组织（=登录主体）成员 + 组织内 UID + 组织管理员 + 组织文件夹、外部通讯录导入、**企业微信通讯录同步**（含一人多号合并；v3.5.47 起可放在组织文件夹上，文件夹里的组织套用、各选部门）、**飞书通讯录同步**（企业自建应用，v3.5.59）、公共账号、自定义 UID 规则、**组织专属凭证**（短信/邮件/实名按组织覆盖）、组织成员跨组织复用、不显性组织（组织码登录）。
 - **应用接入**：开放 API（`/v1/*`，含测试密钥沙盒）、OIDC 提供方（`/oauth/*`，授权码 + PKCE + introspection + Back-Channel Logout）、应用按组织开放、IdP 发起式打开、主动撤销（deprovision webhook）、应用图片图标、个人应用文件夹。
 - **自建能力**：积分商城（含盲盒）、签到、KYC 实名（5 服务商轮询 + 开放 API）、备忘录（附件/转交）、公告系统（可邮件群发）、系统通知（经消息分发推到 Webhook / 群机器人）、账号注销 / 删除（冷静期 + 保留期可恢复 + 交接项系统核验 + 三方账号摘除封存 + 审批 + 批量操作）、账号合并（可撤销）、防篡改审计存证链、身份核验（核验员扫码）、防截图水印（页面遮罩 + **导出图片/PDF 服务端烧录 + 追踪码反查**）、登录协议富文本、动态页脚、系统版本更新、数据备份（本地 / R2，可加密）、域名验证文件（根目录验证文件，到期自动删除）。
 - **门禁 / 设备**：门禁（动态码/实体卡/人脸/访客码 + 扫码终端；门子码/禁入时段/访客陪同带入）、跨系统联邦（共享门禁 + 跨域应用登录）、Apple Wallet 访客码（阶段一，需证书）、**设备管理**（Apple/Google/Microsoft/门禁机/读卡器 登记台账）。
@@ -55,6 +55,8 @@ server/
 ├── passkey.js    # Passkey(WebAuthn/FIDO2)，用 @simplewebauthn/server（v3.3.8）
 ├── audit.js      # 防篡改审计存证链（哈希链 audit()/verifyChain()），api.js + provider.js 埋点调用
 ├── access.js     # 门禁（v3.5.0+）：动态码/卡/人脸/访客码/跨域码判定 + 签名校验
+├── dirsync.js     # 通讯录同步驱动登记（v3.5.59）：driver(type) → 企业微信 / 飞书，api.js 里按同步源 type 调用
+├── dirsync-feishu.js # 飞书通讯录同步（v3.5.59）：企业自建应用 tenant token → 部门 / 成员 → 匹配建号；事件订阅解密验签；成员暂停 / 删除
 ├── dirsync-wecom.js # 企业微信通讯录同步（v3.5.35）：拉所选部门成员 → 匹配/建号 → 组织成员 + 绑定 UserId + 默认组织密码（v3.5.37，单独改过的不覆盖）
 ├── backup.js     # 数据备份（v3.5.46）：snapshot/encrypt/decrypt/sigv4/writeTo/list/read，本地 + R2；也是解密命令行
 ├── account-lifecycle.js # 账号注销 / 删除（v3.5.44）：request/setChecklist/approve/cancel/reject/restore/purge/tick，交接预检 preflight
@@ -436,6 +438,19 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.59 飞书通讯录同步 + 修飞书登录（用户反馈）
+
+三级版本。用户问「飞书的似乎要买商业版才能实现，用自建应用能不能走」——查证后：飞书收费的是「用外部 IdP 登录飞书本身」（商业版 / 企业版）；用飞书登录本系统、用自建应用读通讯录在免费版即可（官方「自建应用 API 调用量上限」说明：通讯录 / 认证及授权 / 事件订阅类接口不计入额度）。用户选做通讯录同步。
+- 新 `server/dirsync.js`：驱动登记 `driver(type)` / `driverOfProvider(provider)`；企业微信驱动包一层 dirsync-wecom 的同名函数（`sync = syncWecom`、`isGoneError = 60111`）。**api.js 里同步源相关的通用路径一律走 `drvOf(src.type)`**：`dirSourceView`、`buildDirSourceCfg(..., {type})` / `dirSourceCfgFromBody(b, old, type)` / `dirScopeFromBody(b, old, type)` / `applyCbFields(..., type)`、`runDirSource`、scope-tree（`b.type` 或源的 type）、`pushExternalSuspend`、`deletionItemAction`、残留成员、异常账号。企业微信专属的（接收事件服务器、重复账号合并、文件夹连接 / 迁移 / 按部门建组织）仍只认 wecom。
+- 新 `server/dirsync-feishu.js`：配置字段沿用同名——`corp_id` = App ID（`cli_`）、`secret` = App Secret（没有 write_secret，写操作要应用开「更新通讯录」）、`cb_token` = Verification Token、`cb_aes_key` = Encrypt Key（可选）、`dept_ids` = open_department_id **字符串**（根 `"0"`）。tenant_access_token 按 App ID + Secret 哈希缓存。`fetchScopeTree`：`departments/0/children?fetch_child` → 首项「全部」；40004（根部门不在权限范围）回退 `contact/v3/scopes` 的部门。`fetchDirectory`：所选部门 + 全部子部门逐个 `users/find_by_department`（分页），选「全部」但根部门没权限时按 scopes 部门 + 单独授权成员；`normMember` 统一成 `{userid: open_id, union_id, user_id, employee_no, email: enterprise_email||email, mobile 去 +86, active: !(is_resigned||is_frozen||is_exited)}`。
+  - 认人：`ext_id` = open_id（每个应用一份），新列 `dir_source_links.ext_union`（union_id，同企业各应用共用，带索引）。`corpScope(appId)`（同 App ID 的飞书同步源 + 飞书登录凭证，含 env `FEISHU_APP_ID`）/ `corpUsers(appId, openId, {unionId})`（同应用按 open_id，跨应用按 union_id）。`bindProvidersFor` 只收同一 App ID 的凭证。`syncFeishu` 流程照抄 `syncWecom`（applyBind 带 union_id、applyPassword、0 人不移除、只移出本源丢掉且不在其他源的 `source='feishu'` 成员）；组织内 UID `userid` 模式 = 工号，没有用 user_id。
+  - `memberStatus`（离职 / 退出 → quit，暂停 → disabled，41012 → gone）、`setMemberEnabled`（PATCH `is_frozen`）、`deleteMember`（DELETE users/:open_id）。
+  - 事件：`parseEvent(cfg, headers, raw)`——`{encrypt}` 用 sha256(Encrypt Key) 解 AES-256-CBC（iv = 前 16 字节），有 `X-Lark-Signature` 时校验 sha256(ts+nonce+key+原始 body)；token 取 `header.token` 或顶层 `token`；配了 Key 却收到明文拒绝。路由 `POST /api/public/dirsync/feishu/:id`：challenge 原样回；`contact.(user|department|scope).*` → `scheduleEventSync`；`header.app_id` 不符只记录。⚠️ **`index.js` 的 `express.json` 加了 `verify` 给 `/api/public/dirsync/*` 留 `req.rawBody`**——签名要对原始字节算，json 解析后再 stringify 会对不上。
+- `account-lifecycle.js`：`wecomSourceFor` 改为按 provider 平台找驱动（飞书按 App ID 找同步源）；`upgradeBind` 也升级飞书登录绑定；`DONE_WITH` 文案按同步源平台填（`{p}`）。
+- 🐛 **飞书登录**（`oauth.js`）：`authen/v2/oauth/token` 的 `access_token` 在响应**顶层**，原来取 `data.data.access_token` 永远为空 → 飞书登录从来没成功过。改为顶层优先、`data` 兜底；不再带 Bearer 头（文档要求只用 client_id/secret）；换 token / 取用户信息失败 → `?error=feishu_failed&code=&hint=`；`findOrCreate` 传 `unionId`；新增 1c 步：飞书凭证 → 封存检查 + `corpUsers` 认到同步账号则补绑。`feishuRedirect(c, req)`：没填回调地址按请求域名拼。飞书接口根地址走 `FEISHU_API_BASE`（测试用）。
+- 前端：同步源弹窗类型可选「飞书（企业自建应用）」→ 切到独立的 `openFeishuSourceModal`（编辑飞书源时 `openDirSourceModal` 直接转过去）：飞书后台配置步骤折叠说明、App ID / Secret、字符串部门树（`fsm-*`）、绑定只列同 App ID 凭证、默认组织密码、事件订阅（Verification Token / Encrypt Key + 清除）、暂停同步、上次同步。`_dirScopeText` 把 `"0"` 显示为「全部」；`_dirEventText` 按平台写文案；交接项按钮按 label 显示「在飞书中暂停 / 删除」；残留成员卡改名「企业微信 / 飞书残留成员」（按钮「检查通讯录」「禁用 / 暂停…」「在通讯录中删除…」，混选两种平台时提示分开，请求带 `platform`）；异常账号文案改为企业微信 / 飞书。
+- ⚠️ 测试：新 `mock-feishu.js`（3921；分页 2 条一页、`restricted` 模拟权限范围、`noWrite`、`drop`/`add`、网页登录 `F_<x>` 码）+ run35f 44 项（App ID 校验、错 Secret 提示、部门树分页、建源打码 / 回调地址、同步计数 / 邮箱关联 / 工号 UID / 去 +86 / 多部门去重 / 绑定带 union_id / ext_union / 来源 feishu、幂等、同应用登录不新建、别的应用按 union_id 认人并补绑、换 token 失败原因、离开移出、权限受限部门树 / 40004 提示 / 按权限范围同步、编辑打码、URL 校验 challenge、Token 错 / 明文 / Key 错 / 签名错拒绝、事件防抖同步、交接项写飞书 + 核验在职 + 暂停后执行、封存身份不能登录、残留成员列出并删除、停用同步暂停、没写权限提示、异常账号补绑带 union_id、文件夹拒绝飞书、列表 types / bind_choices_feishu）；启动需 `FEISHU_API_BASE=http://localhost:3921 FEISHU_APP_ID=cli_test1234 FEISHU_APP_SECRET=fsecret DIRSYNC_EVENT_DELAY_MS=400`（`scratchpad/e2e/restartf.sh`）；回归 run 35 / run10 36 / run13 10 / run16 22 / run19 35 / run24 27 / run25 19 / run30 17 / run32 15 / run33 13（run26 有 1 项、ui25 在改动前就失败，与本版无关）；playwright ui35f 12 项（类型切到飞书页、加载部门、勾选、指定凭证只列同 App ID、保存字段、卡片行、立即同步 4 人、编辑回填回调地址与打码、上次同步，零 JS 报错、无原生弹窗）+ ui33 / ui34 / ui23 回归。真实飞书未联调。
 
 ## v3.5.58.1 修企业微信应用内登录（用户反馈）
 

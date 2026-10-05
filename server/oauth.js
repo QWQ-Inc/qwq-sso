@@ -17,6 +17,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, state: stateStore, logs } = require('./db');
 const userMerge = require('./user-merge');
 const dirsyncWecom = require('./dirsync-wecom');
+const dirsyncFeishu = require('./dirsync-feishu');
 const { audit } = require('./audit');
 const { signToken, signShortToken, requireAuth } = require('./auth');
 const { subjectGateError } = require('./org-policy');
@@ -218,6 +219,16 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
       if (db.prepare("SELECT 1 FROM identity_blocks WHERE kind='dir' AND conn_id IN (?, (SELECT parent_id FROM dir_sync_sources WHERE id=?)) AND ext_id=? COLLATE NOCASE").get(sid, sid, openId)) return blocked();
     }
     const same = dirsyncWecom.corpUsers(wecomCorp, openId, { scope: sc })[0];
+    if (same) { oauth.bind.run(uuidv4(), same.id, provider, openId, unionId); return same; }
+  }
+  // 1c. 飞书（v3.5.59）：通讯录同步过的成员——同一个应用按 open_id，不同应用按 union_id（同一企业的各应用共用）认人
+  if (String(provider).split(':')[0] === 'feishu' && openId) {
+    const app = dirsyncFeishu.corpOfProvider(provider);
+    const sc = dirsyncFeishu.corpScope(app);
+    for (const sid of sc.sources) {
+      if (db.prepare("SELECT 1 FROM identity_blocks WHERE kind='dir' AND conn_id=? AND ext_id=?").get(sid, openId)) return blocked();
+    }
+    const same = dirsyncFeishu.corpUsers(app, openId, { unionId, scope: sc })[0];
     if (same) { oauth.bind.run(uuidv4(), same.id, provider, openId, unionId); return same; }
   }
 
@@ -461,13 +472,20 @@ router.get('/wecom/callback', async (req, res) => {
 // 飞书自建应用
 // https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/login/overview
 // ══════════════════════════════════════════
+// 飞书回调地址：凭证里没填就用本次请求的域名（要和飞书后台「安全设置 → 重定向 URL」一致）
+function feishuRedirect(c, req) {
+  if (c.FEISHU_REDIRECT_URI) return c.FEISHU_REDIRECT_URI;
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  return `${proto}://${host}/auth/feishu/callback`;
+}
 router.get('/feishu', (req, res) => {
   const c = getCred('feishu', req.query.inst);
   if (!c || !c.FEISHU_APP_ID) return res.redirect('/login.html?error=feishu_not_configured');
   const state = genState();
   saveState(state, c._providerKey);
   const p = new URLSearchParams({
-    client_id: c.FEISHU_APP_ID, redirect_uri: c.FEISHU_REDIRECT_URI,
+    client_id: c.FEISHU_APP_ID, redirect_uri: feishuRedirect(c, req),
     response_type: 'code', scope: 'contact:user.id:readonly', state,
   });
   res.redirect(`https://open.feishu.cn/open-apis/authen/v1/authorize?${p}`);
@@ -479,20 +497,30 @@ router.get('/feishu/callback', async (req, res) => {
   if (!st) return res.redirect('/login.html?error=invalid_state');
   const c = credFromKey(st.provider);
   if (!c) return res.redirect('/login.html?error=feishu_not_configured');
+  if (!code) return res.redirect('/login.html?error=feishu_failed&hint=' + encodeURIComponent('飞书没有返回登录码（可能取消了授权），请重试'));
+  const fail = (step, j) => {
+    const q = new URLSearchParams({ error: 'feishu_failed' });
+    if (j && (j.code || j.error)) q.set('code', String(j.code || j.error));
+    q.set('hint', `${step}：${String((j && (j.error_description || j.msg)) || '飞书没有返回所需数据').slice(0, 150)}`);
+    return res.redirect('/login.html?' + q);
+  };
   try {
-    const appToken = (await axios.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-      app_id: c.FEISHU_APP_ID, app_secret: c.FEISHU_APP_SECRET,
-    })).data.tenant_access_token;
-    const userToken = (await axios.post('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
+    // ⚠️ v3.5.59 修：authen/v2/oauth/token 的 access_token 在响应顶层（之前取 data.data.access_token 永远是空，飞书登录一直失败）
+    const base = dirsyncFeishu.apiBase();
+    const tk = (await axios.post(base + '/open-apis/authen/v2/oauth/token', {
       grant_type: 'authorization_code', code,
       client_id: c.FEISHU_APP_ID, client_secret: c.FEISHU_APP_SECRET,
-      redirect_uri: c.FEISHU_REDIRECT_URI,
-    }, { headers: { Authorization: `Bearer ${appToken}` } })).data.data?.access_token;
-    const info = (await axios.get('https://open.feishu.cn/open-apis/authen/v1/user_info', {
-      headers: { Authorization: `Bearer ${userToken}` },
-    })).data.data;
+      redirect_uri: feishuRedirect(c, req),
+    }, { headers: { 'Content-Type': 'application/json; charset=utf-8' }, validateStatus: () => true })).data || {};
+    const userToken = tk.access_token || tk.data?.access_token;
+    if (!userToken) return fail('换取 user_access_token', tk);
+    const ui = (await axios.get(base + '/open-apis/authen/v1/user_info', {
+      headers: { Authorization: `Bearer ${userToken}` }, validateStatus: () => true,
+    })).data || {};
+    const info = ui.data;
+    if (ui.code || !info || !info.open_id) return fail('获取用户信息', ui);
     loginSuccess(res, findOrCreate({
-      provider: c._providerKey, openId: info.open_id,
+      provider: c._providerKey, openId: info.open_id, unionId: info.union_id || null,
       name: info.name || info.en_name, avatar: info.avatar_url,
       email: info.enterprise_email || info.email,
     }));

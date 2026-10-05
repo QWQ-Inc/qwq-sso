@@ -55,7 +55,8 @@ app.set('trust proxy', true);
 
 // ── 基础中间件 ──
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
-app.use(express.json());
+// 留一份原始请求体：飞书事件订阅的签名（X-Lark-Signature）要对原始字节算（v3.5.59）
+app.use(express.json({ verify: (req, _res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/public/dirsync/')) req.rawBody = buf.toString('utf8'); } }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Session ──
@@ -132,7 +133,7 @@ function buildFooterHtml() {
     : '';
 
   // 版本信息点击跳转 GitHub（不可修改）
-  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.58.1</a>`;
+  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.59</a>`;
 
   return `<footer style="text-align:center;padding:20px 20px 8px;margin-top:24px;font-size:11px;color:rgba(0,0,0,.38);border-top:1px solid rgba(0,0,0,.07);line-height:1.9;user-select:none;">
   <div style="font-weight:500;">${copyright}</div>${infoLine}

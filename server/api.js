@@ -655,13 +655,15 @@ function pushExternalSuspend(user, enabled) {
   } catch (_) {}
   const done = new Set();   // 同一份文件夹通讯录被几个组织套用：同一个成员只推一次
   for (const r of rows) {
-    const cfg = require('./dirsync-wecom').effectiveCfg(r);
-    if (r.type !== 'wecom' || !cfg.push_suspend) continue;
+    const drv = require('./dirsync').driver(r.type);   // 企业微信 / 飞书（v3.5.59）
+    if (!drv) continue;
+    const cfg = drv.effectiveCfg(r);
+    if (!cfg.push_suspend) continue;
     const k = (r.parent_id || r.id) + '|' + r.ext_id;
     if (done.has(k)) continue; done.add(k);
-    require('./dirsync-wecom').setMemberEnabled(cfg, r.ext_id, enabled)
+    drv.setMemberEnabled(cfg, r.ext_id, enabled)
       .then(() => audit(enabled ? 'account.external_resumed' : 'account.external_suspended', { subject: String(user.uid_seq), actor: 'system', detail: { source: r.source_id, ext_id: r.ext_id } }))
-      .catch(e => console.warn('[同步暂停企业微信成员失败]', r.ext_id, e.message));
+      .catch(e => console.warn(`[同步暂停${drv.label}成员失败]`, r.ext_id, e.message));
   }
 }
 function onAccountSuspended(user, event = 'user.disabled') {
@@ -2026,29 +2028,33 @@ router.post('/v1/orgs/:sid/members/import', requireApiKey('org:sync'), (req, res
 // 配置存 oauth_subjects.dir_sync（JSON，含通讯录 secret），结果存 dir_sync_state。
 // ══════════════════════════════════════════
 const dirsyncWecom = require('./dirsync-wecom');
+const dirsync = require('./dirsync');            // v3.5.59：按同步源 type 找驱动（企业微信 / 飞书）
+const drvOf = (t) => dirsync.driver(t) || dirsync.driver('wecom');
 const notifyHub = require('./notify');
 const SECRET_MASK = '••••••••';
-const DIR_TYPES = { wecom: '企业微信' };          // 以后加飞书 / 钉钉：在这里登记 + 写对应的 dirsync-xxx.js
+const DIR_TYPES = { wecom: '企业微信', feishu: '飞书' };   // 以后加钉钉：在这里登记 + 写对应的 dirsync-xxx.js + 在 dirsync.js 登记驱动
 const _dirSyncRunning = new Set();               // 按组织加锁：同一组织的多个源不并发跑（会互相影响移出判断）
 const parseJ = (t) => { try { return t ? JSON.parse(t) : null; } catch (_) { return null; } };
 const FORCE_CONFIRM = '全部覆盖';                 // 强确认「全部覆盖同步」要求原样输入的口令
 function dirSourceView(src, subject) {
-  const cfg = dirsyncWecom.effectiveCfg(src);
+  const drv = drvOf(src.type);
+  const cfg = drv.effectiveCfg(src);
   const parent = src.parent_id ? dirSources.get.get(src.parent_id) : null;
   const { default_pw_hash, cb_aes_key, ...pub } = cfg;     // 默认组织密码只存哈希、回调 EncodingAESKey 打码，都不下发
-  const bindProviders = subject && cfg.corp_id ? dirsyncWecom.bindProvidersFor(subject, cfg) : [];
+  const bindProviders = subject && cfg.corp_id ? drv.bindProvidersFor(subject, cfg) : [];
   const cbSrc = parent || src;   // 套用文件夹通讯录的：回调地址 / 事件状态都在文件夹那份连接上
   return { id: src.id, subject_id: src.subject_id, type: src.type, type_label: DIR_TYPES[src.type] || src.type,
     label: src.label || DIR_TYPES[src.type] || src.type, enabled: !!src.enabled,
     // v3.5.47：套用的文件夹通讯录（连接字段只读，来自文件夹）
     parent_id: src.parent_id || null, parent_label: parent ? (parent.label || DIR_TYPES[parent.type]) : null,
     parent_enabled: parent ? !!parent.enabled : null, parent_missing: !!(src.parent_id && !parent),
-    config: { ...pub, secret: cfg.secret ? SECRET_MASK : '', write_secret: cfg.write_secret ? SECRET_MASK : '', dept_ids: dirsyncWecom.deptIdsOf(cfg),
+    config: { ...pub, secret: cfg.secret ? SECRET_MASK : '', write_secret: cfg.write_secret ? SECRET_MASK : '', dept_ids: drv.deptIdsOf(cfg),
       bind_mode: cfg.bind_mode || 'auto', has_default_pw: !!default_pw_hash,
       cb_token: cfg.cb_token || '', cb_aes_key: cb_aes_key ? SECRET_MASK : '' },
     // 接收事件服务器（v3.5.39）：企业微信后台「通讯录同步 → 设置接收事件服务器」填这个地址（前面拼上本站域名）
-    callback_path: '/api/public/dirsync/wecom/' + cbSrc.id,
-    callback_ready: !!(cfg.cb_token && cb_aes_key),
+    callback_path: `/api/public/dirsync/${src.type === 'feishu' ? 'feishu' : 'wecom'}/` + cbSrc.id,
+    // 飞书：Verification Token 必填、Encrypt Key 可选；企业微信：Token + EncodingAESKey 都要
+    callback_ready: src.type === 'feishu' ? !!cfg.cb_token : !!(cfg.cb_token && cb_aes_key),
     event_state: parseJ(cbSrc.event_state),
     state: parseJ(src.state),
     bind_provider: bindProviders[0] || null, bind_providers: bindProviders,
@@ -2073,22 +2079,35 @@ function dirConnView(conn) {
 }
 const isFolderConn = (src) => !!(src && src.folder_id && !src.subject_id);
 // 同步范围（部门）：数组，兼容旧的单个 dept_id；顺带存部门名给列表展示
-function dirScopeFromBody(b, old) {
+function dirScopeFromBody(b, old, type = 'wecom') {
   let ids = Array.isArray(b.dept_ids) ? b.dept_ids : (b.dept_id !== undefined ? [b.dept_id] : null);
-  if (!ids) return { dept_ids: dirsyncWecom.deptIdsOf(old), dept_names: old.dept_names || {} };
-  ids = [...new Set(ids.map(x => parseInt(x, 10)).filter(x => x > 0))].slice(0, 50);
-  if (!ids.length) ids = [1];
+  if (!ids) return { dept_ids: drvOf(type).deptIdsOf(old), dept_names: old.dept_names || {} };
+  if (type === 'feishu') {   // 飞书部门 ID 是 open_department_id 字符串，根部门 "0"
+    ids = [...new Set(ids.map(x => String(x).trim()).filter(x => /^[A-Za-z0-9_-]{1,64}$/.test(x)))].slice(0, 50);
+    if (!ids.length) ids = ['0'];
+  } else {
+    ids = [...new Set(ids.map(x => parseInt(x, 10)).filter(x => x > 0))].slice(0, 50);
+    if (!ids.length) ids = [1];
+  }
   const names = {};
   const src = b.dept_names && typeof b.dept_names === 'object' ? b.dept_names : (old.dept_names || {});
   for (const id of ids) if (src[id]) names[id] = String(src[id]).slice(0, 60);
   return { dept_ids: ids, dept_names: names };
 }
 // 接收事件服务器（v3.5.39）：Token（≤32 位字母数字）+ EncodingAESKey（43 位）；AESKey 打码串/留空 = 不改，cb_clear = 关闭
-function applyCbFields(cfg, b, old) {
+function applyCbFields(cfg, b, old, type = 'wecom') {
   if (b.cb_clear) { delete cfg.cb_token; delete cfg.cb_aes_key; return null; }
   const tok = b.cb_token !== undefined ? String(b.cb_token).trim() : (old.cb_token || '');
   let aes = String(b.cb_aes_key ?? '').trim();
   if (!aes || /^•+$/.test(aes)) aes = old.cb_aes_key || '';
+  if (type === 'feishu') {   // 飞书事件订阅：Verification Token 必填，Encrypt Key 可选（飞书后台生成，直接复制过来）
+    if (b.cb_aes_clear) aes = '';
+    if (tok && !/^[\x21-\x7e]{1,64}$/.test(tok)) return 'Verification Token 应为 1~64 位、不含空格';
+    if (aes && !/^[\x21-\x7e]{1,64}$/.test(aes)) return 'Encrypt Key 应为 1~64 位、不含空格';
+    if (aes && !tok) return '填了 Encrypt Key 也要填 Verification Token';
+    if (tok) { cfg.cb_token = tok; if (aes) cfg.cb_aes_key = aes; else delete cfg.cb_aes_key; } else { delete cfg.cb_token; delete cfg.cb_aes_key; }
+    return null;
+  }
   if (tok && !/^[A-Za-z0-9]{1,32}$/.test(tok)) return '回调 Token 应为 1~32 位英文字母或数字';
   if (aes && !/^[A-Za-z0-9]{43}$/.test(aes)) return 'EncodingAESKey 应为 43 位英文字母或数字';
   if (!!tok !== !!aes) return '接收事件服务器的 Token 和 EncodingAESKey 要一起填（或都留空）';
@@ -2109,25 +2128,27 @@ function buildDirConnCfg(b, old) {
 // opts.use = 套用的文件夹连接配置（v3.5.47）：企业 ID / Secret 用文件夹的，自己只存组织级字段
 async function buildDirSourceCfg(b, old, subject, opts = {}) {
   old = old || {};
+  const type = opts.type || 'wecom';
   if (opts.use) b = { ...b, corp_id: opts.use.corp_id, secret: opts.use.secret };
-  const r = dirSourceCfgFromBody(b, old);
+  const r = dirSourceCfgFromBody(b, old, type);
   if (r.error) return r;
   const cfg = r.cfg;
-  Object.assign(cfg, dirScopeFromBody(b, old));
+  Object.assign(cfg, dirScopeFromBody(b, old, type));
   delete cfg.dept_id;
   // 同步后绑定到哪些登录凭证：auto（同企业的那个）/ custom（勾选）/ none（不绑）
   const mode = ['auto', 'custom', 'none'].includes(b.bind_mode) ? b.bind_mode : (old.bind_mode || 'auto');
   cfg.bind_mode = mode;
   if (mode === 'custom') {
-    const valid = new Set(dirsyncWecom.loginProviderChoices(subject).map(x => x.key));
+    // 飞书只能绑同一个 App ID 的登录凭证（open_id 每个应用一份）
+    const valid = new Set(drvOf(type).loginProviderChoices(subject).filter(x => type !== 'feishu' || x.corp_id === cfg.corp_id).map(x => x.key));
     const list = Array.isArray(b.bind_providers) ? b.bind_providers : (old.bind_providers || []);
     cfg.bind_providers = [...new Set(list.map(String))].filter(k => valid.has(k));
-    if (!cfg.bind_providers.length) return { error: '请至少勾选一个要绑定的登录凭证，或改为「不绑定」' };
+    if (!cfg.bind_providers.length) return { error: type === 'feishu' ? '请至少勾选一个同一 App ID 的飞书登录凭证，或改为「不绑定」' : '请至少勾选一个要绑定的登录凭证，或改为「不绑定」' };
   } else delete cfg.bind_providers;
   if (opts.use) {
     for (const k of dirsyncWecom.CONN_KEYS) delete cfg[k];   // 套用文件夹通讯录：连接字段不存在自己身上
   } else {
-    const e = applyCbFields(cfg, b, old);
+    const e = applyCbFields(cfg, b, old, type);
     if (e) return { error: e };
   }
   // 默认组织密码：只存 bcrypt 哈希；留空 = 不改，clear_default_password = 清除
@@ -2139,16 +2160,17 @@ async function buildDirSourceCfg(b, old, subject, opts = {}) {
   } else if (old.default_pw_hash) cfg.default_pw_hash = old.default_pw_hash;
   return { cfg };
 }
-function dirSourceCfgFromBody(b, old) {
+function dirSourceCfgFromBody(b, old, type = 'wecom') {
   old = old || {};
+  const feishu = type === 'feishu';
   const corp_id = String(b.corp_id ?? old.corp_id ?? '').trim().slice(0, 64);
-  if (!/^[A-Za-z0-9_-]{4,64}$/.test(corp_id)) return { error: '请填写正确的企业 ID（corpid）' };
+  if (feishu ? !/^cli_[A-Za-z0-9]{4,60}$/.test(corp_id) : !/^[A-Za-z0-9_-]{4,64}$/.test(corp_id)) return { error: feishu ? '请填写正确的飞书 App ID（cli_ 开头）' : '请填写正确的企业 ID（corpid）' };
   let secret = String(b.secret ?? '').trim();
   if (!secret || /^•+$/.test(secret)) secret = old.secret || '';   // 打码串 / 留空 = 不改
-  if (!secret) return { error: '请填写读取通讯录用的 Secret（推荐自建应用 Secret）' };
+  if (!secret) return { error: feishu ? '请填写飞书应用的 App Secret' : '请填写读取通讯录用的 Secret（推荐自建应用 Secret）' };
   // 管理用 Secret（v3.5.50，可选）：企业微信「通讯录同步」Secret，禁用 / 启用 / 删除成员时用；打码串 / 留空 = 不改，clear_write_secret = 清除
   let write_secret = String(b.write_secret ?? '').trim();
-  if (b.clear_write_secret) write_secret = '';
+  if (b.clear_write_secret || feishu) write_secret = '';   // 飞书读写用同一个应用
   else if (!write_secret || /^•+$/.test(write_secret)) write_secret = old.write_secret || '';
   return { cfg: {
     corp_id, secret: secret.slice(0, 200), ...(write_secret ? { write_secret: write_secret.slice(0, 200) } : {}),
@@ -2169,16 +2191,17 @@ async function runDirSource(src, actor, opts = {}) {
     if (!parent) throw Object.assign(new Error('套用的文件夹通讯录已被删除'), { status: 400 });
     if (!parent.enabled) throw Object.assign(new Error('套用的文件夹通讯录已停用'), { status: 400 });
   }
-  const cfg = dirsyncWecom.effectiveCfg(src);
-  if (!cfg || !cfg.corp_id || !cfg.secret) throw Object.assign(new Error('同步源配置不完整（企业 ID / 通讯录 Secret）'), { status: 400 });
-  if (src.type !== 'wecom') throw Object.assign(new Error('暂不支持该类型的同步源'), { status: 400 });
+  const drv = dirsync.driver(src.type);
+  if (!drv) throw Object.assign(new Error('暂不支持该类型的同步源'), { status: 400 });
+  const cfg = drv.effectiveCfg(src);
+  if (!cfg || !cfg.corp_id || !cfg.secret) throw Object.assign(new Error(src.type === 'feishu' ? '同步源配置不完整（App ID / App Secret）' : '同步源配置不完整（企业 ID / 通讯录 Secret）'), { status: 400 });
   if (_dirSyncRunning.has(subject.id)) throw Object.assign(new Error('该组织正在同步中，请稍后'), { status: 409 });
   _dirSyncRunning.add(subject.id);
   const at = new Date().toISOString();
   const prevState = parseJ(src.state) || {};
   const srcName = `${subject.name} · ${src.label || DIR_TYPES[src.type]}`;
   try {
-    const out = await dirsyncWecom.syncWecom(src, subject, cfg, { genOrgUid, isEmail, isPhone }, undefined, { force: !!opts.force });
+    const out = await drv.sync(src, subject, cfg, { genOrgUid, isEmail, isPhone }, undefined, { force: !!opts.force });
     const state = { at, ok: true, total: out.total, created: out.created, linked: out.linked, added: out.added,
       removed: out.removed, skipped: out.skipped, bind_provider: out.bind_provider, bind_providers: out.bind_providers,
       bound: out.bound, pw_set: out.pw_set, kept: out.kept, conflicts: out.conflicts, force: out.force,
@@ -2213,7 +2236,7 @@ router.get('/admin/orgs/:sid/dir-sources', requireAuth, (req, res) => {
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
   res.json({ success: true, types: Object.entries(DIR_TYPES).map(([key, label]) => ({ key, label })),
-    bind_choices: dirsyncWecom.loginProviderChoices(s), force_confirm: FORCE_CONFIRM,
+    bind_choices: dirsyncWecom.loginProviderChoices(s), bind_choices_feishu: drvOf('feishu').loginProviderChoices(s), force_confirm: FORCE_CONFIRM,
     // 所在文件夹的通讯录连接（v3.5.47，可「套用」；只给名称与企业 ID）
     folder_connections: s.folder_id ? dirSources.byFolder.all(s.folder_id).map(c => ({ id: c.id, label: c.label || DIR_TYPES[c.type], type: c.type,
       corp_id: (parseJ(c.config) || {}).corp_id || '', enabled: !!c.enabled })) : [],
@@ -2227,11 +2250,11 @@ router.post('/admin/orgs/:sid/dir-sources/scope-tree', requireAuth, async (req, 
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
   const b = req.body || {};
-  let old = {}, fromFolder = false;
+  let old = {}, fromFolder = false, type = DIR_TYPES[b.type] ? String(b.type) : 'wecom';
   if (b.source_id) {
     const src = dirSources.get.get(b.source_id);
     if (!src || src.subject_id !== s.id) return res.status(404).json({ error: '同步源不存在' });
-    old = dirsyncWecom.effectiveCfg(src); fromFolder = !!src.parent_id;
+    old = drvOf(src.type).effectiveCfg(src); fromFolder = !!src.parent_id; type = src.type;
   } else if (b.parent_id) {   // 新建「套用」时：用文件夹连接的企业 ID / Secret
     const conn = dirSources.get.get(b.parent_id);
     if (!isFolderConn(conn) || conn.folder_id !== s.folder_id) return res.status(404).json({ error: '文件夹通讯录不存在' });
@@ -2244,8 +2267,8 @@ router.post('/admin/orgs/:sid/dir-sources/scope-tree', requireAuth, async (req, 
   const corp_id = String(b.corp_id || old.corp_id || '').trim();
   let secret = String(b.secret || '').trim();
   if (!secret || /^•+$/.test(secret)) secret = old.secret || '';
-  if (!corp_id || !secret) return res.status(400).json({ error: '请先填写企业 ID 与通讯录 Secret' });
-  try { const nodes = await dirsyncWecom.fetchScopeTree({ corp_id, secret }); res.json({ success: true, nodes, limited: !!nodes.limited, warning: nodes.limited ? dirsyncWecom.LIMITED_HINT : undefined }); }
+  if (!corp_id || !secret) return res.status(400).json({ error: type === 'feishu' ? '请先填写飞书 App ID 与 App Secret' : '请先填写企业 ID 与通讯录 Secret' });
+  try { const nodes = await drvOf(type).fetchScopeTree({ corp_id, secret }); res.json({ success: true, nodes, limited: !!nodes.limited, warning: nodes.limited ? drvOf(type).LIMITED_HINT : undefined }); }
   catch (e) { res.status(502).json({ error: e.message }); }
 });
 router.post('/admin/orgs/:sid/dir-sources', requireAuth, async (req, res) => {
@@ -2257,13 +2280,14 @@ router.post('/admin/orgs/:sid/dir-sources', requireAuth, async (req, res) => {
   if (dirSources.bySubject.all(s.id).length >= 20) return res.status(400).json({ error: '同步源太多了（上限 20）' });
   // 套用文件夹通讯录（v3.5.47）：只有系统管理员能挑部门（文件夹的 Secret 看得到整个企业，组织管理员不能自己选范围）
   let conn = null;
+  if (req.body?.parent_id && type !== 'wecom') return res.status(400).json({ error: '飞书同步源暂不支持套用文件夹通讯录' });
   if (req.body?.parent_id) {
     if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '套用文件夹通讯录需要系统管理员操作' });
     conn = dirSources.get.get(String(req.body.parent_id));
     if (!isFolderConn(conn) || !s.folder_id || conn.folder_id !== s.folder_id) return res.status(400).json({ error: '只能套用本组织所在文件夹的通讯录' });
     if (dirSources.children.all(conn.id).some(u => u.subject_id === s.id)) return res.status(400).json({ error: '本组织已经套用了这份通讯录' });
   }
-  const { cfg, error } = await buildDirSourceCfg(req.body || {}, null, s, conn ? { use: parseJ(conn.config) || {} } : {});
+  const { cfg, error } = await buildDirSourceCfg(req.body || {}, null, s, conn ? { use: parseJ(conn.config) || {}, type } : { type });
   if (error) return res.status(400).json({ error });
   const id = uuidv4();
   const label = String(req.body?.label || '').trim().slice(0, 40) || (conn ? (conn.label || DIR_TYPES[type]) : DIR_TYPES[type]);
@@ -2285,7 +2309,7 @@ router.patch('/admin/dir-sources/:id', requireAuth, async (req, res) => {
       if (!conn) return res.status(400).json({ error: '套用的文件夹通讯录已被删除' });
       use = parseJ(conn.config) || {};
     }
-    const r = await buildDirSourceCfg(b, cfg, oauthSubjects.get.get(src.subject_id), use ? { use } : {});
+    const r = await buildDirSourceCfg(b, cfg, oauthSubjects.get.get(src.subject_id), use ? { use, type: src.type } : { type: src.type });
     if (r.error) return res.status(400).json({ error: r.error });
     cfg = r.cfg;
   }
@@ -2326,7 +2350,7 @@ function folderMigrations(folderId) {
   const items = [];
   for (const o of orgs) {
     for (const src of dirSources.bySubject.all(o.id)) {
-      if (src.parent_id) continue;
+      if (src.parent_id || src.type !== 'wecom') continue;   // 飞书同步源暂不支持放到文件夹上
       const cfg = parseJ(src.config) || {};
       const same = conns.find(c => c.type === src.type && (parseJ(c.config) || {}).corp_id === cfg.corp_id);
       items.push({ kind: 'dir_source', id: src.id, org_id: o.id, org_name: o.name, type: src.type, label: src.label || DIR_TYPES[src.type],
@@ -2358,7 +2382,7 @@ router.post('/admin/org-folders/:id/dir-sources', requireAdmin(2), (req, res) =>
   const f = orgFolders.get.get(req.params.id);
   if (!f) return res.status(404).json({ error: '文件夹不存在' });
   const type = String(req.body?.type || 'wecom');
-  if (!DIR_TYPES[type]) return res.status(400).json({ error: '暂不支持该类型的同步源' });
+  if (type !== 'wecom') return res.status(400).json({ error: '文件夹共用通讯录目前只支持企业微信（飞书请在组织里单独添加同步源）' });
   if (dirSources.byFolder.all(f.id).length >= 20) return res.status(400).json({ error: '通讯录连接太多了（上限 20）' });
   const { cfg, error } = buildDirConnCfg(req.body || {}, null);
   if (error) return res.status(400).json({ error });
@@ -2579,7 +2603,7 @@ function scheduleEventSync(sourceId, delay = DIR_EVENT_DELAY()) {
     const src = dirSources.get.get(sourceId);
     if (!src || !src.enabled) return;
     if (_dirSyncRunning.has(src.subject_id)) return scheduleEventSync(sourceId);   // 本组织正在同步，稍后再跑
-    runDirSource(src, 'wecom:event').catch(e => console.warn('[通讯录事件同步]', src.label, e.message));
+    runDirSource(src, src.type + ':event').catch(e => console.warn('[通讯录事件同步]', src.label, e.message));
   }, delay);
   if (t.unref) t.unref();
   _dirEventTimers.set(sourceId, t);
@@ -2687,6 +2711,31 @@ router.post('/public/dirsync/wecom/:id', express.text({ type: () => true, limit:
   }
   dirSources.setEventState.run(JSON.stringify(state), ctx.src.id);
   res.type('text').send('success');
+});
+
+// ── 飞书事件订阅（v3.5.59）：飞书开发者后台「事件与回调 → 事件配置」的请求地址 ──
+//   保存时飞书先发 url_verification（要原样回 challenge）；之后通讯录变动推 contact.user.* / contact.department.* / contact.scope.*
+//   和企业微信一样：不逐条改库，只记事件 + 防抖后跑一次全量同步
+const FEISHU_SYNC_EVENTS = /^contact\.(user|department|scope)\./;
+router.post('/public/dirsync/feishu/:id', express.text({ type: () => true, limit: '256kb' }), (req, res) => {
+  const src = dirSources.get.get(req.params.id);
+  if (!src || src.type !== 'feishu') return res.status(404).json({ error: 'not configured' });
+  const cfg = drvOf('feishu').effectiveCfg(src);
+  if (!cfg.cb_token) {
+    noteVerifyAttempt(src, false, '本同步源还没保存 Verification Token（先在本系统保存，再去飞书后台保存请求地址）', req);
+    return res.status(404).json({ error: 'not configured' });
+  }
+  const raw = typeof req.body === 'string' ? req.body : (req.rawBody || JSON.stringify(req.body || {}));
+  const ev = drvOf('feishu').parseEvent(cfg, req.headers, raw);
+  if (!ev.ok) { noteVerifyAttempt(src, false, ev.reason, req); return res.status(403).json({ error: 'bad request' }); }
+  if (ev.kind === 'challenge') { noteVerifyAttempt(src, true, '', req); return res.json({ challenge: ev.challenge }); }
+  const prev = parseJ(dirSources.get.get(src.id)?.event_state) || {};
+  const state = { ...prev, at: new Date().toISOString(), event: ev.event_type, change_type: ev.event_type, count: (prev.count || 0) + 1, ignored: false };
+  if (ev.app_id && ev.app_id !== cfg.corp_id) { state.ignored = true; state.error = `事件来自应用 ${ev.app_id}，本同步源是 ${cfg.corp_id}`; }
+  else if (!FEISHU_SYNC_EVENTS.test(ev.event_type) || !src.enabled) state.ignored = true;
+  else { scheduleEventSync(src.id); state.queued = true; }
+  dirSources.setEventState.run(JSON.stringify(state), src.id);
+  res.json({ success: true });
 });
 
 // 定时同步：每 10 分钟看一眼，到点（interval_hours）的启用同步源跑一次。0 = 只手动。
@@ -3625,20 +3674,21 @@ async function deletionItemAction(r, key, action, req, admin) {
     if (!['recheck', 'disable', 'remove_member'].includes(action)) bad('不支持的操作');
     const src = dirSources.get.get(it.source_id);
     if (!src) { lifecycle.setVerification(r.id, key, { status: 'gone' }); return; }
-    const cfg = dirsyncWecom.effectiveCfg(src);
+    const drv = drvOf(src.type);
+    const cfg = drv.effectiveCfg(src);
     if (action !== 'recheck') {
-      if (!admin) bad('只有管理员能在企业微信里操作成员');
+      if (!admin) bad(`只有管理员能在${drv.label}里操作成员`);
       try {
-        if (action === 'disable') await dirsyncWecom.setMemberEnabled(cfg, it.ext_id, false);
-        else await dirsyncWecom.deleteMember(cfg, it.ext_id);
-      } catch (e) { bad((action === 'disable' ? '禁用' : '删除') + '失败：' + e.message + '（要在同步源里填「通讯录同步 Secret（管理用）」；也可以直接到企业微信后台处理后再点「重新核验」）'); }
+        if (action === 'disable') await drv.setMemberEnabled(cfg, it.ext_id, false);
+        else await drv.deleteMember(cfg, it.ext_id);
+      } catch (e) { bad((action === 'disable' ? '禁用' : '删除') + '失败：' + e.message + (src.type === 'feishu' ? '（飞书应用要开通「更新通讯录」权限并发布版本；也可以直接到飞书管理后台处理后再点「重新核验」）' : '（要在同步源里填「通讯录同步 Secret（管理用）」；也可以直接到企业微信后台处理后再点「重新核验」）')); }
       audit(action === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(target?.uid_seq || ''), actor: actorOf(req), detail: { source: src.id, ext_id: it.ext_id, deletion: r.id } });
     }
     let v;
     // 自己刚调企业微信禁用 / 删除成功，就是证据（受限的「通讯录同步」Secret 能改成员、却读不到成员状态）
     if (action === 'disable') v = { status: 'disabled', via: 'api' };
     else if (action === 'remove_member') v = { status: 'gone', via: 'api' };
-    else { try { v = await dirsyncWecom.memberStatus(cfg, it.ext_id); } catch (e) { v = { status: 'error', error: String(e.message || e).slice(0, 200) }; } }
+    else { try { v = await drv.memberStatus(cfg, it.ext_id); } catch (e) { v = { status: 'error', error: String(e.message || e).slice(0, 200) }; } }
     lifecycle.setVerification(r.id, key, v);
     return;
   }
@@ -3662,15 +3712,16 @@ function wecomLeftoverCandidates() {
   for (const b of rows) {
     let sid = null;
     if (b.kind === 'dir') sid = b.conn_id;
-    else if (String(b.provider || '').split(':')[0] === 'wecom') sid = lifecycle.wecomSourceFor(b.provider);
+    else if (dirsync.driverOfProvider(b.provider)) sid = lifecycle.wecomSourceFor(b.provider);   // 企业微信 / 飞书登录绑定：按企业 / 应用找同步源
     const src = sid && dirSources.get.get(sid);
-    if (!src || src.type !== 'wecom') continue;
-    const cfg = dirsyncWecom.effectiveCfg(src);
+    const drv = src && dirsync.driver(src.type);
+    if (!drv) continue;
+    const cfg = drv.effectiveCfg(src);
     const corp = String(cfg.corp_id || '').trim();
-    const key = corp.toLowerCase() + '|' + String(b.ext_id).toLowerCase();
+    const key = src.type + '|' + corp.toLowerCase() + '|' + String(b.ext_id).toLowerCase();
     if (map.has(key)) continue;
-    if (dirsyncWecom.corpUsers(corp, b.ext_id).length) continue;   // 这个 UserId 现在属于正常账号
-    map.set(key, { key, source_id: src.id, source_label: src.label || '企业微信', corp_id: corp, ext_id: b.ext_id, can_write: !!cfg.write_secret,
+    if (drv.corpUsers(corp, b.ext_id).length) continue;   // 这个 UserId / open_id 现在属于正常账号
+    map.set(key, { key, type: src.type, type_label: drv.label, source_id: src.id, source_label: src.label || drv.label, corp_id: corp, ext_id: b.ext_id, can_write: src.type === 'feishu' || !!cfg.write_secret, _drv: drv,
       user: { id: b.uid, name: b.name, uid: b.uid_code || '#' + String(b.uid_seq).padStart(5, '0'), deleted_at: b.deleted_at }, _cfg: cfg });
   }
   return [...map.values()];
@@ -3681,9 +3732,9 @@ router.get('/admin/deletions/leftovers', requireAuth, async (req, res) => {
   if (!isSysAdmin(req, 3) && !list.length && !db.prepare("SELECT 1 FROM admin_grants WHERE user_id=? AND perm='user.delete'").get(req.user.uid)) return res.status(403).json({ error: '无权查看' });
   let i = 0;
   const worker = async () => { while (i < list.length) { const it = list[i++];
-    try { it.status = (await dirsyncWecom.memberStatus(it._cfg, it.ext_id)).status; } catch (e) { it.status = 'error'; it.error = String(e.message || e).slice(0, 200); } } };
+    try { it.status = (await it._drv.memberStatus(it._cfg, it.ext_id)).status; } catch (e) { it.status = 'error'; it.error = String(e.message || e).slice(0, 200); } } };
   await Promise.all(Array.from({ length: Math.min(5, list.length) }, worker));
-  const out = list.map(({ _cfg, ...x }) => x);
+  const out = list.map(({ _cfg, _drv, ...x }) => x);
   res.json({ success: true, items: out, remaining: out.filter(x => x.status === 'active' || x.status === 'disabled' || x.status === 'quit' || x.status === 'error').length });
 });
 const LEFTOVER_VERB = { disable: '禁用', remove_member: '删除' };
@@ -3692,7 +3743,7 @@ router.post('/admin/deletions/leftovers/action', requireAuth, async (req, res) =
   if (!LEFTOVER_VERB[action]) return res.status(400).json({ error: '不支持的操作' });
   const want = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 200).map(x => String(x && x.key || '')).filter(Boolean);
   if (!want.length) return res.status(400).json({ error: '请先勾选' });
-  const phrase = `${LEFTOVER_VERB[action]} ${want.length} 个企业微信成员`;
+  const phrase = `${LEFTOVER_VERB[action]} ${want.length} 个${req.body?.platform === 'feishu' ? '飞书' : '企业微信'}成员`;
   if (String(req.body?.confirm || '').trim() !== phrase) return res.status(400).json({ error: `请原样输入「${phrase}」确认`, confirm_text: phrase });
   const byKey = new Map(wecomLeftoverCandidates().map(x => [x.key, x]));
   const results = [];
@@ -3701,8 +3752,9 @@ router.post('/admin/deletions/leftovers/action', requireAuth, async (req, res) =
     try {
       if (!it) throw new Error('不是已删除账号的残留成员（可能已恢复账号，或这个 UserId 现在属于别的账号）');
       if (!canLeftover(req, it)) throw new Error('无权操作');
-      if (action === 'disable') await dirsyncWecom.setMemberEnabled(it._cfg, it.ext_id, false);
-      else await dirsyncWecom.deleteMember(it._cfg, it.ext_id);
+      if (it.type !== (req.body?.platform === 'feishu' ? 'feishu' : 'wecom')) throw new Error('勾选里混了企业微信和飞书成员，请分开处理');
+      if (action === 'disable') await it._drv.setMemberEnabled(it._cfg, it.ext_id, false);
+      else await it._drv.deleteMember(it._cfg, it.ext_id);
       audit(action === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(users.findById.get(it.user.id)?.uid_seq || ''), actor: actorOf(req), detail: { source: it.source_id, ext_id: it.ext_id, leftover: true } });
       results.push({ key: k, ext_id: it.ext_id, name: it.user.name, ok: true });
     } catch (e) { results.push({ key: k, ext_id: it ? it.ext_id : '', name: it ? it.user.name : '', ok: false, error: e.message + (/48002|48004|权限/.test(e.message) ? '（要在同步源里填「通讯录同步 Secret（管理用）」）' : '') }); }
@@ -3725,17 +3777,18 @@ function anomalyAccounts() {
   for (const u of rows) {
     const orgs = db.prepare('SELECT s.name, m.password_hash FROM org_members m JOIN oauth_subjects s ON s.id=m.subject_id WHERE m.user_id=?').all(u.id);
     if (orgs.some(o => o.password_hash)) continue;   // 有组织密码：能「登录到组织」
-    const links = db.prepare(`SELECT l.source_id, l.ext_id, l.ext_name, d.label, d.type FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id WHERE l.user_id=?`).all(u.id)
+    const links = db.prepare(`SELECT l.source_id, l.ext_id, l.ext_name, l.ext_union, d.label, d.type FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id WHERE l.user_id=?`).all(u.id)
       .map(l => {
-        const src = dirSources.get.get(l.source_id), cfg = src ? dirsyncWecom.effectiveCfg(src) : {};
+        const src = dirSources.get.get(l.source_id), drv = dirsync.driver(l.type), cfg = src && drv ? drv.effectiveCfg(src) : {};
         let bind = null;
-        if (l.type === 'wecom' && cfg.corp_id) {
-          for (const p of dirsyncWecom.corpScope(cfg.corp_id).providers) {
+        if (drv && cfg.corp_id) {   // 同一企业（飞书：同一 App ID）的登录凭证里，这个成员 ID 还没被占用的
+          for (const p of drv.corpScope(cfg.corp_id).providers) {
             const taken = db.prepare('SELECT user_id FROM user_oauth WHERE provider=? AND open_id=? COLLATE NOCASE').get(p, l.ext_id);
             if (!taken) { bind = p; break; }
           }
         }
-        return { source_id: l.source_id, source_label: l.label || '企业微信', ext_id: l.ext_id, ext_name: l.ext_name || null, can_write: !!cfg.write_secret, bind_provider: bind };
+        return { source_id: l.source_id, type: l.type, source_label: l.label || (drv ? drv.label : l.type), ext_id: l.ext_id, ext_name: l.ext_name || null, ext_union: l.ext_union || null,
+          can_write: l.type === 'feishu' || !!cfg.write_secret, bind_provider: bind };
       });
     const kind = links.length ? 'unbound' : orgs.length ? 'no_login' : 'orphan';
     out.push({ id: u.id, name: u.name, uid: uidShow(u), status: u.status, created_at: u.created_at, kind, orgs: orgs.map(o => o.name), links,
@@ -3766,8 +3819,8 @@ router.post('/admin/anomalies/action', requireAuth, async (req, res) => {
       if (!a) throw new Error('已不是异常账号（可能已绑定 / 已删除）');
       if (action === 'bind') {
         const l = a.links.find(x => x.bind_provider);
-        if (!l) throw new Error('这家企业没有可用的企业微信登录凭证，或这个 UserId 已绑在别的账号上');
-        oauth.bind.run(uuidv4(), a.id, l.bind_provider, l.ext_id, null);
+        if (!l) throw new Error('这家企业没有可用的登录凭证（飞书要同一个 App ID），或这个成员 ID 已绑在别的账号上');
+        oauth.bind.run(uuidv4(), a.id, l.bind_provider, l.ext_id, l.ext_union || null);
         audit('user.anomaly_bound', { subject: String(users.findById.get(a.id).uid_seq), actor: actorOf(req), detail: { provider: l.bind_provider, ext_id: l.ext_id } });
         row.bound = l.bind_provider;
       } else {
@@ -3778,11 +3831,11 @@ router.post('/admin/anomalies/action', requireAuth, async (req, res) => {
         const ext = [];
         for (const l of a.links) {
           if (wecom === 'keep') { ext.push({ l, v: { status: 'kept', via: 'admin' } }); continue; }
-          const src = dirSources.get.get(l.source_id); const cfg = dirsyncWecom.effectiveCfg(src);
+          const src = dirSources.get.get(l.source_id); const drv = drvOf(l.type); const cfg = drv.effectiveCfg(src);
           try {
-            if (wecom === 'disable') await dirsyncWecom.setMemberEnabled(cfg, l.ext_id, false);
-            else await dirsyncWecom.deleteMember(cfg, l.ext_id);
-          } catch (e) { if (!(wecom === 'remove' && e.errcode === 60111)) throw new Error(`企业微信${wecom === 'disable' ? '禁用' : '删除'} ${l.ext_id} 失败：${e.message}${cfg.write_secret ? '' : '（同步源没填「通讯录同步 Secret（管理用）」）'}`); }
+            if (wecom === 'disable') await drv.setMemberEnabled(cfg, l.ext_id, false);
+            else await drv.deleteMember(cfg, l.ext_id);
+          } catch (e) { if (!(wecom === 'remove' && drv.isGoneError(e))) throw new Error(`${drv.label}${wecom === 'disable' ? '禁用' : '删除'} ${l.ext_id} 失败：${e.message}${l.type === 'wecom' && !cfg.write_secret ? '（同步源没填「通讯录同步 Secret（管理用）」）' : ''}`); }
           audit(wecom === 'disable' ? 'account.external_suspended' : 'account.external_removed', { subject: String(u.uid_seq), actor: actorOf(req), detail: { source: l.source_id, ext_id: l.ext_id, anomaly: true } });
           ext.push({ l, v: { status: wecom === 'disable' ? 'disabled' : 'gone', via: 'api' } });
         }
