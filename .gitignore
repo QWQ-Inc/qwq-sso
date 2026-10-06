@@ -21,3 +21,6 @@ logs/
 # 编辑器
 .vscode/
 .idea/
+
+# Claude Code 本地配置（预览/会话，不进仓库）
+.claude/

@@ -273,13 +273,13 @@ async function syncFeishu(source, subject, cfg, helpers, fetcher = fetchDirector
   if (Array.isArray(deptTree) && deptTree.length) {
     for (const node of deptTree) {
       const extId = String(node.id);
-      let dId = departments.getByExt.get(subject.id, 'feishu', extId);
+      let dId = departments.getByExt.get(source.id, extId);
       const parentId = node.parent != null ? (extToDeptId.get(String(node.parent)) || null) : null;
       if (dId) {
         departments.update.run(node.name || extId, parentId, dId.id);
       } else {
         dId = { id: crypto.randomUUID() };
-        departments.insert.run(dId.id, node.name || extId, subject.id, parentId, 'feishu', extId, Number(node.order) || 0);
+        departments.insert.run(dId.id, node.name || extId, subject.id, parentId, 'feishu', extId, source.id, Number(node.order) || 0);
       }
       extToDeptId.set(extId, dId.id);
     }

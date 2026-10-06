@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.5**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.72**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,50 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.72 部门按通讯录连接隔离 + 部门增删限权（用户反馈）
+
+三级版本。用户：「存部门应该按照有通讯录的三方系统来，可以分多个，避免出错；归类之后建号也可以分到对的部门去」+「部门增删做掉，但限权给管理员」。
+
+### 数据（db.js）
+- `org_departments` 加 `source_id`（指向 `dir_sync_sources.id`；手动部门为空）。⚠️ **唯一 upsert 键从 `(subject_id, source, ext_id)` 改为 `(source_id, ext_id)`**——旧键下同组织两个同类型连接（两家企业微信）的 ext_id 会互撞、部门串成一棵；新键按连接隔离。做法：`DROP INDEX IF EXISTS idx_org_depts_ext` 后重建 `(source_id, ext_id) WHERE ext_id IS NOT NULL`。
+- 迁移：`UPDATE org_departments SET source_id = (该组织同类型第一个连接 id) WHERE source != 'manual' AND source_id IS NULL`，放在 `dir_sync_sources` 建表**之后**（否则首启找不到表被静默吞）。有歧义（多连接/文件夹套用）先取第一个，重新同步即可修正。
+- `deptStmts`：`getByExt(source_id, ext_id)`、`insert` 加 source_id 参数。
+
+### 后端（api.js + dirsync-wecom.js + dirsync-feishu.js）
+- `syncWecom`/`syncFeishu` 建部门循环改用 `source.id`（连接 id）作 key：`getByExt.get(source.id, extId)` + `insert(..., source.id, ...)`。
+- 部门 CRUD 限权：`PATCH/DELETE` 遇 `source !== 'manual'` 直接 400「同步部门由通讯录管理，不可手动改/删」；`POST/PATCH` 设父级时要求父级也是 manual（不能把手动部门挂到同步部门下，防两棵树交叉）。仍走 `canManageOrg`（组织管理员/系统管理员）。
+- `GET /admin/orgs/:sid/departments` 多回 `sources`（本组织各连接 id/label/type）供前端分组。
+
+### 前端（dashboard.html）
+- 组织成员弹窗「部门（树状）」按连接分组：`_deptGroups()` 把 `source_id` 空的归「手动部门」、每个 `source_id` 归到对应连接（label + 企微/飞书标签）；`_deptOpts` 用 `<optgroup>` 分组；同步部门只显示「同步」标签、不给改名/删除按钮，手动部门才给。
+
+### 测试
+- `scratchpad/departments-test.js` 改为 source_id 键，14 项全过（含新增：不同连接同 ext_id 不冲突、s1/s2 各一套）。回归 contacts 18 / dirsync-contacts 6 / feishu-create 7 / push-provision 10 / import-multi 10 / similar-clues 5 全过。dev 浏览器实测：部门下拉/列表按「手动部门 / 企业微信·集团（企微）/ 飞书（飞书）」分组、同步部门只读。
+
+## v3.5.71 手机号带国家码存储 + 按区号路由短信凭证（用户反馈）
+
+三级版本。用户：「平台内关于手机号码的存库，现在默认要有必要字段国家码，比如 +86/+1/+852。平台管理员应该在环境变量里设定其手机号码默认使用哪某个区号，并确定其已配置相应地区的短信接口。可以像添加凭证那样，设定其调用什么服务商……比如 +86 的配置是火山引擎。」三点确认：① 完整带码存储（`+8613800000000`，存量裸 11 位迁移补 `+86`）；② 全局 + 按组织覆盖；③ 区号下拉可选。
+
+### 数据（db.js）
+- 存量 `users.phone` 迁移：裸 11 位（`NOT LIKE '+%'` 且 length=11）补 `+86` 前缀，幂等。
+- `oauth_subjects.sms_channels`（TEXT，JSON `{ "+86": {QWQ_MESSAGE_URL/KEY/SMS_GROUP/…} }`，组织覆盖某区号短信凭证，空=回退）+ `oauthSubjectStmts.setSmsChannels`。
+- 新表 `sms_channels(id, country_code UNIQUE, label, config JSON, enabled, sort_order, created_at)`——全局「区号→短信通道」，`smsChannelStmts`（all/get/byCc/insert/update/remove），导出 `smsChannels`。
+
+### 后端（api.js）
+- `parsePhone(s)`：按常见国家码前缀表（`PHONE_CCS`，长度降序先匹配长的）解析出 `{cc,local}`；`normalizePhone(s)`：裸 11 位补 `defaultPhoneCC()`、带码原样；`isPhone`：+86 严格 11 位、其他区号宽松 4~15 位。⚠️ **国家码位数不定（1~3 位），正则 `(\d{1,4})` 会贪婪拆错 `+8613`，必须用前缀表匹配**（v3.5.71 踩过，用 `PHONE_CCS.find`）。
+- `smsOverrideFor(phone, orgId)`：优先级 `组织覆盖该区号 > 全局区号通道(smsChannels.byCc) > 组织默认(msg_config) > 全局 env`。`/sms/send` 用它替代原来的 `directLoginMsgCfg`。
+- 管理端 `GET/POST/PATCH/DELETE /admin/sms-channels`（读 Lv.3 / 写 Lv.2）；`smsChannelView` 掩码 `QWQ_MESSAGE_KEY`；PATCH 打码串不覆盖。
+- 手机号归一化接入全部入口：`/sms/send`、`/sms/verify`、`resolveUser`（裸 11 位或带码）、`handleRegister`、`handleOrgCodeLogin`（**修正：验证码键/查号都要用归一化后的 phone，否则 `/sms/send` 存 `sms:+86138…` 而这里查裸号，永远对不上**）、组织建成员、`importOrgMembers`、`/user/contact`、管理员建号、`pushMemberToSources`、开放 API `/v1/sms/send`。`pushMemberToSources` 对企业微信把 `+86` 去掉（企业微信要裸号）。
+- `init.js ENV_KEYS` 加 `DEFAULT_PHONE_CC`。
+
+### 前端
+- `dashboard.html`：管理端新菜单「短信区号通道」（`adm-sms-channels`，读 Lv.3 写 Lv.2，非 superadmin-only）：区号 CRUD 列表 + 弹窗（国家码 / 名称 / QWQ Message 凭证字段，KEY 打码留空不修改 / 启用）+ dev mock。系统配置「消息分发」组加 `DEFAULT_PHONE_CC`。
+- `login.html`：注册面板的下拉区号现在真正生效（`doRegister` 提交时 `区号 + 本地号`）；`isPhoneStr` 放宽认带国家码的手机号（登录/验证码/组织验证码登录都能输 +852…）。
+
+### 测试
+- `scratchpad/phone-cc-test.js` 13 项全过：parsePhone +86/+852/+1、normalizePhone 补码、isPhone 严格/宽松、+852 走全局区号通道、+86 无通道回退 undefined、组织覆盖 +86、组织覆盖不影响 +852、组织默认 msg_config 兜底。回归 feishu-create 7 / push-provision 10 / import-multi 10 / contacts 18 / dirsync-contacts 6 / similar-clues 5 / departments 12 全过。
+- ⚠️ 真实 QWQ Message 各服务商链路无凭据无法端到端；区号路由是纯逻辑（smsOverrideFor），靠 phone-cc-test 覆盖。前端 dev-mock + 结构校验。
 
 ## v3.5.70.5 修出站建号：企业微信 userid 冲突错误码 + 飞书根部门
 

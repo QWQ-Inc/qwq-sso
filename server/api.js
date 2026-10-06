@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, departments, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const contactUtil = require('./contacts');
@@ -31,6 +31,28 @@ function userMsgCfg(user) {
     }
   } catch (_) {}
   return undefined;
+}
+// 解析某手机号区号对应的短信凭证（v3.5.71）：组织覆盖该区号 > 全局区号通道 > 组织默认(msg_config) > 全局 env
+function smsOverrideFor(phone, orgId) {
+  const p = parsePhone(phone);
+  const cc = p ? p.cc : defaultPhoneCC();
+  // 1. 组织覆盖该区号
+  if (orgId) {
+    try {
+      const s = oauthSubjects.get.get(orgId);
+      if (s && s.sms_channels) {
+        const m = JSON.parse(s.sms_channels);
+        if (m[cc] && typeof m[cc] === 'object' && Object.keys(m[cc]).length) return m[cc];
+      }
+    } catch (_) {}
+  }
+  // 2. 全局区号通道
+  try {
+    const ch = smsChannels.byCc.get(cc);
+    if (ch && ch.enabled) { const c = JSON.parse(ch.config || '{}'); if (Object.keys(c).length) return c; }
+  } catch (_) {}
+  // 3. 组织默认（msg_config）或全局 env
+  return orgId ? subjectMsgCfg(orgId) : undefined;
 }
 // 组织专属实名(KYC)凭证（v3.5.16）：某组织 kyc_config 覆盖（空=回退全局）
 function subjectKycCfg(sid) {
@@ -94,7 +116,34 @@ function maskPhone(p) {
 
 const router = express.Router();
 const isEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-const isPhone = s => /^1[3-9]\d{9}$/.test(s);
+// 常见国家码前缀（按长度降序，先匹配长的；管理员在「区号短信通道」里新增的区号也能被 smsChannels 表命中）
+const PHONE_CCS = ['+852','+853','+855','+856','+880','+886','+998','+996','+995','+994','+993','+992','+977','+976','+975','+974','+973','+972','+971','+970','+968','+967','+966','+965','+964','+963','+962','+961','+960','+94','+93','+92','+91','+90','+86','+84','+82','+81','+66','+65','+64','+63','+62','+61','+60','+58','+57','+56','+55','+54','+53','+52','+51','+49','+48','+47','+46','+45','+44','+43','+41','+40','+39','+36','+34','+33','+32','+31','+30','+27','+20','+7','+1'];
+// 手机号（v3.5.71 起带国家码）：+86 严格校验 11 位；其他区号宽松校验本地号（4~15 位数字）
+function parsePhone(s) {
+  const t = String(s || '').trim();
+  if (!t.startsWith('+')) return null;
+  const cc = PHONE_CCS.find(c => t.startsWith(c));
+  if (!cc) return null;
+  const local = t.slice(cc.length);
+  return local ? { cc, local } : null;
+}
+function defaultPhoneCC() {
+  const v = String(process.env.DEFAULT_PHONE_CC || '+86').trim();
+  return /^\+\d{1,4}$/.test(v) ? v : '+86';
+}
+// 归一化：裸大陆 11 位手机号补默认区号；已是带码则原样
+function normalizePhone(s) {
+  const t = String(s || '').trim();
+  if (/^\+\d{1,4}\d{4,15}$/.test(t)) return t;
+  if (/^1[3-9]\d{9}$/.test(t)) return defaultPhoneCC() + t;
+  return t;
+}
+const isPhone = s => {
+  const p = parsePhone(s);
+  if (!p) return false;
+  if (p.cc === '+86') return /^1[3-9]\d{9}$/.test(p.local);
+  return /^\d{4,15}$/.test(p.local);
+};
 
 // ──────────────────────────────────────────
 // 邮箱域名白/黑名单
@@ -188,18 +237,60 @@ function finishLogin(res, user, req, method, extra = {}) {
   return res.json({ success: true, token, user: safeUser(user), mustSetup2fa: mustSetup2fa(user), org, org_scoped: orgScoped });
 }
 
+// ── 区号 → 短信通道（v3.5.71）──
+// 每个国家码（+86/+1/+852…）可配一套 QWQ Message 凭证（URL/KEY/短信通道组/模板），发送时按手机号区号路由。
+function smsChannelView(ch) {
+  let cfg = {}; try { cfg = JSON.parse(ch.config || '{}'); } catch (_) {}
+  const masked = { ...cfg };
+  if (masked.QWQ_MESSAGE_KEY) masked.QWQ_MESSAGE_KEY = '••••••••';
+  return { id: ch.id, country_code: ch.country_code, label: ch.label, enabled: !!ch.enabled, sort_order: ch.sort_order, config: masked };
+}
+router.get('/admin/sms-channels', requireAdmin(3), (req, res) => {
+  res.json({ success: true, data: smsChannels.all.all().map(smsChannelView), default_cc: defaultPhoneCC() });
+});
+router.post('/admin/sms-channels', requireAdmin(2), (req, res) => {
+  const cc = String(req.body?.country_code || '').trim();
+  if (!/^\+\d{1,4}$/.test(cc)) return res.status(400).json({ error: '区号格式应为 +86 / +1 / +852' });
+  if (smsChannels.byCc.get(cc)) return res.status(400).json({ error: '该区号已配置' });
+  const cfg = req.body?.config && typeof req.body.config === 'object' ? req.body.config : {};
+  const id = uuidv4();
+  smsChannels.insert.run(id, cc, String(req.body?.label || '').slice(0, 60), JSON.stringify(cfg), req.body?.enabled === false ? 0 : 1, Number.isFinite(+req.body?.sort_order) ? +req.body.sort_order : 0);
+  res.json({ success: true, id });
+});
+router.patch('/admin/sms-channels/:id', requireAdmin(2), (req, res) => {
+  const ch = smsChannels.get.get(req.params.id);
+  if (!ch) return res.status(404).json({ error: '区号通道不存在' });
+  let oldCfg = {}; try { oldCfg = JSON.parse(ch.config || '{}'); } catch (_) {}
+  const newCfg = { ...oldCfg };
+  if (req.body?.config && typeof req.body.config === 'object') {
+    for (const [k, v] of Object.entries(req.body.config)) {
+      if (v == null || v === '') continue;
+      if (/^•+$/.test(String(v))) continue;   // 打码串不覆盖
+      newCfg[k] = v;
+    }
+  }
+  const cc = String(req.body?.country_code || ch.country_code).trim();
+  if (!/^\+\d{1,4}$/.test(cc)) return res.status(400).json({ error: '区号格式应为 +86 / +1 / +852' });
+  if (cc !== ch.country_code && smsChannels.byCc.get(cc)) return res.status(400).json({ error: '该区号已配置' });
+  smsChannels.update.run(cc, req.body?.label !== undefined ? String(req.body.label).slice(0, 60) : ch.label, JSON.stringify(newCfg), req.body?.enabled !== undefined ? (req.body.enabled ? 1 : 0) : ch.enabled, Number.isFinite(+req.body?.sort_order) ? +req.body.sort_order : ch.sort_order, ch.id);
+  res.json({ success: true });
+});
+router.delete('/admin/sms-channels/:id', requireAdmin(2), (req, res) => {
+  smsChannels.remove.run(req.params.id);
+  res.json({ success: true });
+});
+
 // ── 短信验证码 ──
 router.post('/sms/send', async (req, res) => {
-  const { phone } = req.body;
+  const phone = normalizePhone(req.body?.phone);
   if (!phone || !isPhone(phone)) return res.status(400).json({ error: '手机号格式不正确' });
   const code = genCode();
   const expire = parseInt(process.env.SMS_CODE_EXPIRE || '300');
   otp.clean.run(Date.now());
   otp.set.run(`sms:${phone}`, code, Date.now() + expire * 1000);
 
-  // org-first 登录（v3.5.17）：登录到某组织时，用该组织专属短信凭证下发（仅限已 opt-in 直登的组织）
-  const orgCfg = directLoginMsgCfg(req.body.org);
-  // 是否真发：看分发中心是否已配置（不看 NODE_ENV，见 CLAUDE.md）
+  // v3.5.71：按手机号区号路由短信凭证（组织覆盖该区号 > 全局区号通道 > 组织默认 > 全局）
+  const orgCfg = smsOverrideFor(phone, req.body?.org);
   const hasSms = hasMessageHub(orgCfg);
 
   if (hasSms) {
@@ -217,7 +308,8 @@ router.post('/sms/send', async (req, res) => {
 });
 
 router.post('/sms/verify', (req, res) => {
-  const { phone, code } = req.body;
+  const phone = normalizePhone(req.body?.phone);
+  const { code } = req.body;
   if (!phone || !code) return res.status(400).json({ error: '参数缺失' });
   const entry = otp.get.get(`sms:${phone}`);
   if (!entry || Date.now() > entry.expire_at) { otp.del.run(`sms:${phone}`); return res.status(400).json({ error: '验证码不存在或已过期' }); }
@@ -286,7 +378,8 @@ router.post('/email/verify-code', (req, res) => {
 
 // ── 账号密码注册/登录（邮箱或手机号均可）──
 async function handleRegister(req, res) {
-  const { email, phone, password, name } = req.body;
+  const { email, password, name } = req.body;
+  const phone = normalizePhone(req.body?.phone);   // v3.5.71 裸 11 位补默认区号
 
   // 账号可以是邮箱或手机号。登录页「账号类型」选手机号时前端发的就是 phone，
   // v3.3.3.2 之前这里只认 email，导致手机号注册必然报「邮箱格式不正确」。
@@ -422,7 +515,7 @@ function resolveUser(raw) {
   // 公共账号不能自己登录（无凭据，只能被授权成员切换使用），登录解析一律排除
   const notPub = u => (u && !u.is_public) ? u : null;
   if (s.includes('@'))            return notPub(users.findByEmail.get(s));   // 邮箱
-  if (/^1[3-9]\d{9}$/.test(s))    return notPub(users.findByPhone.get(s));   // 手机号
+  if (/^1[3-9]\d{9}$/.test(s) || /^\+\d{1,4}\d{4,15}$/.test(s)) return notPub(users.findByPhone.get(normalizePhone(s)));   // 手机号（裸 11 位或带码）
   // 自定义 UID（uid_code，如 QWQ-00042 / 随机数字串）——精确匹配，去掉可能带的 #
   const byCode = notPub(users.findByUidCode.get(s)) || notPub(users.findByUidCode.get(s.replace(/^#/, '')));
   if (byCode) return byCode;
@@ -549,16 +642,17 @@ async function handleOrgCodeLogin(req, res) {
       : `当前不在该组织允许的登录时段内（${s.login_start}~${s.login_end}）`, code: gate });
   }
   if (s.deny_code_login) return res.status(400).json({ error: '该组织不允许验证码登录，请使用密码登录' });
-  const byEmail = isEmail(ident), byPhone = !byEmail && isPhone(ident);
+  const byEmail = isEmail(ident), byPhone = !byEmail && isPhone(normalizePhone(ident));
   if (!byEmail && !byPhone) return res.status(400).json({ error: '验证码登录请填写邮箱或手机号' });
-  const key = (byEmail ? 'email:' : 'sms:') + ident;
+  const phoneIdent = normalizePhone(ident);   // v3.5.71 裸 11 位补默认区号，与 /sms/send 的 OTP 键一致
+  const key = (byEmail ? 'email:' : 'sms:') + (byEmail ? ident : phoneIdent);
   const entry = otp.get.get(key);
   if (!entry || Date.now() > entry.expire_at) { otp.del.run(key); return res.status(400).json({ error: '验证码不存在或已过期' }); }
   otp.incAtt.run(key);
   if (entry.attempts >= 5) { otp.del.run(key); return res.status(400).json({ error: '错误次数过多，请重新获取' }); }
   if (entry.code !== String(code).trim()) return res.status(400).json({ error: '验证码错误' });
   otp.del.run(key);
-  const user = byEmail ? users.findByEmail.get(ident) : users.findByPhone.get(ident);
+  const user = byEmail ? users.findByEmail.get(ident) : users.findByPhone.get(phoneIdent);
   const member = (user && !user.is_public) ? orgMembers.get.get(s.id, user.id) : null;
   if (!member) { logLogin({ method, ip: req.ip, ua, status: 'failed', failReason: '非该组织成员' }); return res.status(401).json({ error: '该账号不是此组织的成员' }); }
   if (user.status === 'disabled') { logLogin({ userId: user.id, method, ip: req.ip, ua, status: 'disabled' }); return res.status(403).json({ error: '账号已停用，请联系管理员' }); }
@@ -1259,6 +1353,7 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     require_2fa: !!s.require_2fa, ip_allow: s.ip_allow || '', login_start: s.login_start || '', login_end: s.login_end || '',
     // 组织专属凭证（短信/邮件）+ 是否允许直接登录
     msg_config: (() => { try { return s.msg_config ? JSON.parse(s.msg_config) : {}; } catch (_) { return {}; } })(),
+    sms_channels: (() => { try { return s.sms_channels ? JSON.parse(s.sms_channels) : {}; } catch (_) { return {}; } })(),
     kyc_config: (() => { try { return s.kyc_config ? JSON.parse(s.kyc_config) : {}; } catch (_) { return {}; } })(),
     allow_direct_login: !!s.allow_direct_login,
     members_open: !!s.members_open,
@@ -1452,6 +1547,11 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   if (req.body.msg_config !== undefined) {
     const mc = req.body.msg_config;
     oauthSubjects.setMsgConfig.run(mc && typeof mc === 'object' && Object.keys(mc).length ? JSON.stringify(mc) : null, row.id);
+  }
+  // 组织覆盖某区号的短信凭证（v3.5.71）：JSON { "+86": {QWQ_MESSAGE_*...} }，空对象=清空回退全局
+  if (req.body.sms_channels !== undefined) {
+    const sc = req.body.sms_channels;
+    oauthSubjects.setSmsChannels.run(sc && typeof sc === 'object' && Object.keys(sc).length ? JSON.stringify(sc) : null, row.id);
   }
   // 组织专属实名(KYC)凭证（v3.5.16）
   if (req.body.kyc_config !== undefined) {
@@ -1669,9 +1769,11 @@ async function pushMemberToSources(subject, user, opts = {}) {
     if (!canWrite) { results.push({ source_id: src.id, label, ok: false, error: '无写权限：企业微信建/删成员要用「通讯录同步」Secret（管理工具 → 通讯录同步 → 开启「API 编辑通讯录」），填到同步源「管理用 Secret」栏' }); continue; }
     let extId = opts.extId || crypto.randomBytes(4).toString('hex');
     const deptIds = drv.deptIdsOf(cfg);
+    const rawMobile = opts.mobile || user.phone || '';
     const fields = {
       name: opts.name || user.name || '',
-      mobile: opts.mobile || user.phone || '',
+      // 企业微信 mobile 要裸 11 位（去掉 +86）；飞书要 +86（飞书 createMember 里会补）
+      mobile: src.type === 'wecom' ? String(rawMobile).replace(/^\+86/, '') : rawMobile,
       email: opts.email || user.email || '',
     };
     if (src.type === 'wecom') { fields.userid = String(extId); fields.department = deptIds; }
@@ -1722,7 +1824,7 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
     // 按组织建成员（v3.5.67）：直接建一个平台账号并加入本组织
     const name = String(req.body?.name || '').trim();
     const email = String(req.body?.email || '').trim().toLowerCase();
-    const phone = String(req.body?.phone || '').trim();
+    const phone = normalizePhone(req.body?.phone);
     const password = String(req.body?.password || '');
     if (!name) return res.status(400).json({ error: '请填写姓名' });
     if (!email && !phone) return res.status(400).json({ error: '请至少填写邮箱或手机号' });
@@ -1830,7 +1932,10 @@ router.get('/admin/orgs/:sid/departments', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
-  res.json({ success: true, data: departments.bySubject.all(s.id) });
+  const data = departments.bySubject.all(s.id);
+  // v3.5.72：部门按通讯录连接隔离，把连接信息带回去供前端分组
+  const sources = dirSources.bySubject.all(s.id).map(d => ({ id: d.id, label: d.label || d.type, type: d.type }));
+  res.json({ success: true, data, sources });
 });
 router.post('/admin/orgs/:sid/departments', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
@@ -1842,9 +1947,10 @@ router.post('/admin/orgs/:sid/departments', requireAuth, (req, res) => {
   if (parentId) {
     const p = departments.get.get(parentId);
     if (!p || p.subject_id !== s.id) return res.status(400).json({ error: '上级部门不存在或不属于本组织' });
+    if (p.source !== 'manual') return res.status(400).json({ error: '上级部门是通讯录同步的，不能在其下新建手动部门' });
   }
   const id = uuidv4();
-  departments.insert.run(id, name, s.id, parentId, 'manual', null, 0);
+  departments.insert.run(id, name, s.id, parentId, 'manual', null, null, 0);
   res.json({ success: true, id });
 });
 router.patch('/admin/orgs/:sid/departments/:id', requireAuth, (req, res) => {
@@ -1853,6 +1959,7 @@ router.patch('/admin/orgs/:sid/departments/:id', requireAuth, (req, res) => {
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
   const d = departments.get.get(req.params.id);
   if (!d || d.subject_id !== s.id) return res.status(404).json({ error: '部门不存在' });
+  if (d.source !== 'manual') return res.status(400).json({ error: '同步部门由通讯录管理，不可手动修改' });
   const name = req.body?.name !== undefined ? String(req.body.name || '').trim() : d.name;
   if (!name) return res.status(400).json({ error: '请填写部门名称' });
   let parentId = d.parent_id;
@@ -1861,6 +1968,7 @@ router.patch('/admin/orgs/:sid/departments/:id', requireAuth, (req, res) => {
     if (parentId) {
       const p = departments.get.get(parentId);
       if (!p || p.subject_id !== s.id) return res.status(400).json({ error: '上级部门不存在或不属于本组织' });
+      if (p.source !== 'manual') return res.status(400).json({ error: '上级部门是通讯录同步的，不能移动到其下' });
       if (parentId === d.id || deptIsDescendant(d.id, parentId)) return res.status(400).json({ error: '不能把部门移到自己的子部门下' });
     }
   }
@@ -1873,6 +1981,7 @@ router.delete('/admin/orgs/:sid/departments/:id', requireAuth, (req, res) => {
   if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
   const d = departments.get.get(req.params.id);
   if (!d || d.subject_id !== s.id) return res.status(404).json({ error: '部门不存在' });
+  if (d.source !== 'manual') return res.status(400).json({ error: '同步部门由通讯录管理，不可手动删除' });
   // 子部门上提到被删部门的父级；成员 dept_id 置空
   const children = departments.childrenOf.all(d.id);
   for (const c of children) departments.update.run(departments.get.get(c.id).name, d.parent_id, c.id);
@@ -2233,7 +2342,7 @@ function importOrgMembers(subject, rows, opts = {}) {
   for (const raw of (Array.isArray(rows) ? rows : [])) {
     // 多手机/多邮箱：email/phone 为主值；emails[]/phones[] 为可选的更多联系方式（写进 user_contacts）
     const emailsIn = [raw?.email, ...(Array.isArray(raw?.emails) ? raw.emails : [])].map(x => String(x || '').trim()).filter(Boolean);
-    const phonesIn = [raw?.phone, ...(Array.isArray(raw?.phones) ? raw.phones : [])].map(x => String(x || '').trim()).filter(Boolean);
+    const phonesIn = [raw?.phone, ...(Array.isArray(raw?.phones) ? raw.phones : [])].map(x => normalizePhone(x)).filter(Boolean);   // v3.5.71 归一化带码
     const goodEmails = [...new Set(emailsIn.map(e => e.toLowerCase()).filter(isEmail))];
     const goodPhones = [...new Set(phonesIn.filter(isPhone))];
     const email = goodEmails[0] || '';   // 第一个有效邮箱做主字段
@@ -3227,7 +3336,7 @@ router.post('/user/contact/send-code', requireAuth, noPublic, async (req, res) =
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const type  = req.body?.type;
-  const value = String(req.body?.value || '').trim();
+  const value = type === 'phone' ? normalizePhone(req.body?.value) : String(req.body?.value || '').trim();
   if (type === 'email') {
     if (!isEmail(value)) return res.status(400).json({ error: '邮箱格式不正确' });
     const domainErr = checkEmailDomain(value);
@@ -3261,7 +3370,7 @@ router.post('/user/contact/verify', requireAuth, noPublic, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const type  = req.body?.type;
-  const value = String(req.body?.value || '').trim();
+  const value = type === 'phone' ? normalizePhone(req.body?.value) : String(req.body?.value || '').trim();
   const code  = String(req.body?.code || '').trim();
   if (type !== 'email' && type !== 'phone') return res.status(400).json({ error: 'type 无效' });
   const key = `chg:${type}:${user.id}:${value}`;
@@ -3900,7 +4009,8 @@ router.patch('/admin/users/:id', requireAdmin(2), (req, res) => {
 
 // ── 管理端：新建用户 ──
 router.post('/admin/users', requireAdmin(2), async (req, res) => {
-  const { name, email, password, phone, role = 'user', user_level = 4 } = req.body;
+  const { name, email, password, role = 'user', user_level = 4 } = req.body;
+  const phone = normalizePhone(req.body?.phone);
   if (!name || !email || !password) return res.status(400).json({ error: '用户名、邮箱、密码为必填' });
   if (password.length < 8) return res.status(400).json({ error: '密码至少 8 位' });
   const existing = users.findByEmail.get(email);
@@ -5479,7 +5589,7 @@ router.get('/v1/apps', requireApiKey('apps:read'), (req, res) => {
 });
 router.post('/v1/sms/send', requireApiKey('sms:send'), async (req, res) => {
   if (req.isSandbox) return res.json({ success: true, msgId: 'sandbox_sms_' + Date.now(), _sandbox: true });
-  const { phone } = req.body;
+  const phone = normalizePhone(req.body?.phone);
   if (!phone || !isPhone(phone)) return res.status(400).json({ error: '手机号格式不正确' });
   try { const code = genCode(); await sendSmsCode(phone, code); res.json({ success: true, msgId: 'sms_'+Date.now() }); }
   catch (e) { res.status(500).json({ error: '短信发送失败' }); }
@@ -6878,7 +6988,8 @@ router.get('/admin/access/logs', requireAdmin(3), (req, res) => {
 
 // ── 管理端：实体卡 / NFC 绑定 ──
 router.get('/admin/access/cards', requireAdmin(3), (req, res) => {
-  res.json({ success: true, cards: access.allCards.all() });
+  const org = String(req.query?.org || '').trim();
+  res.json({ success: true, cards: org ? access.cardsByOrg.all(org) : access.allCards.all() });
 });
 // 随机生成一个未被占用的卡号（10 位十六进制，大写）
 router.get('/admin/access/cards/gen', requireAdmin(2), (req, res) => {
@@ -6948,7 +7059,8 @@ router.delete('/user/access/face', requireAuth, noPublic, (req, res) => {
 
 // 管理端：人脸库（元数据列表 / 预览 / 删除 / 启停）
 router.get('/admin/access/faces', requireAdmin(3), (req, res) => {
-  res.json({ success: true, faces: access.facesAll.all() });
+  const org = String(req.query?.org || '').trim();
+  res.json({ success: true, faces: org ? access.facesByOrg.all(org) : access.facesAll.all() });
 });
 router.get('/admin/access/faces/:uid/image', requireAdmin(3), (req, res) => {
   const u = findRealUserByUid(req.params.uid);
@@ -7010,7 +7122,14 @@ function passView(p) {
 }
 router.get('/access/passes', requireAuth, (req, res) => {
   if (!canIssuePass(req)) return res.status(403).json({ error: '无签发访客码的权限' });
-  const rows = isSysAdmin(req, 3) ? access.passAll.all() : access.passByIssuer.all(req.user.uid);
+  const sys = isSysAdmin(req, 3);
+  const org = String(req.query?.org || '').trim();
+  let rows = sys ? access.passAll.all() : access.passByIssuer.all(req.user.uid);
+  if (sys && org) {
+    // v3.5.72：聚焦组织时只显示「有门属于该组织」的访客码
+    const orgDoors = new Set(access.allDoors.all().filter(d => d.subject_id === org).map(d => d.id));
+    rows = rows.filter(p => String(p.door_ids || '').split(',').some(id => orgDoors.has(id)));
+  }
   res.json({ success: true, passes: rows.map(passView) });
 });
 router.post('/access/passes', requireAuth, (req, res) => {

@@ -370,11 +370,15 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS org_departments (
   parent_id  TEXT,                                -- 父部门 id（树），NULL=顶级
   source     TEXT NOT NULL DEFAULT 'manual',       -- manual | wecom | feishu
   ext_id     TEXT,                                -- 外部部门 id（通讯录同步 upsert 匹配用），手动为空
+  source_id  TEXT,                                -- v3.5.72 所属通讯录连接（dir_sync_sources.id），manual=空
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+try { db.exec('ALTER TABLE org_departments ADD COLUMN source_id TEXT'); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_org_depts_subject ON org_departments(subject_id)'); } catch(_) {}
-try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_org_depts_ext ON org_departments(subject_id, source, ext_id) WHERE ext_id IS NOT NULL'); } catch(_) {}
+// v3.5.72：部门按通讯录连接隔离（每连接一套独立部门树），upsert 唯一键从 (subject_id, source, ext_id) 改为 (source_id, ext_id)
+try { db.exec('DROP INDEX IF EXISTS idx_org_depts_ext'); } catch(_) {}
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_org_depts_ext ON org_departments(source_id, ext_id) WHERE ext_id IS NOT NULL'); } catch(_) {}
 try { db.exec('ALTER TABLE org_members ADD COLUMN dept_id TEXT'); } catch(_) {}
 // 组织内 org_uid 自动生成规则 + per-组织自增计数（挂在主体上）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_prefix TEXT'); } catch(_) {}
@@ -408,6 +412,23 @@ try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_subjects_org_code ON 
 // 成员多联系方式上限（v3.5.63）：按组织覆盖；0=回退全局 MEMBER_MAX_PHONES / MEMBER_MAX_EMAILS
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN max_phones INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN max_emails INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+// 手机号带国家码（v3.5.71）：裸 11 位（中国大陆）补 +86 前缀；幂等（带 + 的不动）
+try {
+  const need = db.prepare("SELECT COUNT(*) n FROM users WHERE phone IS NOT NULL AND phone != '' AND phone NOT LIKE '+%' AND length(phone)=11").get().n;
+  if (need > 0) db.exec("UPDATE users SET phone = '+86' || phone WHERE phone IS NOT NULL AND phone != '' AND phone NOT LIKE '+%' AND length(phone)=11");
+} catch(_) {}
+// 组织可覆盖某区号的短信凭证（v3.5.71）：JSON { "+86": {QWQ_MESSAGE_URL/KEY/SMS_GROUP...} }，空=回退全局
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN sms_channels TEXT'); } catch(_) {}
+// 全局「区号 → 短信通道」配置（v3.5.71）：country_code 唯一（+86/+1/+852…），config=QWQ Message 凭证 JSON
+try { db.exec(`CREATE TABLE IF NOT EXISTS sms_channels (
+  id           TEXT PRIMARY KEY,
+  country_code TEXT NOT NULL UNIQUE,
+  label        TEXT NOT NULL DEFAULT '',
+  config       TEXT,
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  sort_order   INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // 外部通讯录同步（v3.5.35，先做企业微信）：dir_sync=配置 JSON（含通讯录 secret），dir_sync_state=上次同步结果 JSON
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN dir_sync_state TEXT'); } catch(_) {}
@@ -453,6 +474,12 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS dir_sync_sources (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.72：把升级前按 (subject_id, source, ext_id) 建出来的同步部门回填 source_id（每个组织每类型取第一个连接；多连接/文件夹套用有歧义时先取第一个，可重新同步修正）
+try { db.exec(`UPDATE org_departments SET source_id = (
+  SELECT d.id FROM dir_sync_sources d
+  WHERE d.subject_id = org_departments.subject_id AND d.type = org_departments.source
+  ORDER BY d.created_at LIMIT 1
+) WHERE source != 'manual' AND (source_id IS NULL OR source_id = '')`); } catch(_) {}
 // v3.5.39：接收事件服务器（企业微信通讯录变更回调）最近一次事件的状态
 try { db.exec('ALTER TABLE dir_sync_sources ADD COLUMN event_state TEXT'); } catch(_) {}
 // v3.5.47：通讯录统一归到文件夹——文件夹上放一份「通讯录连接」（folder_id 有值、subject_id=''：企业 ID / Secret / 回调 Token…），
@@ -1172,6 +1199,7 @@ const oauthSubjectStmts = {
   setDirectListed: db.prepare('UPDATE oauth_subjects SET direct_listed=? WHERE id=?'),
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   setContactLimits: db.prepare('UPDATE oauth_subjects SET max_phones=?, max_emails=? WHERE id=?'),
+  setSmsChannels: db.prepare('UPDATE oauth_subjects SET sms_channels=? WHERE id=?'),   // v3.5.71 组织覆盖某区号短信凭证
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),
   // 组织管理员（v3.5.8，套用分组管理员的概念）
   admins:       db.prepare('SELECT user_id FROM oauth_subject_admins WHERE subject_id=?'),
@@ -1328,6 +1356,10 @@ const accessStmts = {
   cardsByUser:  db.prepare('SELECT * FROM access_cards WHERE user_id=? ORDER BY created_at'),
   allCards:     db.prepare(`SELECT c.*, u.name AS user_name, u.uid_seq AS user_uid_seq, u.uid_code AS user_uid_code
                             FROM access_cards c LEFT JOIN users u ON c.user_id=u.id ORDER BY c.created_at DESC`),
+  cardsByOrg:   db.prepare(`SELECT c.*, u.name AS user_name, u.uid_seq AS user_uid_seq, u.uid_code AS user_uid_code
+                            FROM access_cards c LEFT JOIN users u ON c.user_id=u.id
+                            JOIN org_members m ON m.user_id=c.user_id AND m.subject_id=?
+                            ORDER BY c.created_at DESC`),
   insertCard:   db.prepare('INSERT INTO access_cards (id,card_no,user_id,label,status) VALUES (@id,@card_no,@user_id,@label,@status)'),
   setCardStatus:db.prepare('UPDATE access_cards SET status=? WHERE id=?'),
   removeCard:   db.prepare('DELETE FROM access_cards WHERE id=?'),
@@ -1343,6 +1375,11 @@ const accessStmts = {
   facesAll:     db.prepare(`SELECT f.user_id, f.mime, f.size, f.status, f.updated_at,
                               u.name AS user_name, u.uid_seq AS user_uid_seq, u.uid_code AS user_uid_code
                             FROM access_faces f LEFT JOIN users u ON f.user_id=u.id ORDER BY f.updated_at DESC`),
+  facesByOrg:   db.prepare(`SELECT f.user_id, f.mime, f.size, f.status, f.updated_at,
+                              u.name AS user_name, u.uid_seq AS user_uid_seq, u.uid_code AS user_uid_code
+                            FROM access_faces f LEFT JOIN users u ON f.user_id=u.id
+                            JOIN org_members m ON m.user_id=f.user_id AND m.subject_id=?
+                            ORDER BY f.updated_at DESC`),
   // 设备同步用（仅 active，带用户标识，不带 BLOB——图片走单独接口拉）
   facesActive:  db.prepare(`SELECT f.user_id, f.updated_at, u.uid_seq AS user_uid_seq, u.uid_code AS user_uid_code, u.name AS user_name
                             FROM access_faces f JOIN users u ON f.user_id=u.id WHERE f.status='active' ORDER BY f.updated_at`),
@@ -1578,12 +1615,22 @@ const contactStmts = {
 const deptStmts = {
   bySubject: db.prepare('SELECT d.*, (SELECT COUNT(*) FROM org_members m WHERE m.subject_id=d.subject_id AND m.dept_id=d.id AND m.user_id NOT IN (SELECT id FROM users WHERE is_public=1)) AS member_count FROM org_departments d WHERE d.subject_id=? ORDER BY d.sort_order, d.created_at'),
   get:       db.prepare('SELECT * FROM org_departments WHERE id=?'),
-  getByExt:  db.prepare('SELECT * FROM org_departments WHERE subject_id=? AND source=? AND ext_id=?'),
-  insert:    db.prepare('INSERT INTO org_departments (id,name,subject_id,parent_id,source,ext_id,sort_order) VALUES (?,?,?,?,?,?,?)'),
+  getByExt:  db.prepare('SELECT * FROM org_departments WHERE source_id=? AND ext_id=?'),
+  insert:    db.prepare('INSERT INTO org_departments (id,name,subject_id,parent_id,source,ext_id,source_id,sort_order) VALUES (?,?,?,?,?,?,?,?)'),
   update:    db.prepare('UPDATE org_departments SET name=?, parent_id=? WHERE id=?'),
   remove:    db.prepare('DELETE FROM org_departments WHERE id=?'),
   childrenOf: db.prepare('SELECT id FROM org_departments WHERE parent_id=?'),
   clearMemberDeptByDept: db.prepare('UPDATE org_members SET dept_id=NULL WHERE dept_id=?'),
+};
+
+// 全局「区号 → 短信通道」（v3.5.71）：country_code 唯一（+86/+1/+852…），config=QWQ Message 凭证 JSON
+const smsChannelStmts = {
+  all:    db.prepare('SELECT * FROM sms_channels ORDER BY sort_order, created_at'),
+  get:    db.prepare('SELECT * FROM sms_channels WHERE id=?'),
+  byCc:   db.prepare('SELECT * FROM sms_channels WHERE country_code=?'),
+  insert: db.prepare('INSERT INTO sms_channels (id,country_code,label,config,enabled,sort_order) VALUES (?,?,?,?,?,?)'),
+  update: db.prepare('UPDATE sms_channels SET country_code=?, label=?, config=?, enabled=?, sort_order=? WHERE id=?'),
+  remove: db.prepare('DELETE FROM sms_channels WHERE id=?'),
 };
 
 // 域名验证文件（v3.5.40）；expires_at 为 NULL = 永久
@@ -1662,6 +1709,7 @@ module.exports = {
   devices: deviceStmts,
   contacts: contactStmts,
   departments: deptStmts,
+  smsChannels: smsChannelStmts,
   otp: otpStmts,
   state: stateStmts,
   logs: logStmts,

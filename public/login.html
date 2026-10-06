@@ -1555,7 +1555,7 @@
 
   // 账号标识符类型判断（前端只用于验证码走邮箱还是短信；真正的解析在后端）
   const isEmailStr = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-  const isPhoneStr = v => /^1[3-9]\d{9}$/.test(v);
+  const isPhoneStr = v => /^1[3-9]\d{9}$/.test(v) || /^\+\d{1,4}\d{4,15}$/.test(v);   // v3.5.71 也认带国家码的手机号
 
   // ── 邮箱域名策略：让「账号所属域」下拉框真实反映后端配置 ──
   // v3.3.2 之前这两个下拉框纯粹是输入辅助（帮你把 @gmail.com 拼到输入框后面），
@@ -1935,7 +1935,8 @@
     if (pass !== pass2) return showTip('register','error','两次密码不一致');
     if (pass.length<6) return showTip('register','error','密码至少 6 位');
     try {
-      const body = isEmail ? {email:val,name,password:pass} : {phone:val,name,password:pass};
+      const dial = isEmail ? '' : (document.getElementById('reg-dialcode')?.value || '+86');   // v3.5.71 带国家码存储
+      const body = isEmail ? {email:val,name,password:pass} : {phone: dial + val,name,password:pass};
       const r = await fetch('/api/email/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
       redirect(d.token, d.user);

@@ -622,7 +622,7 @@ function _devApi(method, path, body) {
   db._orgDepts = db._orgDepts || {};
   const deptNameOf = (sid, id) => (db._orgDepts[sid]||[]).find(x=>x.id===id)?.name || '';
   let dpm = path.match(/^\/admin\/orgs\/([^/]+)\/departments$/);
-  if (dpm && method === 'GET') { const sid=dpm[1]; db._orgDepts[sid]=db._orgDepts[sid]||[{ id:'dept1', name:'技术部', parent_id:null, source:'manual', member_count:0 },{ id:'dept2', name:'后端组', parent_id:'dept1', source:'wecom', member_count:0 }]; return ok({ success:true, data: db._orgDepts[sid] }); }
+  if (dpm && method === 'GET') { const sid=dpm[1]; db._orgDepts[sid]=db._orgDepts[sid]||[{ id:'dept1', name:'技术部', parent_id:null, source:'manual', source_id:null, member_count:0 },{ id:'dept2', name:'后端组', parent_id:'dept1', source:'wecom', source_id:'s1', member_count:0 },{ id:'dept3', name:'研发中心', parent_id:null, source:'feishu', source_id:'s2', member_count:0 }]; return ok({ success:true, data: db._orgDepts[sid], sources:[{ id:'s1', label:'企业微信·集团', type:'wecom' },{ id:'s2', label:'飞书', type:'feishu' }] }); }
   if (dpm && method === 'POST') { const sid=dpm[1]; db._orgDepts[sid]=db._orgDepts[sid]||[]; const d={ id:'dept'+Date.now(), name:body.name, parent_id:body.parent_id||null, source:'manual', member_count:0 }; db._orgDepts[sid].push(d); return ok({ success:true, id:d.id }); }
   let dpp = path.match(/^\/admin\/orgs\/([^/]+)\/departments\/([^/]+)$/);
   if (dpp && method === 'PATCH') { const arr=db._orgDepts[dpp[1]]||[]; const d=arr.find(x=>x.id===dpp[2]); if(d){ if(body.name!==undefined)d.name=body.name; if(body.parent_id!==undefined)d.parent_id=body.parent_id||null; } return ok({ success:true }); }
@@ -800,6 +800,12 @@ function _devApi(method, path, body) {
   if (path.startsWith('/admin/tags/')   && method === 'DELETE') { db.mockTags=db.mockTags.filter(x=>x.id!==path.split('/')[3]); return ok({ success:true }); }
   if (path.match(/^\/admin\/users\/\w+\/group$/) && method === 'PUT') { const u=db.mockUsers.find(x=>x.id===path.split('/')[3]); if(u)u.group=body.group_id?db.mockGroups.find(g=>g.id===body.group_id)||null:null; return ok({ success:true }); }
   if (path.match(/^\/admin\/users\/\w+\/tags$/) && method === 'PUT') { const u=db.mockUsers.find(x=>x.id===path.split('/')[3]); if(u)u.tags=(body.tag_ids||[]).map(id=>db.mockTags.find(t=>t.id===id)).filter(Boolean); return ok({ success:true }); }
+  // 短信区号通道（演示模式）
+  db.mockSmsChannels = db.mockSmsChannels || [{ id: 'sc-hk', country_code: '+852', label: '香港', enabled: true, config: { QWQ_MESSAGE_URL: 'https://hk.msg', QWQ_MESSAGE_KEY: 'k_hk', QWQ_MESSAGE_SMS_GROUP: 'sms-hk' } }];
+  if (path === '/admin/sms-channels' && method === 'GET') return ok({ success: true, data: db.mockSmsChannels, default_cc: '+86' });
+  if (path === '/admin/sms-channels' && method === 'POST') { const c = { id: 'sc' + Date.now(), country_code: body.country_code, label: body.label || '', enabled: body.enabled !== false, config: body.config || {} }; db.mockSmsChannels.push(c); return ok({ success: true, id: c.id }); }
+  if (path.match(/^\/admin\/sms-channels\/[\w-]+$/) && method === 'PATCH') { const id = path.split('/')[3]; const c = db.mockSmsChannels.find(x => x.id === id); if (c) { if (body.country_code) c.country_code = body.country_code; if (body.label !== undefined) c.label = body.label; if (body.enabled !== undefined) c.enabled = body.enabled; if (body.config) c.config = { ...c.config, ...body.config }; } return ok({ success: true }); }
+  if (path.match(/^\/admin\/sms-channels\/[\w-]+$/) && method === 'DELETE') { const id = path.split('/')[3]; db.mockSmsChannels = db.mockSmsChannels.filter(x => x.id !== id); return ok({ success: true }); }
   // 公共账号（演示模式）
   db.mockPub = db.mockPub || {};   // gid → [{id,name,uid_seq,owner_group_id,member_count,members:[]}]
   if (path.match(/^\/admin\/groups\/[\w-]+\/public-accounts$/) && method === 'GET') { const gid=path.split('/')[3]; return ok({ success:true, accounts: db.mockPub[gid]||[] }); }
@@ -889,7 +895,7 @@ function _devApi(method, path, body) {
   if (ar2 && method === 'DELETE') { const did=ar2[1]; db._accessRules[did]=(db._accessRules[did]||[]).filter(x=>x.id!==ar2[2]); const d=db._accessDoors.find(x=>x.id===did); if(d)d.rule_count=(db._accessRules[did]||[]).length; return ok({ success:true }); }
   if (path.indexOf('/admin/access/logs') === 0) return ok({ success:true, total:db._accessLogs.length, data:db._accessLogs });
   db._accessCards = db._accessCards || [{ id:'c-demo', card_no:'04A2B3C4', user_id:'u1', user_name:'演示用户', user_uid_seq:1, label:'工牌', status:'active' }];
-  if (path === '/admin/access/cards' && method === 'GET') return ok({ success:true, cards: db._accessCards });
+  if (path.split('?')[0] === '/admin/access/cards' && method === 'GET') return ok({ success:true, cards: db._accessCards });
   if (path === '/admin/access/cards' && method === 'POST') { if(db._accessCards.some(c=>c.card_no===body.card_no)) return err('该卡号已绑定',409); const c={ id:'c'+Date.now(), card_no:body.card_no, user_id:'u1', user_name:body.account, user_uid_seq:Math.floor(Math.random()*9000)+1000, label:body.label||'', status:'active' }; db._accessCards.push(c); return ok({ success:true, id:c.id }); }
   let ac2 = path.match(/^\/admin\/access\/cards\/([^/]+)$/);
   if (ac2 && method === 'PATCH') { const c=db._accessCards.find(x=>x.id===ac2[1]); if(c)c.status=body.status; return ok({ success:true }); }
@@ -899,13 +905,13 @@ function _devApi(method, path, body) {
   if (path === '/user/access/face' && method === 'GET') return ok({ success:true, enrolled: !!db._face, status: db._face?'active':null, updated_at: db._face });
   if (path === '/user/access/face' && method === 'DELETE') { db._face=null; return ok({ success:true }); }
   db._accessFaces = db._accessFaces || [{ user_id:'u1', user_name:'演示用户', user_uid_seq:1, status:'active', updated_at:'2026-10-02 09:00' }];
-  if (path === '/admin/access/faces' && method === 'GET') return ok({ success:true, faces: db._accessFaces });
+  if (path.split('?')[0] === '/admin/access/faces' && method === 'GET') return ok({ success:true, faces: db._accessFaces });
   let af2 = path.match(/^\/admin\/access\/faces\/([^/]+)$/);
   if (af2 && method === 'PATCH') { const f=db._accessFaces[0]; if(f)f.status=body.status; return ok({ success:true }); }
   if (af2 && method === 'DELETE') { db._accessFaces=db._accessFaces.filter(x=>String(x.user_uid_seq)!==af2[1] && x.user_uid_code!==af2[1]); return ok({ success:true }); }
   // 访客通行码（演示模式）
   db._passes = db._passes || [{ id:'vp1', code:'VP-DEMO01', visitor_name:'来访客人', door_ids:'d-demo', door_names:['一楼大门'], issued_by_name:'演示管理员', valid_from:'', valid_to:'', max_uses:3, used_count:0, status:'active' }];
-  if (path === '/access/passes' && method === 'GET') return ok({ success:true, passes: db._passes });
+  if (path.split('?')[0] === '/access/passes' && method === 'GET') return ok({ success:true, passes: db._passes });
   if (path === '/access/passes' && method === 'POST') { const code='VP-'+Math.random().toString(36).slice(2,8).toUpperCase(); const names=(body.door_ids||[]).map(id=>(db._accessDoors||[]).find(d=>d.id===id)?.name||id); db._passes.unshift({ id:'vp'+Date.now(), code, visitor_name:body.visitor_name, door_ids:(body.door_ids||[]).join(','), door_names:names, issued_by_name:'演示管理员', valid_from:body.valid_from||'', valid_to:body.valid_to||'', max_uses:body.max_uses||0, used_count:0, status:'active' }); return ok({ success:true, id:'vp'+Date.now(), code }); }
   let vp2 = path.match(/^\/access\/passes\/([^/]+)$/);
   if (vp2 && method === 'DELETE') { const p=db._passes.find(x=>x.id===vp2[1]); if(p)p.status='revoked'; return ok({ success:true }); }
@@ -1217,6 +1223,10 @@ async function loadMe() {
       <button class="nav-item" onclick="goto('adm-env')" id="ni-adm-env">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M6 7l3 3-3 3M11 13h3"/></svg>
         环境变量
+      </button>
+      <button class="nav-item" onclick="goto('adm-sms-channels')" id="ni-adm-sms-channels">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 3h12v14H4zM7 7h6M7 10h6M7 13h3"/></svg>
+        短信区号通道
       </button>
       <button class="nav-item" onclick="goto('adm-backups')" id="ni-adm-backups">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="10" cy="5" rx="6" ry="2.5"/><path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5"/></svg>
@@ -2721,6 +2731,18 @@ async function loadMe() {
           <div class="card-body"><div id="verify-file-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
         </div>
       </div>
+      <div class="page" id="page-adm-sms-channels">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>短信区号通道</h3>
+            <button class="btn primary" style="font-size:11px;" onclick="openSmsChannelModal()">+ 添加区号</button>
+          </div>
+          <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
+            手机号现在带国家码存储（如 <code>+8613800000000</code> / <code>+85212345678</code>）。在这里给不同区号各自配置一套 QWQ Message 凭证（就像添加登录凭证那样），发短信时按手机号区号路由到对应分发中心。<b>优先级：组织覆盖该区号 &gt; 这里的全局区号通道 &gt; 组织默认凭证 &gt; 系统配置里的全局短信凭证</b>。没单独配的区号回退全局短信凭证。默认区号在「环境变量 → 消息分发（QWQ Message）」里设（<code>DEFAULT_PHONE_CC</code>）。
+          </div>
+          <div class="card-body"><div id="sms-channel-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+      </div>
 
       <!-- ▸ 管理端：关于 / 版本更新 -->
       <div class="page" id="page-adm-about">
@@ -3304,6 +3326,7 @@ const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grant
 
 // ── 管理端「当前组织」切换（v3.5.70）：顶栏下拉聚焦组织资源（设备/门禁），保留管理员能力 ──
 function _curAdminOrg() { try { return localStorage.getItem('sso_admin_org') || ''; } catch (_) { return ''; } }
+function _orgQuery() { const o = _curAdminOrg(); return o ? '?org=' + encodeURIComponent(o) : ''; }
 async function loadAdminOrgSelect() {
   const box = document.getElementById('topbar-actions');
   if (!box) return;
@@ -3487,7 +3510,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3503,6 +3526,7 @@ function goto(page) {
   if(page === 'adm-deletions') { loadDeletions(); loadMerges(); }
   if(page === 'adm-anomalies') loadAnomalies();
   if(page === 'adm-backups') loadBackups();
+  if(page === 'adm-sms-channels') loadSmsChannels();
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
   if(page === 'adm-env')   { renderEnvPage(); loadEnvPollStrategy(); loadFooterItems(); }
@@ -6017,8 +6041,83 @@ async function saveGrant() {
   else showToast('授权失败：' + (data?.error || '未知错误'));
 }
 
-async function sendKycLinkToUser(uid) {
-  if (!await uiConfirm('确认向该用户发送实名认证链接？将优先同时通过短信和邮箱双通道发送。')) return;
+// ── 短信区号通道（v3.5.71）──
+async function loadSmsChannels() {
+  const box = document.getElementById('sms-channel-list');
+  const { ok, data } = await api('GET', '/admin/sms-channels');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  const rows = data.data || [];
+  const footer = '<div style="margin-top:8px;font-size:11px;color:var(--txd);">默认区号（未在下方配置、填裸 11 位手机号时补的）：<b>' + esc(data.default_cc || '+86') + '</b></div>';
+  if (!rows.length) {
+    box.innerHTML = '<div style="padding:8px 0;">还没有区号通道。没有单独配置的区号回退全局短信凭证；填裸 11 位手机号时按默认区号（' + esc(data.default_cc || '+86') + '）补全。</div>';
+    return;
+  }
+  const table = _udTable(['区号', '名称', '状态', '凭证', ''], rows.map(c => {
+    const keys = Object.keys(c.config || {}).filter(k => c.config[k]);
+    return [
+      '<b>' + esc(c.country_code) + '</b>',
+      esc(c.label || '—'),
+      c.enabled ? '<span class="badge ok">启用</span>' : '<span class="badge grey">停用</span>',
+      '<span style="color:var(--txd);font-size:11px;">' + (keys.length ? esc(keys.join(' / ')) : '未配置凭证') + '</span>',
+      `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openSmsChannelModal(${JSON.stringify(c.id)})'>编辑</button> <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delSmsChannel(${JSON.stringify(c.id)})'>删除</button>`
+    ];
+  }));
+  box.innerHTML = table + footer;
+}
+async function openSmsChannelModal(id) {
+  let cur = null;
+  if (id) { const r = await api('GET', '/admin/sms-channels'); if (r.ok) cur = (r.data.data || []).find(c => c.id === id); }
+  document.getElementById('sms-channel-modal')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-mask show'; m.id = 'sms-channel-modal';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:13px;';
+  const cfg = cur?.config || {};
+  const fields = [
+    ['QWQ_MESSAGE_URL', '分发中心地址', '该区号短信走这个分发中心根地址（不要带结尾斜杠）'],
+    ['QWQ_MESSAGE_KEY', 'API 密钥', 'qwq_live_ 生产 / qwq_test_ 测试；已配置时留空不修改'],
+    ['QWQ_MESSAGE_SMS_GROUP', '短信通道组', '分发中心里短信通道的 group 标识'],
+    ['QWQ_MESSAGE_SMS_HUB_TEMPLATE', '自建模板编号', '分发中心「模板管理」里的模板编号（推荐）'],
+    ['QWQ_MESSAGE_SMS_TEMPLATE', '服务商模板号', '服务商后台已审核的模板 ID（与自建模板二选一）'],
+    ['QWQ_MESSAGE_SMS_VAR', '模板变量名', '模板验证码占位符，默认 code'],
+  ].map(([k, lbl, dsc]) => `
+    <div style="font-size:12px;color:var(--txm);margin:10px 0 4px;">${lbl} <span style="color:var(--txd);font-weight:normal;">${cur && cfg[k] ? '（已配置，留空不修改）' : ''}</span></div>
+    <input id="sc-${k}" placeholder="${dsc}" style="${inp}" value="${k === 'QWQ_MESSAGE_KEY' && cfg[k] ? '••••••••' : esc(cfg[k] || '')}">`).join('');
+  m.innerHTML = `<div class="modal" style="min-width:420px;text-align:left;">
+    <h3 style="margin-bottom:12px;">${cur ? '编辑区号通道' : '添加区号通道'}</h3>
+    <div style="font-size:12px;color:var(--txm);margin-bottom:4px;">国家码（区号）</div>
+    <input id="sc-cc" placeholder="+86 / +1 / +852" style="${inp}" value="${esc(cur?.country_code || '')}">
+    <div style="font-size:12px;color:var(--txm);margin:10px 0 4px;">名称（可选）</div>
+    <input id="sc-label" placeholder="如：中国大陆 / 香港" style="${inp}" value="${esc(cur?.label || '')}">
+    <div style="font-size:12px;color:var(--txm);margin:14px 0 4px;">QWQ Message 凭证（对应这个区号的短信服务）</div>
+    ${fields}
+    <div style="font-size:12px;color:var(--txm);margin:12px 0 4px;">启用</div>
+    <label style="font-size:13px;"><input type="checkbox" id="sc-enabled" ${cur == null || cur.enabled ? 'checked' : ''}> 保存后立即生效</label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+      <button class="btn" onclick="document.getElementById('sms-channel-modal').remove()">取消</button>
+      <button class="btn primary" onclick="saveSmsChannel(${id ? JSON.stringify(id) : 'null'})">保存</button>
+    </div></div>`;
+  document.body.appendChild(m);
+}
+async function saveSmsChannel(id) {
+  const cc = document.getElementById('sc-cc').value.trim();
+  if (!/^\+\d{1,4}$/.test(cc)) { showToast('区号格式应为 +86 / +1 / +852'); return; }
+  const config = {};
+  for (const k of ['QWQ_MESSAGE_URL','QWQ_MESSAGE_KEY','QWQ_MESSAGE_SMS_GROUP','QWQ_MESSAGE_SMS_HUB_TEMPLATE','QWQ_MESSAGE_SMS_TEMPLATE','QWQ_MESSAGE_SMS_VAR']) {
+    const v = document.getElementById('sc-' + k).value.trim();
+    if (v && !/^•+$/.test(v)) config[k] = v;
+  }
+  const body = { country_code: cc, label: document.getElementById('sc-label').value.trim(), enabled: document.getElementById('sc-enabled').checked, config };
+  const { ok, data } = id ? await api('PATCH', '/admin/sms-channels/' + id, body) : await api('POST', '/admin/sms-channels', body);
+  if (ok) { showToast(id ? '已保存' : '已添加'); document.getElementById('sms-channel-modal').remove(); loadSmsChannels(); }
+  else showToast((id ? '保存' : '添加') + '失败：' + (data?.error || '未知错误'));
+}
+async function delSmsChannel(id) {
+  if (!await uiConfirm('删除这条区号通道？删除后该区号回退到全局短信凭证。')) return;
+  const { ok, data } = await api('DELETE', '/admin/sms-channels/' + id);
+  if (ok) { showToast('已删除'); loadSmsChannels(); } else showToast('删除失败：' + (data?.error || '未知错误'));
+}
+
+async function sendKycLinkToUser(uid) {  if (!await uiConfirm('确认向该用户发送实名认证链接？将优先同时通过短信和邮箱双通道发送。')) return;
   showToast('→ 正在生成并发送认证链接…');
   const { ok, data } = await api('POST', `/admin/users/${uid}/send-kyc-link`);
   if (!ok) { showToast('⚠️ ' + (data.error || '发送失败')); return; }
@@ -7915,7 +8014,7 @@ let _passBoxId = 'adm-pass-list';   // 访客码列表渲染到哪：管理端 a
 async function loadAccessPasses(boxId) {
   if (boxId) _passBoxId = boxId;
   const box = document.getElementById(_passBoxId); if (!box) return;
-  const { ok, data } = await api('GET', '/access/passes');
+  const { ok, data } = await api('GET', '/access/passes' + _orgQuery());
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + (data.error || '加载失败') + '</div>'; return; }
   const passes = data.passes || [];
   box.innerHTML = passes.length ? passes.map(p => {
@@ -8045,7 +8144,7 @@ async function revokePass(id) {
 }
 async function loadAccessFaces() {
   const box = document.getElementById('adm-face-list'); if (!box) return;
-  const { ok, data } = await api('GET', '/admin/access/faces');
+  const { ok, data } = await api('GET', '/admin/access/faces' + _orgQuery());
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const faces = data.faces || [];
   box.innerHTML = faces.length ? faces.map(f => {
@@ -8089,7 +8188,7 @@ async function delFace(uid) {
 }
 async function loadAccessCards() {
   const box = document.getElementById('adm-card-list'); if (!box) return;
-  const { ok, data } = await api('GET', '/admin/access/cards');
+  const { ok, data } = await api('GET', '/admin/access/cards' + _orgQuery());
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const cards = data.cards || [];
   box.innerHTML = cards.length ? cards.map(c => {
@@ -8992,25 +9091,45 @@ async function openOrgMembers(sid, name) {
   await loadOrgMembers();
 }
 function closeOrgMembers() { document.getElementById('orgmem-modal').classList.remove('show'); }
-// ── 组织树状部门（v3.5.68）──
+// ── 组织树状部门（v3.5.68；v3.5.72 按通讯录连接分独立部门树）──
 let _orgDepts = [];
+let _orgDeptSources = [];
 function _deptDepth(d) {
   let depth = 0, cur = d, seen = new Set();
   while (cur && cur.parent_id && !seen.has(cur.parent_id)) { seen.add(cur.parent_id); depth++; cur = _orgDepts.find(x => x.id === cur.parent_id); }
   return depth;
 }
+function _deptGroups() {
+  const groups = [{ key: 'manual', label: '手动部门', depts: [] }];
+  const bySrc = {};
+  for (const d of _orgDepts) {
+    if (!d.source_id) { groups[0].depts.push(d); continue; }
+    if (!bySrc[d.source_id]) {
+      const s = _orgDeptSources.find(x => x.id === d.source_id);
+      const typeTag = d.source === 'wecom' ? '（企微）' : d.source === 'feishu' ? '（飞书）' : '';
+      bySrc[d.source_id] = { key: d.source_id, label: (s ? s.label : d.source) + typeTag, depts: [] };
+      groups.push(bySrc[d.source_id]);
+    }
+    bySrc[d.source_id].depts.push(d);
+  }
+  return groups.filter(g => g.depts.length);
+}
 function _deptOpts(selectedId) {
   const opts = ['<option value="">（未分配）</option>'];
-  for (const d of _orgDepts) {
-    const depth = _deptDepth(d);
-    const srcTag = d.source === 'wecom' ? '（企微）' : d.source === 'feishu' ? '（飞书）' : '';
-    opts.push(`<option value="${esc(d.id)}" ${d.id === selectedId ? 'selected' : ''}>${'　'.repeat(depth)}${esc(d.name)}${srcTag}</option>`);
+  for (const g of _deptGroups()) {
+    opts.push(`<optgroup label="${esc(g.label)}">`);
+    for (const d of g.depts) {
+      const depth = _deptDepth(d);
+      opts.push(`<option value="${esc(d.id)}" ${d.id === selectedId ? 'selected' : ''}>${'　'.repeat(depth)}${esc(d.name)}</option>`);
+    }
+    opts.push('</optgroup>');
   }
   return opts.join('');
 }
 async function loadOrgDepts() {
   const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/departments');
   _orgDepts = ok ? (data.data || []) : [];
+  _orgDeptSources = ok ? (data.sources || []) : [];
 }
 function renderOrgDepts() {
   const box = document.getElementById('orgmem-depts');
@@ -9018,16 +9137,23 @@ function renderOrgDepts() {
   const newSel = document.getElementById('orgmem-new-dept');
   if (newSel) newSel.innerHTML = _deptOpts('');
   if (!box) return;
-  const rows = _orgDepts.map(d => {
-    const depth = _deptDepth(d);
-    const srcTag = d.source === 'wecom' ? ' <span style="color:#1F7A3A;font-size:10px;">企微</span>' : d.source === 'feishu' ? ' <span style="color:#1F7A3A;font-size:10px;">飞书</span>' : '';
-    const cnt = d.member_count ? ` <span style="color:var(--txd);font-size:10px;">${d.member_count}人</span>` : '';
-    return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;">
-      <span style="flex:1;padding-left:${depth * 16}px;color:var(--txt);">${esc(d.name)}${srcTag}${cnt}</span>
-      <button class="btn" style="font-size:10px;padding:1px 7px;" onclick='renameDept(${JSON.stringify(d.id)},${JSON.stringify(d.name)})'>改名</button>
-      <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='delDept(${JSON.stringify(d.id)},${JSON.stringify(d.name)})'>删除</button>
-    </div>`;
-  }).join('') || '<div style="color:var(--txd);font-size:12px;">还没有部门（通讯录同步会自动建，也可手动新建顶级部门）。</div>';
+  const groups = _deptGroups();
+  const rows = groups.length ? groups.map(g => {
+    const head = `<div style="font-size:11px;color:var(--txm);font-weight:700;padding:6px 0 2px;">${esc(g.label)}</div>`;
+    const items = g.depts.map(d => {
+      const depth = _deptDepth(d);
+      const cnt = d.member_count ? ` <span style="color:var(--txd);font-size:10px;">${d.member_count}人</span>` : '';
+      const editable = d.source === 'manual';
+      return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;">
+        <span style="flex:1;padding-left:${depth * 16}px;color:var(--txt);">${esc(d.name)}${cnt}</span>
+        ${editable
+          ? `<button class="btn" style="font-size:10px;padding:1px 7px;" onclick='renameDept(${JSON.stringify(d.id)},${JSON.stringify(d.name)})'>改名</button>
+             <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='delDept(${JSON.stringify(d.id)},${JSON.stringify(d.name)})'>删除</button>`
+          : '<span style="font-size:10px;color:var(--txd);">同步</span>'}
+      </div>`;
+    }).join('');
+    return head + items;
+  }).join('') : '<div style="color:var(--txd);font-size:12px;">还没有部门（通讯录同步会自动建，也可手动新建顶级部门）。</div>';
   box.innerHTML = rows;
 }
 async function createDept() {
@@ -10477,6 +10603,7 @@ const ENV_GROUPS = [
       { key: 'QWQ_MESSAGE_SMS_TEMPLATE',label: '服务商模板号',   desc: '⚠️ 与上面是两回事：这里填服务商后台（如火山引擎控制台）已审核通过的模板 ID。把自建模板编号填到这里会被服务商判「模板错误」。两者二选一，自建模板优先',  required: false, secret: false, placeholder: 'ST_xxxxxxxx',  value: '' },
       { key: 'QWQ_MESSAGE_SMS_VAR',     label: '模板变量名',     desc: '模板里验证码占位符的名字，默认 code。若模板写的是 ${verifyCode} 就填 verifyCode，名字对不上同样报「模板错误」', required: false, secret: false, placeholder: 'code',                 value: '' },
       { key: 'SMS_CODE_EXPIRE',         label: '短信码有效期(秒)',desc: '短信验证码过期秒数，默认 300 秒（5分钟）',                       required: false, secret: false, placeholder: '300',                     value: '' },
+      { key: 'DEFAULT_PHONE_CC',        label: '默认手机区号',  desc: '填裸 11 位手机号（中国大陆）时自动补的国家码；也可填 +1 / +852 等。默认 +86', required: false, secret: false, placeholder: '+86',                 value: '' },
     ]
   },
   {
