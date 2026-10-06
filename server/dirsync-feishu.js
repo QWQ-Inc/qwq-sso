@@ -421,7 +421,8 @@ async function deleteMember(cfg, openId) {
 async function createMember(cfg, f) {
   const tk = await token(cfg);
   const body = { name: f.name };
-  if (f.mobile) body.mobile = f.mobile;
+  // 飞书 mobile 要求 E.164 格式（+8613800000000）；11 位中国手机号补 +86 前缀
+  if (f.mobile) body.mobile = /^\+/.test(String(f.mobile)) ? String(f.mobile) : '+86' + String(f.mobile).replace(/[^\d]/g, '');
   if (f.email) body.email = f.email;
   body.department_ids = Array.isArray(f.department_ids) ? f.department_ids.map(String) : [];
   const j = await call('POST', '/contact/v3/users', { params: DEPT_Q, body, token: tk });

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.3**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.4**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,12 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.70.4 修飞书出站建号：手机号要带 +86（E.164 格式）
+
+四级补丁（修 bug）。用户实测飞书出站建号报 `99992402 field validation failed`——飞书 `POST /contact/v3/users` 的 `mobile` 字段要求 E.164 格式（`+8613800000000`），而 SSO 存的是裸 11 位手机号（`normMember` 读通讯录时把 `+86` 去掉了）。
+- 修：`dirsync-feishu.createMember` 里 mobile 无 `+` 前缀时补 `+86`（去掉非数字后拼），已带 `+` 不重复加。
+- ⚠️ 测试：新 `scratchpad/feishu-create-test.js`（mock db/contacts + mock fetch）6 项全过（返回 open_id、不传 user_id、mobile 加 +86、已带 + 不重复加、department_ids 字符串数组、name 原样）；回归 7 套 66 项全过。
 
 ## v3.5.70.3 修出站建号：飞书 user_id 非法 + 企业微信手机号已存在
 

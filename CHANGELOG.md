@@ -4,6 +4,10 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.70.4 — 修飞书出站建号：手机号带 +86
+
+- 飞书建号时手机号补 `+86` 前缀（E.164 格式），修复 `99992402 field validation failed`。
+
 ## v3.5.70.3 — 修出站建号：飞书 user_id 非法 + 企业微信手机号已存在
 
 - 飞书出站建号不再传 user_id（组织内 UID 不合法），改为飞书自动生成 open_id 后取回写映射。
