@@ -421,12 +421,12 @@ async function deleteMember(cfg, openId) {
 async function createMember(cfg, f) {
   const tk = await token(cfg);
   const body = { name: f.name };
-  if (f.user_id) body.user_id = String(f.user_id);
   if (f.mobile) body.mobile = f.mobile;
   if (f.email) body.email = f.email;
   body.department_ids = Array.isArray(f.department_ids) ? f.department_ids.map(String) : [];
   const j = await call('POST', '/contact/v3/users', { params: DEPT_Q, body, token: tk });
-  return f.user_id || (j.data && j.data.user && j.data.user.user_id);
+  // 不传 user_id 时飞书自动生成 open_id；优先返回 open_id（用于写映射）
+  return (j.data && j.data.user && (j.data.user.open_id || j.data.user.user_id)) || f.user_id;
 }
 // 建成员；user_id 已存在时改「增补部门」而不是覆盖（先读现有 department_ids 取并集再 PATCH）
 async function upsertMember(cfg, f) {

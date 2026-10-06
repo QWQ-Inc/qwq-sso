@@ -578,6 +578,10 @@ async function upsertMember(cfg, f) {
   try {
     return await createMember(cfg, f);
   } catch (e) {
+    if (e.errcode === 60104) {
+      // 手机号已在企业微信通讯录里：该成员很可能已在企业微信（或手机号被占用），不要再重复建号
+      throw Object.assign(new Error('手机号已在企业微信通讯录里（该成员可能已存在于企业微信，请用「通讯录同步」拉取绑定，或在企业微信里处理该手机号）'), { errcode: 60104 });
+    }
     if (e.errcode !== 60106) throw e;
     const access_token = await token(writeCfg(cfg));
     const cur = await call('GET', '/cgi-bin/user/get', { access_token, userid: String(f.userid) }).catch(() => null);

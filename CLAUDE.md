@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.2**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.3**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,13 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.70.3 修出站建号：飞书 user_id 非法 + 企业微信手机号已存在
+
+四级补丁（修 bug）。用户实测出站建号，两条错误：
+- **飞书 `99992360 invalid user_id`**：`pushMemberToSources` 把 `user_id` 传成了组织内 UID（如 `0006`）——飞书 `user_id` 要求工号/手机号格式，纯数字非法。修：飞书**不传 user_id**，让飞书自动生成 open_id，`createMember` 从响应 `j.data.user.open_id` 取回写映射。
+- **企业微信 `60104 mobile existed`**：手机号已在企业微信通讯录里（成员很可能已在企业微信）。修：`upsertMember` 捕获 60104 抛友好提示「手机号已在企业微信通讯录里（该成员可能已存在于企业微信，请用通讯录同步拉取绑定）」，不重复建号。
+- ⚠️ 测试：`push-provision-test.js` 补 60104 友好提示项，9 项全过；回归 6 套 60 项全过。
 
 ## v3.5.70.2 出站建号失败时用弹窗显示详细错误（原 toast 看不到 errcode）
 

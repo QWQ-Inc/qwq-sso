@@ -64,6 +64,14 @@ const W = require('../server/dirsync-wecom');
   catch (e) { threw = e.errcode === 48002; }
   ok('非 60106 错误直接抛（不误增补）', threw && !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
 
+  // ④ 60104 手机号已存在 → 友好提示（不重复建号）
+  wecomCreateResp = { errcode: 60104, errmsg: 'mobile existed' };
+  wecomCalls.length = 0;
+  let msg604 = '';
+  try { await W.upsertMember({ corp_id: 'corp', secret: 's', write_secret: 'ws' }, { userid: 'u100', name: '张三', mobile: '13800000001', department: [1] }); }
+  catch (e) { msg604 = e.message; }
+  ok('60104 手机号已存在 → 友好提示', msg604.includes('手机号已在企业微信') && !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

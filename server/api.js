@@ -1670,12 +1670,12 @@ async function pushMemberToSources(subject, user, opts = {}) {
     let extId = opts.extId || crypto.randomBytes(4).toString('hex');
     const deptIds = drv.deptIdsOf(cfg);
     const fields = {
-      userid: String(extId), user_id: String(extId),
       name: opts.name || user.name || '',
       mobile: opts.mobile || user.phone || '',
       email: opts.email || user.email || '',
     };
-    if (src.type === 'wecom') fields.department = deptIds; else fields.department_ids = deptIds;
+    if (src.type === 'wecom') { fields.userid = String(extId); fields.department = deptIds; }
+    else { fields.department_ids = deptIds; }   // 飞书不传 user_id（组织内 UID 可能不合法），open_id 由飞书自动生成
     try {
       const createdId = await drv.upsertMember(cfg, fields);
       dirSources.linkUpsert.run(src.id, createdId || extId, user.id, (deptIds || []).join(',') || null, opts.name || user.name || null);
