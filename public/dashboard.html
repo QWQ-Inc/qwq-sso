@@ -9160,7 +9160,12 @@ async function doOrgMerge() {
 function _pushToast(rr) {
   if (!rr || !rr.length) return '';
   const ok = rr.filter(x => x.ok).length, fail = rr.length - ok;
-  if (fail) return `（出站建号：成功 ${ok}/${rr.length}，失败：${rr.filter(x => !x.ok).map(x => x.label).join('、')}）`;
+  if (fail) {
+    // 失败用弹窗显示每个源的详细原因（含 errcode），toast 放不下也 2.5 秒就没了
+    const detail = rr.map(x => (x.ok ? `${x.label}：✓ 成功` : `${x.label}：${x.error || '未知错误'}`)).join('\n');
+    uiAlert(`成功 ${ok}/${rr.length}\n\n${detail}`, { title: '出站建号结果', multiline: true });
+    return `（出站建号成功 ${ok}/${rr.length}，详情见弹窗）`;
+  }
   return `（已同步到 ${rr.map(x => x.label).join('、')}）`;
 }
 async function addOrgMember() {
