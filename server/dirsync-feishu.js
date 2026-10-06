@@ -66,7 +66,16 @@ async function call(method, path, { params, body, token } = {}) {
   const j = await r.json().catch(() => ({}));
   if (j && j.code) {
     const hint = ERR_HINT[j.code];
-    throw Object.assign(new Error(`飞书 ${path.split('?')[0]} 失败：${j.code} ${j.msg || ''}`.trim() + (hint ? `（${hint}）` : '')), { errcode: j.code });
+    let detail = '';
+    try {
+      const ev = j.error;
+      if (ev && Array.isArray(ev.field_violations) && ev.field_violations.length) {
+        detail = ' | ' + ev.field_violations.map(v => `${v.field}: ${v.description}`).join('; ');
+      } else if (ev && typeof ev === 'object' && Object.keys(ev).length) {
+        detail = ' | ' + JSON.stringify(ev);
+      }
+    } catch (_) {}
+    throw Object.assign(new Error(`飞书 ${path.split('?')[0]} 失败：${j.code} ${j.msg || ''}`.trim() + detail + (hint ? `（${hint}）` : '')), { errcode: j.code });
   }
   if (!r.ok) throw Object.assign(new Error(`飞书接口 HTTP ${r.status}`), { errcode: -1 });
   return j;
@@ -420,13 +429,22 @@ async function deleteMember(cfg, openId) {
 // 在飞书里创建成员（v3.5.69 出站 provisioning；自建应用需开「更新通讯录」权限）
 async function createMember(cfg, f) {
   const tk = await token(cfg);
-  const body = { name: f.name };
-  // 飞书 mobile 要求 E.164 格式（+8613800000000）；11 位中国手机号补 +86 前缀
-  if (f.mobile) body.mobile = /^\+/.test(String(f.mobile)) ? String(f.mobile) : '+86' + String(f.mobile).replace(/[^\d]/g, '');
-  if (f.email) body.email = f.email;
-  // 部门：根部门 "0" 是虚拟根、不能作成员归属；过滤掉空值和 "0"，空则不传（飞书归到默认部门）
-  const deptIds = (Array.isArray(f.department_ids) ? f.department_ids : []).map(String).filter(x => x && x !== '0');
-  if (deptIds.length) body.department_ids = deptIds;
+  const name = String(f.name || '').trim();
+  if (!name) throw Object.assign(new Error('飞书建号失败：姓名不能为空'), { errcode: 99992402 });
+  const body = { name: name.slice(0, 100) };
+  // mobile 要求 E.164（+8613800000000）；只有格式合法才传（空/非法都省略，避免一个非法手机号让整单失败）
+  const mob = String(f.mobile || '').trim();
+  if (mob) {
+    const norm = /^\+/.test(mob) ? mob : '+86' + mob.replace(/[^\d]/g, '');
+    if (/^\+\d{6,15}$/.test(norm)) body.mobile = norm;
+  }
+  // email：合法才传
+  const em = String(f.email || '').trim();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) body.email = em;
+  // department_ids 必填、且不能是根部门 "0"（虚拟根不能作成员归属）。为空说明没确定归属部门，直接给明确报错，别让飞书回 99992402
+  const deptIds = (Array.isArray(f.department_ids) ? f.department_ids : []).map(x => String(x).trim()).filter(x => x && x !== '0');
+  if (!deptIds.length) throw Object.assign(new Error('飞书建号失败：未确定成员归属部门（飞书要求部门必填，请给成员分配飞书部门，或在同步源里选择具体部门）'), { errcode: 99992402 });
+  body.department_ids = deptIds;
   const j = await call('POST', '/contact/v3/users', { params: DEPT_Q, body, token: tk });
   // 不传 user_id 时飞书自动生成 open_id；优先返回 open_id（用于写映射）
   return (j.data && j.data.user && (j.data.user.open_id || j.data.user.user_id)) || f.user_id;

@@ -1777,7 +1777,15 @@ async function pushMemberToSources(subject, user, opts = {}) {
       email: opts.email || user.email || '',
     };
     if (src.type === 'wecom') { fields.userid = String(extId); fields.department = deptIds; }
-    else { fields.department_ids = deptIds; }   // 飞书不传 user_id（组织内 UID 可能不合法），open_id 由飞书自动生成
+    else {
+      // 飞书 department_ids 必填、且不能是根部门 "0"。优先用「成员归属部门」的飞书 ext_id，否则回退同步范围（去掉根部门）
+      let fds = (Array.isArray(deptIds) ? deptIds : []).map(x => String(x).trim()).filter(x => x && x !== '0');
+      if (opts.deptId) {
+        const dp = departments.get.get(String(opts.deptId));
+        if (dp && dp.source === 'feishu' && dp.ext_id) fds = [String(dp.ext_id)];
+      }
+      fields.department_ids = fds;   // 飞书不传 user_id（组织内 UID 可能不合法），open_id 由飞书自动生成
+    }
     try {
       const createdId = await drv.upsertMember(cfg, fields);
       dirSources.linkUpsert.run(src.id, createdId || extId, user.id, (deptIds || []).join(',') || null, opts.name || user.name || null);
@@ -1862,7 +1870,7 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
   // v3.5.69 出站建号（前端勾了「同步到企业微信/飞书」才 push）
   let pushResults = null;
   if (req.body?.push) {
-    pushResults = await pushMemberToSources(s, r, { extId: orgUid, name: r.name, mobile: r.phone, email: r.email });
+    pushResults = await pushMemberToSources(s, r, { extId: orgUid, name: r.name, mobile: r.phone, email: r.email, deptId });
   }
   res.json({ success: true, org_uid: orgUid, uid_seq: r.uid_seq, push_results: pushResults });
 });
@@ -1912,7 +1920,7 @@ router.post('/admin/orgs/:sid/members/:uid/push', requireAuth, async (req, res) 
   const target = findRealUserByUid(req.params.uid);
   if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
   const mem = orgMembers.get.get(s.id, target.id);
-  const results = await pushMemberToSources(s, target, { extId: mem?.org_uid, name: target.name, mobile: target.phone, email: target.email });
+  const results = await pushMemberToSources(s, target, { extId: mem?.org_uid, name: target.name, mobile: target.phone, email: target.email, deptId: mem?.dept_id });
   res.json({ success: true, push_results: results });
 });
 

@@ -4,6 +4,11 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.74.1 — 修飞书出站建号 99992402（department_ids 必填）
+
+- 🐛 根因：飞书 `POST /contact/v3/users` 的 `department_ids` 是**必填**字段，且根部门 `"0"` 不能作成员归属。飞书同步源没选具体部门时 `deptIdsOf` 返回 `['0']`，旧代码把它过滤后为空、就不传 `department_ids`，飞书报 99992402 field validation failed。
+- 修：出站建号时飞书的 `department_ids` 优先用「成员归属部门」的飞书 ext_id（`org_departments.source='feishu'` 的 `ext_id`），否则回退同步范围（去掉根部门 "0"）；仍为空则**明确报「未确定成员归属部门」**，不再让飞书回 99992402。顺带：`createMember` 对 mobile 校验 E.164（非法不传）、email 校验格式（非法不传）、name 空明确报错；飞书 `call` 的错误信息透传 `field_violations`（具体哪个字段错）。
+
 ## v3.5.74 — 临时 / 限权管理员（用户反馈）
 
 - **限权管理员**：从管理员等级派生，限定「能管的应用 + 组织/分组范围 + 生效时段」，到期自动失效。数据表 `limited_admins`，管理端「限权管理员」页（超管）增删授权。

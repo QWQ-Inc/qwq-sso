@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,22 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.74.1 修飞书出站建号 99992402（department_ids 必填）（用户反馈）
+
+四级补丁（修 bug）。用户：「飞书的 99992402 还是没有解决」。
+
+### 🐛 根因
+飞书 `POST /contact/v3/users` 的 **`department_ids` 是必填字段**，且根部门 `"0"` 是虚拟根、不能作成员归属。飞书同步源没选具体部门时 `deptIdsOf(cfg)` 返回 `['0']`（表示「全部」），旧 `createMember` 把它过滤后为空、**就不传 `department_ids`**，飞书因此报 99992402 field validation failed。之前 v3.5.70.4（mobile 加 +86）/ v3.5.70.5（过滤根部门 "0"）都没覆盖到「过滤后为空 → 不传 → 飞书要求必填」这个点。
+
+### 修
+- `api.js pushMemberToSources` 飞书分支：`department_ids` 优先用「成员归属部门」的飞书 `ext_id`（`departments.get(deptId)` 命中 `source==='feishu'` 且有 `ext_id`），否则回退同步范围（`deptIdsOf` 去掉根 "0"）。加成员 / 显式 push 两处调用点传入 `deptId`。
+- `dirsync-feishu.createMember`：`department_ids` 过滤后为空 → **明确抛「未确定成员归属部门」**（errcode 仍标 99992402，但文案可读），不再静默省略让飞书回含糊的 99992402。顺带：mobile 校验 E.164（`/^\+\d{6,15}$/`，非法不传）、email 校验格式（非法不传）、name 空明确报「姓名不能为空」。
+- `dirsync-feishu.call`：错误信息透传飞书响应的 `error.field_violations`（具体哪个字段错），方便下次定位。
+
+### 测试
+- `scratchpad/feishu-create-test.js` 改 10 项全过：正常建号（open_id/不传 user_id/mobile 加 +86/具体部门保留）、已带 + 不重复加、非法 email 不传、根部门 "0" 明确报「未确定归属部门」、无部门明确报、姓名空明确报。回归 push-provision 10 / departments 14 / contacts 18 / dirsync-contacts 6 / phone-cc 13 / schedule 7 / limited-admin 11 全过。
+- ⚠️ 真实飞书未联调（同既有约束）；根因来自飞书官方文档（department_ids 必填、根 "0" 不能归属），靠 createMember 单测 + 逻辑审查覆盖。`pushMemberToSources` 的 deptId→ext_id 链路在 api.js（better-sqlite3）无法独立 require，靠逻辑审查。
 
 ## v3.5.74 临时 / 限权管理员（用户反馈）
 
