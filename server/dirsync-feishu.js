@@ -424,7 +424,9 @@ async function createMember(cfg, f) {
   // 飞书 mobile 要求 E.164 格式（+8613800000000）；11 位中国手机号补 +86 前缀
   if (f.mobile) body.mobile = /^\+/.test(String(f.mobile)) ? String(f.mobile) : '+86' + String(f.mobile).replace(/[^\d]/g, '');
   if (f.email) body.email = f.email;
-  body.department_ids = Array.isArray(f.department_ids) ? f.department_ids.map(String) : [];
+  // 部门：根部门 "0" 是虚拟根、不能作成员归属；过滤掉空值和 "0"，空则不传（飞书归到默认部门）
+  const deptIds = (Array.isArray(f.department_ids) ? f.department_ids : []).map(String).filter(x => x && x !== '0');
+  if (deptIds.length) body.department_ids = deptIds;
   const j = await call('POST', '/contact/v3/users', { params: DEPT_Q, body, token: tk });
   // 不传 user_id 时飞书自动生成 open_id；优先返回 open_id（用于写映射）
   return (j.data && j.data.user && (j.data.user.open_id || j.data.user.user_id)) || f.user_id;

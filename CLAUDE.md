@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.4**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.5**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,13 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.70.5 修出站建号：企业微信 userid 冲突错误码 + 飞书根部门
+
+四级补丁（修 bug）。用户实测两个新错误：
+- 🐛 **企业微信 `60102 userid existed`**：`upsertMember` 里把「userid 已存在→增补」的错误码写成了 `60106`——**60106 实际是「邮箱已存在」**，userid 冲突是 **60102**。导致 userid 冲突时没走「增补部门」，直接报错。修：`60102` 走增补（读现有部门并集 update），`60106`（邮箱已存在）与 `60104`（手机号已存在）各给友好提示。
+- 🐛 **飞书 `99992402 field validation failed`**：飞书同步源没配部门时 `deptIdsOf` 返回 `['0']`（根部门），但**根部门 "0" 是虚拟根、不能作成员归属**，传给 `department_ids` 导致字段校验失败。修：`createMember` 过滤掉空值和 `"0"`，过滤后为空则不传 department_ids（飞书归到默认部门）。
+- ⚠️ 测试：`push-provision-test.js` 改 60102 增补 + 60106 邮箱提示，10 项；`feishu-create-test.js` 加根部门过滤 + 具体部门保留，7 项；回归 7 套 68 项全过。
 
 ## v3.5.70.4 修飞书出站建号：手机号要带 +86（E.164 格式）
 

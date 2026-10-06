@@ -45,8 +45,8 @@ const W = require('../server/dirsync-wecom');
   ok('建号走 user/create 且带 department（整数）', wecomCalls.some(c => c.path === '/cgi-bin/user/create' && c.body && Array.isArray(c.body.department) && c.body.department.includes(1) && c.body.department.every(d => typeof d === 'number')));
   ok('建号成功不触发 user/update', !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
 
-  // ② userid 冲突（60106）→ 增补部门（读现有 [10,20] → 并集 [10,20,1]，不覆盖）
-  wecomCreateResp = { errcode: 60106, errmsg: 'UserID 已存在' };
+  // ② userid 冲突（60102）→ 增补部门（读现有 [10,20] → 并集 [10,20,1]，不覆盖）
+  wecomCreateResp = { errcode: 60102, errmsg: 'UserID 已存在' };
   wecomExistingDept = [10, 20];
   wecomCalls.length = 0;
   const id2 = await W.upsertMember({ corp_id: 'corp', secret: 's', write_secret: 'ws' }, { userid: 'u100', name: '张三', mobile: '13800000001', department: [1] });
@@ -56,13 +56,13 @@ const W = require('../server/dirsync-wecom');
   ok('增补部门（并集含现有 10/20 与新的 1，均为整数）', upd && Array.isArray(upd.body.department) && [10, 20, 1].every(d => upd.body.department.includes(d)) && upd.body.department.every(d => typeof d === 'number'));
   ok('部门数 = 3（未覆盖成单部门）', upd && upd.body.department.length === 3);
 
-  // ③ 非 60106 错误 → 直接抛（不误走 update）
+  // ③ 非 60102 错误 → 直接抛（不误走 update）
   wecomCreateResp = { errcode: 48002, errmsg: '无写权限' };
   wecomCalls.length = 0;
   let threw = false;
   try { await W.upsertMember({ corp_id: 'corp', secret: 's', write_secret: 'ws' }, { userid: 'u100', name: '张三', department: [1] }); }
   catch (e) { threw = e.errcode === 48002; }
-  ok('非 60106 错误直接抛（不误增补）', threw && !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
+  ok('非 60102 错误直接抛（不误增补）', threw && !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
 
   // ④ 60104 手机号已存在 → 友好提示（不重复建号）
   wecomCreateResp = { errcode: 60104, errmsg: 'mobile existed' };
@@ -71,6 +71,14 @@ const W = require('../server/dirsync-wecom');
   try { await W.upsertMember({ corp_id: 'corp', secret: 's', write_secret: 'ws' }, { userid: 'u100', name: '张三', mobile: '13800000001', department: [1] }); }
   catch (e) { msg604 = e.message; }
   ok('60104 手机号已存在 → 友好提示', msg604.includes('手机号已在企业微信') && !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
+
+  // ⑤ 60106 邮箱已存在 → 友好提示
+  wecomCreateResp = { errcode: 60106, errmsg: 'email existed' };
+  wecomCalls.length = 0;
+  let msg606 = '';
+  try { await W.upsertMember({ corp_id: 'corp', secret: 's', write_secret: 'ws' }, { userid: 'u100', name: '张三', email: 'z@x.com', department: [1] }); }
+  catch (e) { msg606 = e.message; }
+  ok('60106 邮箱已存在 → 友好提示', msg606.includes('邮箱已在企业微信') && !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

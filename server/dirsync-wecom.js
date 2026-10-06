@@ -573,7 +573,7 @@ async function createMember(cfg, f) {
   await call('POST', '/cgi-bin/user/create', { access_token }, body);
   return f.userid;
 }
-// 建成员；userid 已存在（60106）时改走「增补部门」而不是覆盖——先读现有部门取并集再 update（避免把多部门覆盖成一个）
+// 建成员；userid 已存在（60102）时改走「增补部门」而不是覆盖——先读现有部门取并集再 update（避免把多部门覆盖成一个）
 async function upsertMember(cfg, f) {
   try {
     return await createMember(cfg, f);
@@ -582,7 +582,10 @@ async function upsertMember(cfg, f) {
       // 手机号已在企业微信通讯录里：该成员很可能已在企业微信（或手机号被占用），不要再重复建号
       throw Object.assign(new Error('手机号已在企业微信通讯录里（该成员可能已存在于企业微信，请用「通讯录同步」拉取绑定，或在企业微信里处理该手机号）'), { errcode: 60104 });
     }
-    if (e.errcode !== 60106) throw e;
+    if (e.errcode === 60106) {
+      throw Object.assign(new Error('邮箱已在企业微信通讯录里（该成员可能已存在于企业微信，请用「通讯录同步」拉取绑定）'), { errcode: 60106 });
+    }
+    if (e.errcode !== 60102) throw e;   // 60102 = userid 已存在 → 增补
     const access_token = await token(writeCfg(cfg));
     const cur = await call('GET', '/cgi-bin/user/get', { access_token, userid: String(f.userid) }).catch(() => null);
     const existing = (cur && Array.isArray(cur.department)) ? cur.department.map(x => parseInt(x, 10)).filter(x => x > 0) : [];

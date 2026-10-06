@@ -34,12 +34,13 @@ const F = require('../server/dirsync-feishu');
   ok('不传 user_id', createCall && !createCall.body.user_id);
   ok('mobile 加 +86 前缀', createCall && createCall.body.mobile === '+8613800000001');
   ok('name 原样', createCall && createCall.body.name === '张三');
-  ok('department_ids 传字符串数组', createCall && Array.isArray(createCall.body.department_ids) && createCall.body.department_ids.includes('0'));
+  ok('根部门 "0" 被过滤（不传 department_ids）', createCall && !createCall.body.department_ids);
   // 已带 + 的手机号不重复加
   feishuCalls.length = 0;
-  await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '李四', mobile: '+8613811112222', department_ids: ['0'] });
+  await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '李四', mobile: '+8613811112222', department_ids: ['od_abc'] });
   const c2 = feishuCalls.find(c => c.path === '/open-apis/contact/v3/users');
   ok('已带 + 不重复加 +86', c2 && c2.body.mobile === '+8613811112222');
+  ok('具体部门保留', c2 && Array.isArray(c2.body.department_ids) && c2.body.department_ids.includes('od_abc'));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

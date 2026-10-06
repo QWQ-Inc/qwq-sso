@@ -4,6 +4,11 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.70.5 — 修出站建号：企业微信 userid 冲突错误码 + 飞书根部门
+
+- 企业微信 userid 冲突（60102）现在正确走「增补部门」，之前误写成 60106（邮箱已存在）。
+- 飞书建号过滤掉根部门 "0"（虚拟根不能作成员归属），修复 99992402 field validation failed。
+
 ## v3.5.70.4 — 修飞书出站建号：手机号带 +86
 
 - 飞书建号时手机号补 `+86` 前缀（E.164 格式），修复 `99992402 field validation failed`。
