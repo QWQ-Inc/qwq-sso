@@ -12,6 +12,7 @@ const wecom = {
   sync: W.syncWecom, corpScope: W.corpScope, corpUsers: W.corpUsers, corpOfProvider: W.corpOfProvider,
   loginProviderChoices: W.loginProviderChoices, bindProvidersFor: W.bindProvidersFor,
   memberStatus: W.memberStatus, setMemberEnabled: W.setMemberEnabled, deleteMember: W.deleteMember,
+  createMember: W.createMember, upsertMember: W.upsertMember,
   isGoneError: (e) => e && e.errcode === 60111, LIMITED_HINT: W.LIMITED_HINT,
 };
 const DRIVERS = { wecom, feishu: F };

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.68.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.69**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,30 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.69 出站 provisioning：成员加入/离开组织自动增删企业微信/飞书账号（用户反馈）
+
+三级版本。用户指出：现在「组织成员 add/remove」只有入站（企业微信/飞书 → SSO 拉取），**出站没做**——管理员在 SSO 里把成员加进组织、或移出组织时，企业微信/飞书那边不会自动增删账号。用户确认三点：① 手动+自动结合，且**成员在外部可能已在多部门，推送更新只能增补部门、不能把多部门覆盖成一个**；② 移出删号：本系统建的、外部本来的都删，但**人工强确认**；③ 外部标识（userid/open_id）用随机码或平台 UID（org_uid）。
+
+### 驱动加 createMember / upsertMember
+- `dirsync-wecom.js`：`createMember(cfg, f)`（`POST /cgi-bin/user/create`，用 `writeCfg` 的通讯录同步 Secret）+ `upsertMember`（create 报 `60106` userid 已存在 → `user/get` 读现有 department → 与新 department **取并集** → `user/update` 增补，不覆盖多部门）。
+- `dirsync-feishu.js`：`createMember`（`POST /contact/v3/users`，传 user_id/name/mobile/email/department_ids）+ `upsertMember`（create 冲突 → GET 读现有 department_ids → 并集 → `PATCH` 增补）。
+- `dirsync.js`：wecom driver 显式加 createMember/upsertMember（feishu 是整个模块对象，自动带出）。
+
+### db.js
+- `dirSourceStmts` 加 `linkUpsert`（建号后写映射）/ `linkDelete`（删号后清映射）/ `linkByUserSource`。不加列。
+
+### api.js 挂钩
+- `pushMemberToSources(subject, user, opts)`：遍历该组织**启用 + can_write** 的同步源（`src.type==='feishu' || !!cfg.write_secret`），`drv.upsertMember` 建号（extId 优先 org_uid、否则随机码），成功后 `linkUpsert` 写映射；失败静默记 warn。`removeMemberFromSources(subject, user)`：查该成员在本组织各同步源的映射 → 逐个 `deleteMember` + `linkDelete`。
+- `POST /admin/orgs/:sid/members` 收 `push:true`（勾选才出站）→ 返回 `push_results`；`DELETE .../members/:uid` 收 `push:true`（强确认后带）→ 删号 + 返回 `push_results`。新增显式 `POST /admin/orgs/:sid/members/:uid/push`（事后补建号）。
+
+### 前端（dashboard.html）
+- 成员弹窗加「同步到企业微信/飞书建号」勾选（`orgmem-push`），`addOrgMember`/`createOrgMember` 读它带 `push`，`_pushToast` 反馈每源结果。`delOrgMember` 确认文案改「移出后会在企业微信/飞书里删除对应账号」，带 `push:true`。成员行加「同步」按钮（`pushOrgMember` → 显式 push 接口）。dev mock 补 push_results。
+
+### 测试
+- `scratchpad/push-provision-test.js` 8 项全过：建号成功返回 userid + 走 user/create + 不触发 update；userid 冲突（60106）→ user/update 增补部门（并集含现有 [10,20] 与新 [1]，部门数=3 未覆盖）；非 60106 错误直接抛不误增补。
+- dev 浏览器实测：勾选框存在、加成员带 push 成功、成员行「同步」按钮 → toast「已同步到 企业微信」。
+- ⚠️ 真实企业微信/飞书写链路无凭据无法端到端（同既有约束），靠 mock fetch + upsertMember 单测覆盖增补语义。
 
 ## v3.5.68.1 修部署失败：删掉未使用的 upsertExt（ON CONFLICT 部分索引不匹配）
 

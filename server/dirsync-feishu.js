@@ -417,6 +417,31 @@ async function deleteMember(cfg, openId) {
   const tk = await token(cfg);
   await call('DELETE', `/contact/v3/users/${encodeURIComponent(openId)}`, { params: { user_id_type: 'open_id' }, token: tk });
 }
+// 在飞书里创建成员（v3.5.69 出站 provisioning；自建应用需开「更新通讯录」权限）
+async function createMember(cfg, f) {
+  const tk = await token(cfg);
+  const body = { name: f.name };
+  if (f.user_id) body.user_id = String(f.user_id);
+  if (f.mobile) body.mobile = f.mobile;
+  if (f.email) body.email = f.email;
+  body.department_ids = Array.isArray(f.department_ids) ? f.department_ids.map(String) : [];
+  const j = await call('POST', '/contact/v3/users', { params: DEPT_Q, body, token: tk });
+  return f.user_id || (j.data && j.data.user && j.data.user.user_id);
+}
+// 建成员；user_id 已存在时改「增补部门」而不是覆盖（先读现有 department_ids 取并集再 PATCH）
+async function upsertMember(cfg, f) {
+  try {
+    return await createMember(cfg, f);
+  } catch (e) {
+    if (!f.user_id) throw e;
+    const tk = await token(cfg);
+    const cur = await call('GET', `/contact/v3/users/${encodeURIComponent(String(f.user_id))}`, { params: { ...DEPT_Q, user_id_type: 'user_id' }, token: tk }).catch(() => null);
+    const existing = (cur && cur.data && cur.data.user && Array.isArray(cur.data.user.department_ids)) ? cur.data.user.department_ids.map(String) : [];
+    const merged = [...new Set([...existing, ...(Array.isArray(f.department_ids) ? f.department_ids.map(String) : [])])];
+    await call('PATCH', `/contact/v3/users/${encodeURIComponent(String(f.user_id))}`, { params: { ...DEPT_Q, user_id_type: 'user_id' }, body: { department_ids: merged }, token: tk });
+    return String(f.user_id);
+  }
+}
 const isGoneError = (e) => e && (e.errcode === 41012 || e.errcode === 40013);
 
 // ══════════════════════════════════════════
@@ -470,6 +495,6 @@ module.exports = {
   type: 'feishu', label: '飞书', SRC, effectiveCfg, writeCfg, apiBase, deptIdsOf, token,
   fetchScopeTree, fetchDirectory, sync: syncFeishu, syncFeishu,
   corpScope, corpUsers, corpOfProvider, loginProviderFor, loginProviderChoices, bindProvidersFor,
-  memberStatus, setMemberEnabled, deleteMember, isGoneError,
+  memberStatus, setMemberEnabled, deleteMember, createMember, upsertMember, isGoneError,
   evDecrypt, evEncrypt, evSignature, parseEvent, LIMITED_HINT: '',
 };

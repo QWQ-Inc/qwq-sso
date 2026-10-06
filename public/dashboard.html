@@ -631,12 +631,15 @@ function _devApi(method, path, body) {
   if (mm && method === 'GET') { const s=(db._oauthSubjects||[]).find(x=>x.id===mm[1])||{}; const r=db._orgUidRule[mm[1]]||{}; return ok({ success:true, org:{ id:mm[1], name:s.name, uid_prefix:r.prefix||'', uid_len:r.len||4, members_open:!!s.members_open }, members: db._orgMembers[mm[1]]||[] }); }
   let msh = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/shareable$/);
   if (msh && method === 'GET') return ok({ success:true, data:[{ uid:'#01008', name:'周可复用', email:'z**@corp.com', phone:'138****8899', from_orgs:'B集团,示例集团' }] });
-  if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } const nm=body.create?(body.name||body.email||body.phone):body.account; const did=body.dept_id||null; db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:nm, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid, dept_id:did, dept_name:did?deptNameOf(sid,did):'', has_pw:body.create&&body.password?1:0 }); return ok({ success:true, org_uid:uid }); }
+  if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } const nm=body.create?(body.name||body.email||body.phone):body.account; const did=body.dept_id||null; db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:nm, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid, dept_id:did, dept_name:did?deptNameOf(sid,did):'', has_pw:body.create&&body.password?1:0 }); const push_results = body.push ? [{ source_id:'s1', label:'企业微信', ok:true, ext_id:'u_'+Date.now().toString(36) }] : null; return ok({ success:true, org_uid:uid, push_results }); }
   let mmg = path.match(/^\/admin\/orgs\/([^/]+)\/members\/merge$/);
   if (mmg && method === 'POST') { const arr=db._orgMembers[mmg[1]]||[]; const t=arr.find(x=>x.user_id===body.target); const src=arr.filter(x=>(body.sources||[]).includes(x.user_id)); if(t){ t.ext_ids=[...(t.ext_ids||[]),...src.flatMap(x=>x.ext_ids||[])]; } db._orgMembers[mmg[1]]=arr.filter(x=>!(body.sources||[]).includes(x.user_id)); return ok({ success:true, merged:src.map(x=>({id:x.user_id,uid_seq:x.uid_seq,name:x.name})), target:t?{id:t.user_id}:null, moved:{} }); }
   let mp = path.match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)$/);
   if (mp && method === 'PATCH') { const arr=db._orgMembers[mp[1]]||[]; const m=arr.find(x=>String(x.uid_seq)===mp[2]); if(m){ if(body.org_uid!==undefined)m.org_uid=body.org_uid||null; if(body.dept_id!==undefined){ m.dept_id=body.dept_id||null; m.dept_name=body.dept_id?deptNameOf(mp[1],body.dept_id):''; } } return ok({ success:true }); }
-  if (mp && method === 'DELETE') { db._orgMembers[mp[1]]=(db._orgMembers[mp[1]]||[]).filter(x=>String(x.uid_seq)!==mp[2]); return ok({ success:true }); }
+  if (mp && method === 'DELETE') { db._orgMembers[mp[1]]=(db._orgMembers[mp[1]]||[]).filter(x=>String(x.uid_seq)!==mp[2]); const push_results = body.push ? [{ source_id:'s1', label:'企业微信', ok:true, ext_id:'u_x' }] : null; return ok({ success:true, push_results }); }
+  // v3.5.69 显式出站建号
+  let mpush = path.match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)\/push$/);
+  if (mpush && method === 'POST') { return ok({ success:true, push_results: [{ source_id:'s1', label:'企业微信', ok:true, ext_id:'u_'+Date.now().toString(36) }] }); }
   // 成员登录凭证（v3.5.67）
   let mc = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/members\/([^/]+)\/credentials$/);
   if (mc) { db._orgMemCreds = db._orgMemCreds || {}; const key = mc[1]+'|'+mc[2]; db._orgMemCreds[key] = db._orgMemCreds[key] || [];
@@ -3084,6 +3087,7 @@ async function loadMe() {
       <input id="orgmem-uid" placeholder="组织内UID(留空按规则)" style="width:150px;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
       <button class="btn primary" style="font-size:12px;" onclick="addOrgMember()">加入</button>
     </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txd);margin-bottom:8px;"><input type="checkbox" id="orgmem-push" style="margin:0;"> 同步到企业微信/飞书建号（需对应同步源有写权限；已存在则增补部门、不覆盖）</label>
     <details style="margin-bottom:8px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);">➕ 新建账号并加入本组织</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">为还没有平台账号的人直接建号 + 入组。姓名必填，邮箱/手机至少填一个（作登录标识）；密码可留空（之后可设组织密码或绑三方登录）。</div>
@@ -9022,6 +9026,7 @@ async function loadOrgMembers() {
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>组织密码</button>
       ${m.has_pw ? `<button class="btn" style="font-size:11px;padding:2px 7px;" onclick='clearOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>清除</button>` : ''}
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='openOrgMemCreds(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>登录凭证</button>
+      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='pushOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>同步</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='delOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>移出</button>
     </div>`;
   }).join('') : '<div style="color:var(--txd);padding:8px 4px;">该组织还没有成员。</div>';
@@ -9098,12 +9103,20 @@ async function doOrgMerge() {
     loadOrgMembers();
   } else showToast('合并失败：' + (data?.error || '未知错误'));
 }
+// v3.5.69 出站建号结果反馈
+function _pushToast(rr) {
+  if (!rr || !rr.length) return '';
+  const ok = rr.filter(x => x.ok).length, fail = rr.length - ok;
+  if (fail) return `（出站建号：成功 ${ok}/${rr.length}，失败：${rr.filter(x => !x.ok).map(x => x.label).join('、')}）`;
+  return `（已同步到 ${rr.map(x => x.label).join('、')}）`;
+}
 async function addOrgMember() {
   const account = document.getElementById('orgmem-account').value.trim();
   const org_uid = document.getElementById('orgmem-uid').value.trim();
+  const push = document.getElementById('orgmem-push').checked;
   if (!account) { showToast('请填写账号'); return; }
-  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { account, org_uid, auto_uid: !org_uid });
-  if (ok) { showToast('已加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : '')); document.getElementById('orgmem-account').value = ''; document.getElementById('orgmem-uid').value = ''; loadOrgMembers(); }
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { account, org_uid, auto_uid: !org_uid, push });
+  if (ok) { showToast('已加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : '') + _pushToast(data.push_results)); document.getElementById('orgmem-account').value = ''; document.getElementById('orgmem-uid').value = ''; loadOrgMembers(); }
   else showToast('加入失败：' + (data?.error || '未知错误'));
 }
 // 新建账号并加入本组织（v3.5.67）
@@ -9114,11 +9127,12 @@ async function createOrgMember() {
   const password = document.getElementById('orgmem-new-pw').value;
   const dept_id = document.getElementById('orgmem-new-dept').value;
   const org_uid = document.getElementById('orgmem-new-uid').value.trim();
+  const push = document.getElementById('orgmem-push').checked;
   if (!name) { showToast('请填写姓名'); return; }
   if (!email && !phone) { showToast('邮箱/手机至少填一个'); return; }
-  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { create: true, name, email, phone, password, dept_id: dept_id || null, org_uid, auto_uid: !org_uid });
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members', { create: true, name, email, phone, password, dept_id: dept_id || null, org_uid, auto_uid: !org_uid, push });
   if (ok) {
-    showToast('已新建并加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : ''));
+    showToast('已新建并加入' + (data.org_uid ? '（组织内UID ' + data.org_uid + '）' : '') + _pushToast(data.push_results));
     ['name', 'email', 'phone', 'pw', 'uid'].forEach(f => { const el = document.getElementById('orgmem-new-' + f); if (el) el.value = ''; });
     document.getElementById('orgmem-new-dept').value = '';
     loadOrgMembers();
@@ -9160,9 +9174,14 @@ async function clearOrgMemPw(uidSeq, name) {
   if (ok) { showToast('已清除组织密码'); loadOrgMembers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
 }
 async function delOrgMember(uidSeq, name) {
-  if (!await uiConfirm(`把「${name}」移出该组织？`)) return;
-  const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq);
-  if (ok) { showToast('已移出'); loadOrgMembers(); } else showToast('移出失败：' + (data?.error || '未知错误'));
+  if (!await uiConfirm(`把「${name}」移出该组织？\n\n移出后会在企业微信/飞书里删除其对应账号（若已同步过去）。`)) return;
+  const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq, { push: true });
+  if (ok) { showToast('已移出' + _pushToast(data.push_results)); loadOrgMembers(); } else showToast('移出失败：' + (data?.error || '未知错误'));
+}
+// v3.5.69 显式出站建号：补同步到企业微信/飞书
+async function pushOrgMember(uidSeq, name) {
+  const { ok, data } = await api('POST', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/push');
+  if (ok) { showToast(`「${name}」` + _pushToast(data.push_results)); } else showToast('同步失败：' + (data?.error || '未知错误'));
 }
 // 成员所属部门（v3.5.67）
 async function setOrgMemDept(uidSeq, userId) {

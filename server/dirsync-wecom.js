@@ -561,5 +561,34 @@ async function setMemberEnabled(cfg, userid, enabled) {
   const access_token = await token(writeCfg(cfg));
   await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), enable: enabled ? 1 : 0 });
 }
+// 在企业微信里创建成员（v3.5.69 出站 provisioning；需通讯录同步 Secret 的写权限）
+async function createMember(cfg, f) {
+  const access_token = await token(writeCfg(cfg));
+  const body = { userid: String(f.userid), name: f.name };
+  if (f.mobile) body.mobile = f.mobile;
+  if (f.email) body.email = f.email;
+  body.department = Array.isArray(f.department) ? f.department.map(String) : [];
+  await call('POST', '/cgi-bin/user/create', { access_token }, body);
+  return f.userid;
+}
+// 建成员；userid 已存在（60106）时改走「增补部门」而不是覆盖——先读现有部门取并集再 update（避免把多部门覆盖成一个）
+async function upsertMember(cfg, f) {
+  try {
+    return await createMember(cfg, f);
+  } catch (e) {
+    if (e.errcode !== 60106) throw e;
+    const access_token = await token(writeCfg(cfg));
+    const cur = await call('GET', '/cgi-bin/user/get', { access_token, userid: String(f.userid) }).catch(() => null);
+    const existing = (cur && Array.isArray(cur.department)) ? cur.department.map(String) : [];
+    const merged = [...new Set([...existing, ...(Array.isArray(f.department) ? f.department.map(String) : [])])];
+    const body = { userid: String(f.userid) };
+    if (f.name) body.name = f.name;
+    if (f.mobile) body.mobile = f.mobile;
+    if (f.email) body.email = f.email;
+    body.department = merged;
+    await call('POST', '/cgi-bin/user/update', { access_token }, body);
+    return f.userid;
+  }
+}
 
-module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, createMember, upsertMember, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

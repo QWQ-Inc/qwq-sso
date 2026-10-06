@@ -1630,6 +1630,11 @@ const dirSourceStmts = {
   removeApplied: db.prepare('DELETE FROM dir_sync_applied WHERE source_id=?'),
   removeAppliedBySubject: db.prepare('DELETE FROM dir_sync_applied WHERE source_id IN (SELECT id FROM dir_sync_sources WHERE subject_id=?)'),
   removeLinksBySubject: db.prepare('DELETE FROM dir_source_links WHERE source_id IN (SELECT id FROM dir_sync_sources WHERE subject_id=?)'),
+  // v3.5.69 出站 provisioning：加成员建号后写映射 / 移出删号后清映射
+  linkUpsert: db.prepare(`INSERT INTO dir_source_links (source_id,ext_id,user_id,depts,ext_name,updated_at) VALUES (?,?,?,?,?,datetime('now'))
+    ON CONFLICT(source_id, ext_id) DO UPDATE SET user_id=excluded.user_id, depts=excluded.depts, ext_name=COALESCE(excluded.ext_name, ext_name), updated_at=datetime('now')`),
+  linkDelete: db.prepare('DELETE FROM dir_source_links WHERE source_id=? AND ext_id=?'),
+  linkByUserSource: db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND user_id=?'),
 };
 
 module.exports = {

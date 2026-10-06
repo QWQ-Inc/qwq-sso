@@ -1653,6 +1653,66 @@ router.get('/admin/orgs/:sid/shareable', requireAuth, (req, res) => {
 });
 
 // 加成员：account 支持邮箱/手机/UID/用户名；org_uid 可指定，留空则按规则自动生成
+// v3.5.69 出站 provisioning：把成员 push 到本组织启用且有写权限的通讯录同步源（企业微信/飞书）。
+// 建号（userid/open_id 已存在则增补部门，不覆盖多部门）；成功后写 dir_source_links 映射。
+// 失败静默记 warn（不阻断加成员本身），返回每源结果供前端展示。
+async function pushMemberToSources(subject, user, opts = {}) {
+  const results = [];
+  let rows = [];
+  try { rows = dirSources.bySubject.all(subject.id).filter(s => s.enabled); } catch (_) {}
+  for (const src of rows) {
+    const drv = require('./dirsync').driver(src.type);
+    if (!drv) continue;
+    const cfg = drv.effectiveCfg(src);
+    const canWrite = src.type === 'feishu' || !!cfg.write_secret;
+    const label = src.label || drv.label || src.type;
+    if (!canWrite) { results.push({ source_id: src.id, label, ok: false, error: '无写权限（企业微信需填「通讯录同步 Secret」）' }); continue; }
+    let extId = opts.extId || crypto.randomBytes(4).toString('hex');
+    const deptIds = drv.deptIdsOf(cfg);
+    const fields = {
+      userid: String(extId), user_id: String(extId),
+      name: opts.name || user.name || '',
+      mobile: opts.mobile || user.phone || '',
+      email: opts.email || user.email || '',
+    };
+    if (src.type === 'wecom') fields.department = deptIds; else fields.department_ids = deptIds;
+    try {
+      const createdId = await drv.upsertMember(cfg, fields);
+      dirSources.linkUpsert.run(src.id, createdId || extId, user.id, (deptIds || []).join(',') || null, opts.name || user.name || null);
+      results.push({ source_id: src.id, label, ok: true, ext_id: createdId || extId });
+    } catch (e) {
+      console.warn(`[出站建号${label}失败]`, user.name, e.message);
+      results.push({ source_id: src.id, label, ok: false, error: String(e.message || e).slice(0, 200) });
+    }
+  }
+  return results;
+}
+
+// v3.5.69 出站删号：移出组织时，删掉该成员在本组织各同步源里的外部账号 + 映射（前端强确认后带 push 才调）
+async function removeMemberFromSources(subject, user) {
+  const results = [];
+  let links = [];
+  try {
+    links = db.prepare(`SELECT l.source_id, l.ext_id, d.type, d.label FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id WHERE d.subject_id=? AND l.user_id=?`).all(subject.id, user.id);
+  } catch (_) {}
+  for (const l of links) {
+    const drv = require('./dirsync').driver(l.type);
+    if (!drv) continue;
+    const src = dirSources.get.get(l.source_id);
+    const cfg = src ? drv.effectiveCfg(src) : {};
+    const label = l.label || drv.label || l.type;
+    try {
+      await drv.deleteMember(cfg, l.ext_id);
+      dirSources.linkDelete.run(l.source_id, l.ext_id);
+      results.push({ source_id: l.source_id, label, ok: true, ext_id: l.ext_id });
+    } catch (e) {
+      console.warn(`[出站删号${label}失败]`, l.ext_id, e.message);
+      results.push({ source_id: l.source_id, label, ok: false, error: String(e.message || e).slice(0, 200) });
+    }
+  }
+  return results;
+}
+
 router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
@@ -1697,7 +1757,12 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
     if (!dp || dp.subject_id !== s.id) return res.status(400).json({ error: '部门不存在或不属于本组织' });
     orgMembers.setDeptId.run(deptId, s.id, r.id);
   }
-  res.json({ success: true, org_uid: orgUid, uid_seq: r.uid_seq });
+  // v3.5.69 出站建号（前端勾了「同步到企业微信/飞书」才 push）
+  let pushResults = null;
+  if (req.body?.push) {
+    pushResults = await pushMemberToSources(s, r, { extId: orgUid, name: r.name, mobile: r.phone, email: r.email });
+  }
+  res.json({ success: true, org_uid: orgUid, uid_seq: r.uid_seq, push_results: pushResults });
 });
 
 router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
@@ -1722,12 +1787,31 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
-  if (!canManageOrg(req, req.params.sid)) return res.status(403).json({ error: '无权管理该组织' });
+router.delete('/admin/orgs/:sid/members/:uid', requireAuth, async (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
   const target = findRealUserByUid(req.params.uid);
   if (!target) return res.status(404).json({ error: '成员不存在' });
-  orgMembers.remove.run(req.params.sid, target.id);
-  res.json({ success: true });
+  // v3.5.69 出站删号（前端强确认后带 push 才删外部账号）
+  let pushResults = null;
+  if (req.body?.push) {
+    pushResults = await removeMemberFromSources(s, target);
+  }
+  orgMembers.remove.run(s.id, target.id);
+  res.json({ success: true, push_results: pushResults });
+});
+
+// v3.5.69 显式出站建号：把某成员 push 到本组织同步源（用于「加成员时没勾，事后补」）
+router.post('/admin/orgs/:sid/members/:uid/push', requireAuth, async (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  const target = findRealUserByUid(req.params.uid);
+  if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
+  const mem = orgMembers.get.get(s.id, target.id);
+  const results = await pushMemberToSources(s, target, { extId: mem?.org_uid, name: target.name, mobile: target.phone, email: target.email });
+  res.json({ success: true, push_results: results });
 });
 
 // ── 组织树状部门（v3.5.68）──────────────────────────────
