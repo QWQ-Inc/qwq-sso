@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.70.1 修出站建号失败（企业微信 department 传了字符串数组，应为整数）
+
+四级补丁（修 bug）。用户反馈 v3.5.69 出站建号失败，但自建应用/通讯录权限都配了。
+- 🐛 根因：企业微信 `dept_ids` 在 `dirScopeFromBody`（api.js:2368）里 `parseInt` 存成**整数数组**，但 `dirsync-wecom.createMember`/`upsertMember` 里 `f.department.map(String)` 把整数转成了**字符串数组**——企业微信 `user/create` 的 `department` 要求**整数数组**，传字符串会报错。
+- 修：`createMember`/`upsertMember` 里 department 一律 `parseInt` + 过滤 >0，空则默认根部门 `[1]`；不再 `map(String)`。
+- 顺手改进「无写权限」提示文案：明确「通讯录同步」Secret（管理工具 → 通讯录同步 → 开启「API 编辑通讯录」）与「自建应用」Secret 的区别。
+- ⚠️ 测试：`push-provision-test.js` 更新断言为整数数组（`typeof d === 'number'`），8 项全过；回归 6 套 59 项全过。
 
 ## v3.5.70 管理端「当前组织」切换（顶栏下拉 + 组织资源聚焦）（用户反馈）
 

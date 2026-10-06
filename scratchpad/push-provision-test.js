@@ -42,7 +42,7 @@ const W = require('../server/dirsync-wecom');
   wecomCalls.length = 0;
   const id1 = await W.upsertMember({ corp_id: 'corp', secret: 's', write_secret: 'ws' }, { userid: 'u100', name: '张三', mobile: '13800000001', department: [1] });
   ok('建号成功返回 userid', id1 === 'u100');
-  ok('建号走 user/create 且带 department', wecomCalls.some(c => c.path === '/cgi-bin/user/create' && c.body && c.body.department && c.body.department.includes('1')));
+  ok('建号走 user/create 且带 department（整数）', wecomCalls.some(c => c.path === '/cgi-bin/user/create' && c.body && Array.isArray(c.body.department) && c.body.department.includes(1) && c.body.department.every(d => typeof d === 'number')));
   ok('建号成功不触发 user/update', !wecomCalls.some(c => c.path === '/cgi-bin/user/update'));
 
   // ② userid 冲突（60106）→ 增补部门（读现有 [10,20] → 并集 [10,20,1]，不覆盖）
@@ -53,7 +53,7 @@ const W = require('../server/dirsync-wecom');
   ok('冲突后返回原 userid', id2 === 'u100');
   const upd = wecomCalls.find(c => c.path === '/cgi-bin/user/update');
   ok('冲突后走 user/update', !!upd);
-  ok('增补部门（并集含现有 10/20 与新的 1）', upd && Array.isArray(upd.body.department) && [10, 20, 1].every(d => upd.body.department.includes(String(d))));
+  ok('增补部门（并集含现有 10/20 与新的 1，均为整数）', upd && Array.isArray(upd.body.department) && [10, 20, 1].every(d => upd.body.department.includes(d)) && upd.body.department.every(d => typeof d === 'number'));
   ok('部门数 = 3（未覆盖成单部门）', upd && upd.body.department.length === 3);
 
   // ③ 非 60106 错误 → 直接抛（不误走 update）

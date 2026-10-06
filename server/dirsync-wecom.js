@@ -567,7 +567,9 @@ async function createMember(cfg, f) {
   const body = { userid: String(f.userid), name: f.name };
   if (f.mobile) body.mobile = f.mobile;
   if (f.email) body.email = f.email;
-  body.department = Array.isArray(f.department) ? f.department.map(String) : [];
+  // department 必须是整数数组（企业微信 user/create 的类型要求）；缺省归根部门 [1]
+  body.department = (Array.isArray(f.department) ? f.department : []).map(x => parseInt(x, 10)).filter(x => x > 0);
+  if (!body.department.length) body.department = [1];
   await call('POST', '/cgi-bin/user/create', { access_token }, body);
   return f.userid;
 }
@@ -579,13 +581,13 @@ async function upsertMember(cfg, f) {
     if (e.errcode !== 60106) throw e;
     const access_token = await token(writeCfg(cfg));
     const cur = await call('GET', '/cgi-bin/user/get', { access_token, userid: String(f.userid) }).catch(() => null);
-    const existing = (cur && Array.isArray(cur.department)) ? cur.department.map(String) : [];
-    const merged = [...new Set([...existing, ...(Array.isArray(f.department) ? f.department.map(String) : [])])];
+    const existing = (cur && Array.isArray(cur.department)) ? cur.department.map(x => parseInt(x, 10)).filter(x => x > 0) : [];
+    const merged = [...new Set([...existing, ...(Array.isArray(f.department) ? f.department : []).map(x => parseInt(x, 10)).filter(x => x > 0)])];
     const body = { userid: String(f.userid) };
     if (f.name) body.name = f.name;
     if (f.mobile) body.mobile = f.mobile;
     if (f.email) body.email = f.email;
-    body.department = merged;
+    body.department = merged.length ? merged : [1];
     await call('POST', '/cgi-bin/user/update', { access_token }, body);
     return f.userid;
   }

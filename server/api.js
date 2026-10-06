@@ -1666,7 +1666,7 @@ async function pushMemberToSources(subject, user, opts = {}) {
     const cfg = drv.effectiveCfg(src);
     const canWrite = src.type === 'feishu' || !!cfg.write_secret;
     const label = src.label || drv.label || src.type;
-    if (!canWrite) { results.push({ source_id: src.id, label, ok: false, error: '无写权限（企业微信需填「通讯录同步 Secret」）' }); continue; }
+    if (!canWrite) { results.push({ source_id: src.id, label, ok: false, error: '无写权限：企业微信建/删成员要用「通讯录同步」Secret（管理工具 → 通讯录同步 → 开启「API 编辑通讯录」），填到同步源「管理用 Secret」栏' }); continue; }
     let extId = opts.extId || crypto.randomBytes(4).toString('hex');
     const deptIds = drv.deptIdsOf(cfg);
     const fields = {
