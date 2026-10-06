@@ -672,7 +672,7 @@ function _devApi(method, path, body) {
   if (acd && method === 'DELETE') { const d = db._admContacts[acd[1]]; if (d) ['phones','emails'].forEach(k=>d[k]=d[k].filter(x=>x.id!==acd[2])); return ok({ success:true }); }
   // 设备管理演示（v3.5.21）
   db._devices = db._devices || [{ id:'d1', name:'前台门禁机', kind:'access_controller', serial:'AC-0001', status:'active', subject_name:'示例集团', subject_id:'S1', owner_name:null, door_id:'door1', door_name:'大门', tags:'一楼', last_seen:'2026-10-03 09:00' }];
-  if (path.split('?')[0] === '/admin/devices' && method === 'GET') return ok({ success:true, devices:db._devices, orgs:[{id:'S1',name:'示例集团'}], doors:[{id:'door1',name:'大门'},{id:'door2',name:'侧门'}], kinds:['apple','google','microsoft','access_controller','card_reader'], can_all:true });
+  if (path.split('?')[0] === '/admin/devices' && method === 'GET') { const org = decodeURIComponent((path.split('?org=')[1] || '').split('&')[0] || ''); const devices = org ? (db._devices||[]).filter(d => d.subject_id === org) : db._devices; return ok({ success:true, devices, orgs:[{id:'S1',name:'示例集团'}], doors:[{id:'door1',name:'大门'},{id:'door2',name:'侧门'}], kinds:['apple','google','microsoft','access_controller','card_reader'], can_all:true }); }
   if (path === '/admin/devices' && method === 'POST') { const id='d'+Date.now(); db._devices.unshift({ id, name:body.name, kind:body.kind, serial:body.serial, status:body.status, subject_id:body.subject_id||null, subject_name:body.subject_id==='S1'?'示例集团':null, owner_name:body.owner||null, door_id:body.door_id||null, door_name:body.door_id==='door1'?'大门':(body.door_id==='door2'?'侧门':null), tags:body.tags||'', last_seen:null }); return ok({ success:true, id }); }
   let dvm = path.match(/^\/admin\/devices\/([^/]+)$/);
   if (dvm && method === 'PATCH') { const d=db._devices.find(x=>x.id===dvm[1]); if(d)Object.assign(d,{ name:body.name,kind:body.kind,serial:body.serial,status:body.status,subject_id:body.subject_id||null,door_id:body.door_id||null,tags:body.tags||'' }); return ok({ success:true }); }
@@ -871,13 +871,13 @@ function _devApi(method, path, body) {
   if (method === 'PATCH' && path.startsWith('/admin/shop/')) return ok({ success:true });
 
   // 门禁（演示模式）
-  db._accessDoors = db._accessDoors || [{ id:'d-demo', name:'一楼大门', location:'总部一楼', subject_id:null, subject_name:null, status:'enabled', note:'', rule_count:1 }];
+  db._accessDoors = db._accessDoors || [{ id:'d-demo', name:'一楼大门', location:'总部一楼', subject_id:null, subject_name:null, status:'enabled', note:'', rule_count:1 },{ id:'d-s1', name:'示例集团侧门', location:'示例集团', subject_id:'S1', subject_name:'示例集团', status:'enabled', note:'', rule_count:0 }];
   db._accessRules = db._accessRules || { 'd-demo':[{ id:'r-demo', door_id:'d-demo', grant_type:'all', grant_value:'', effect:'allow', weekdays:'', time_start:'', time_end:'', label:'所有登录用户' }] };
   db._accessLogs = db._accessLogs || [{ id:'al1', door_name:'一楼大门', user_name:'演示用户', uid_seq:1, method:'qr', result:'allow', reason:'ok', ip:'127.0.0.1', created_at:'2026-10-02 09:00:00' }];
   if (path === '/user/app-center') return ok({ success:true, tools:{ users:null, devices:null, access:{ admin:false, passes:true } }, pass_doors: db._accessDoors.filter(d=>d.status==='enabled').map(d=>({ id:d.id, name:d.name })) });
   if (path === '/user/access/doors') return ok({ success:true, doors: db._accessDoors.filter(d=>d.status==='enabled').map(d=>({ id:d.id, name:d.name, location:d.location })) });
   if (method === 'POST' && path === '/user/access/qr') return ok({ success:true, code:'qr1.ZGVtbw.'+Math.random().toString(36).slice(2,10), expires_in:45, exp:Math.floor(Date.now()/1000)+45 });
-  if (path === '/admin/access/doors' && method === 'GET') return ok({ success:true, doors: db._accessDoors });
+  if (path.split('?')[0] === '/admin/access/doors' && method === 'GET') { const org = decodeURIComponent((path.split('?org=')[1] || '').split('&')[0] || ''); const doors = org ? (db._accessDoors||[]).filter(d => d.subject_id === org) : db._accessDoors; return ok({ success:true, doors }); }
   if (path === '/admin/access/doors' && method === 'POST') { const d={ id:'d'+Date.now(), name:body.name, location:body.location||'', subject_id:body.subject_id||null, subject_name:null, status:body.status||'enabled', note:body.note||'', rule_count:0 }; db._accessDoors.push(d); db._accessRules[d.id]=[]; return ok({ success:true, door:d }); }
   let ad = path.match(/^\/admin\/access\/doors\/([^/]+)$/);
   if (ad && method === 'PATCH') { const d=db._accessDoors.find(x=>x.id===ad[1]); if(d)Object.assign(d,{ name:body.name??d.name, location:body.location??d.location, status:body.status??d.status, note:body.note??d.note }); return ok({ success:true, door:d }); }
@@ -1089,6 +1089,7 @@ async function loadMe() {
     // 管理员：两个按钮都保留
     adminRole = ME.admin_level === 1 ? 'superadmin' : ME.admin_level === 2 ? 'ops' : 'readonly';
     updateRestrictedNavItems();
+    loadAdminOrgSelect();   // v3.5.70 顶栏「当前组织」下拉
   }
   // 恢复刷新前所在的菜单（无记录时按身份走默认页）
   setTimeout(bootToLastPage, 0);
@@ -3300,6 +3301,56 @@ let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
 const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-backups'];
+
+// ── 管理端「当前组织」切换（v3.5.70）：顶栏下拉聚焦组织资源（设备/门禁），保留管理员能力 ──
+function _curAdminOrg() { try { return localStorage.getItem('sso_admin_org') || ''; } catch (_) { return ''; } }
+async function loadAdminOrgSelect() {
+  const box = document.getElementById('topbar-actions');
+  if (!box) return;
+  const { ok, data } = await api('GET', '/account/managed-orgs');
+  const orgs = (ok && data.orgs) ? data.orgs : [];
+  if (!orgs.length) { box.innerHTML = ''; return; }
+  const cur = _curAdminOrg();
+  box.innerHTML = `
+    <label style="font-size:12px;color:var(--txd);white-space:nowrap;">当前组织</label>
+    <select id="admin-org-select" onchange="onAdminOrgChange()" style="padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:13px;background:var(--sf);color:var(--tx);max-width:220px;">
+      <option value="">全部</option>
+      ${orgs.map(o => `<option value="${esc(o.id)}" ${o.id === cur ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}
+    </select>`;
+  if (cur) renderAdminOrgBanner(orgs.find(o => o.id === cur));
+}
+function onAdminOrgChange() {
+  const sel = document.getElementById('admin-org-select');
+  const v = sel ? sel.value : '';
+  try { localStorage.setItem('sso_admin_org', v); } catch (_) {}
+  renderAdminOrgBanner();
+  // 刷新组织资源页面（设备/门禁），使其按当前组织过滤
+  if (typeof loadDevices === 'function') loadDevices('adm');
+  if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
+}
+function renderAdminOrgBanner(org) {
+  let el = document.getElementById('admin-org-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'admin-org-banner';
+    const content = document.querySelector('.content');
+    if (content) content.prepend(el);
+  }
+  const orgName = org ? org.name : (document.getElementById('admin-org-select')?.selectedOptions?.[0]?.text || '');
+  const v = _curAdminOrg();
+  if (!v) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = `<span style="font-size:12px;color:var(--txt);">当前组织：<b>${esc(orgName || v)}</b></span>
+    <button class="btn" style="font-size:11px;padding:2px 10px;" onclick="clearAdminOrg()">返回全部</button>`;
+  el.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 16px;margin-bottom:12px;background:var(--ac3);border:1px solid var(--ac);border-radius:6px;';
+}
+function clearAdminOrg() {
+  try { localStorage.setItem('sso_admin_org', ''); } catch (_) {}
+  const sel = document.getElementById('admin-org-select'); if (sel) sel.value = '';
+  renderAdminOrgBanner();
+  if (typeof loadDevices === 'function') loadDevices('adm');
+  if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
+}
 
 function setMode(mode, targetPage) {
   // 普通用户不允许进管理端
@@ -7441,7 +7492,8 @@ async function loadDevices(ctx) {
   ctx = ctx || _devCtx; _devCtx = ctx;
   const box = document.getElementById(_devId(ctx, 'list'));
   if (box) box.innerHTML = '加载中…';
-  const { ok, data } = await api('GET', '/admin/devices');
+  const org = _curAdminOrg();
+  const { ok, data } = await api('GET', '/admin/devices' + (org ? '?org=' + encodeURIComponent(org) : ''));
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
   _devCache = { devices: data.devices || [], orgs: data.orgs || [], doors: data.doors || [], kinds: data.kinds || [] };
   // 类型筛选下拉
@@ -7557,7 +7609,8 @@ async function delDevice(id, name, ctx) {
 async function loadAccessAdmin() {
   const box = document.getElementById('adm-door-list');
   if (box) box.innerHTML = '加载中…';
-  const { ok, data } = await api('GET', '/admin/access/doors');
+  const org = _curAdminOrg();
+  const { ok, data } = await api('GET', '/admin/access/doors' + (org ? '?org=' + encodeURIComponent(org) : ''));
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   renderDoorList(data.doors || []);
   _accessDoorsCache = data.doors || [];

@@ -4642,11 +4642,14 @@ function resolveDeviceFields(req, body) {
 router.get('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 3);
   if (!sys && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权管理设备' });
+  const org = String(req.query?.org || '').trim();
   let list;
-  if (sys) list = devices.all.all();
-  else {
+  if (sys) {
+    list = org ? devices.bySubjects.all(JSON.stringify([org])) : devices.all.all();
+  } else {
     const myOrgs = myManagedOrgs(req).map(o => o.id);
-    list = myOrgs.length ? devices.bySubjects.all(JSON.stringify(myOrgs)) : [];
+    const want = org && myOrgs.includes(org) ? [org] : myOrgs;   // 聚焦自己管的某组织；否则全部自己管的
+    list = want.length ? devices.bySubjects.all(JSON.stringify(want)) : [];
   }
   const orgs = sys ? oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name }))
                    : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
@@ -6771,11 +6774,14 @@ router.get('/user/access/doors', requireAuth, (req, res) => {
 
 // ── 管理端：门 CRUD ──
 router.get('/admin/access/doors', requireAdmin(3), (req, res) => {
-  const rows = access.allDoors.all().map(d => ({
-    ...d,
-    rule_count: access.countRulesByDoor.get(d.id).n,
-    subject_name: d.subject_id ? (oauthSubjects.get.get(d.subject_id)?.name || null) : null,
-  }));
+  const org = String(req.query?.org || '').trim();
+  const rows = access.allDoors.all()
+    .filter(d => !org || d.subject_id === org)   // v3.5.70 聚焦组织时只显示该组织的门（全局门不显示）
+    .map(d => ({
+      ...d,
+      rule_count: access.countRulesByDoor.get(d.id).n,
+      subject_name: d.subject_id ? (oauthSubjects.get.get(d.subject_id)?.name || null) : null,
+    }));
   res.json({ success: true, doors: rows });
 });
 // 门级策略（v3.5.29）：子码模式 / 子码有效期 / 访客须陪同 / 禁入时段

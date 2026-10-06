@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.69**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.70**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.70 管理端「当前组织」切换（顶栏下拉 + 组织资源聚焦）（用户反馈）
+
+三级版本。用户要「管理端切换到组织（延伸现在的功能）」，确认语义：**切换后保留管理端、聚焦组织**（不是复用 org_scoped 降级——那会把管理员降成普通用户、管理菜单都没了）；**顶栏下拉**做入口；**组织管理员也一样**。
+
+- 后端 `GET /admin/devices?org=X`：系统管理员传 org 只返回 `subject_id=X` 的设备；组织管理员传 org 限自己管的组织（`myManagedOrgs`）。`GET /admin/access/doors?org=X`：传 org 只返回该组织的门（全局门 `subject_id IS NULL` 在聚焦时不显示）。⚠️ 只收窄显示、不改权限判定（`isSysAdmin`/`myManagedOrgs` 照旧）。
+- 前端：`topbar-actions` 加「当前组织」下拉（`loadAdminOrgSelect` 拉 `/account/managed-orgs`——系统管理员=全部、组织管理员=自己管的）；`onAdminOrgChange` 存 `localStorage.sso_admin_org` + 刷新设备/门禁页 + 内容区顶部横幅「当前组织：X · 返回全部」；`loadDevices`/`loadAccessAdmin` 带 `?org=`。`loadMe` 管理员分支调 `loadAdminOrgSelect`。`sso_admin_org` 是独立于 `sso_current_org`（应用市场）和 org_scoped 的第三套上下文。
+- ⚠️ 测试：dev 浏览器实测（见下）；真实 HTTP 链路同既有约束未端到端跑（无 node_modules），后端 org 过滤是简单 filter，风险低。
 
 ## v3.5.69 出站 provisioning：成员加入/离开组织自动增删企业微信/飞书账号（用户反馈）
 
