@@ -806,6 +806,11 @@ function _devApi(method, path, body) {
   if (path === '/admin/sms-channels' && method === 'POST') { const c = { id: 'sc' + Date.now(), country_code: body.country_code, label: body.label || '', enabled: body.enabled !== false, config: body.config || {} }; db.mockSmsChannels.push(c); return ok({ success: true, id: c.id }); }
   if (path.match(/^\/admin\/sms-channels\/[\w-]+$/) && method === 'PATCH') { const id = path.split('/')[3]; const c = db.mockSmsChannels.find(x => x.id === id); if (c) { if (body.country_code) c.country_code = body.country_code; if (body.label !== undefined) c.label = body.label; if (body.enabled !== undefined) c.enabled = body.enabled; if (body.config) c.config = { ...c.config, ...body.config }; } return ok({ success: true }); }
   if (path.match(/^\/admin\/sms-channels\/[\w-]+$/) && method === 'DELETE') { const id = path.split('/')[3]; db.mockSmsChannels = db.mockSmsChannels.filter(x => x.id !== id); return ok({ success: true }); }
+  // 限权管理员（演示模式）
+  db.mockLimited = db.mockLimited || [];
+  if (path === '/admin/limited-admins' && method === 'GET') return ok({ success: true, data: db.mockLimited.map(g => ({ ...g, active: true })) });
+  if (path === '/admin/limited-admins' && method === 'POST') { const g = { id: 'la' + Date.now(), user_name: body.account, uid: '#00099', apps: body.apps || [], scope_type: body.scope_type, scope_id: body.scope_id, scope_name: body.scope_type === 'all' ? '全部' : ('组织：' + body.scope_id), valid_from: body.valid_from || '', valid_to: body.valid_to || '' }; db.mockLimited.push(g); return ok({ success: true, id: g.id }); }
+  if (path.match(/^\/admin\/limited-admins\/[\w-]+$/) && method === 'DELETE') { const id = path.split('/')[3]; db.mockLimited = db.mockLimited.filter(x => x.id !== id); return ok({ success: true }); }
   // 公共账号（演示模式）
   db.mockPub = db.mockPub || {};   // gid → [{id,name,uid_seq,owner_group_id,member_count,members:[]}]
   if (path.match(/^\/admin\/groups\/[\w-]+\/public-accounts$/) && method === 'GET') { const gid=path.split('/')[3]; return ok({ success:true, accounts: db.mockPub[gid]||[] }); }
@@ -1074,8 +1079,8 @@ async function loadMe() {
     loadPublicSwitcher();
     loadManagedGroups();
   }
-  const isAdmin = (isPublic || orgScoped) ? false : ME.role === 'admin';
-  const lvlLabel = isAdmin ? `管理员 Lv.${ME.admin_level}` : `用户 Lv.${ME.user_level}`;
+  const isAdmin = (isPublic || orgScoped) ? false : (ME.role === 'admin' || !!ME.limited_admin);
+  const lvlLabel = isAdmin ? (ME.role === 'admin' ? `管理员 Lv.${ME.admin_level}` : '限权管理员') : `用户 Lv.${ME.user_level}`;
   document.getElementById('nav-urole').textContent = lvlLabel + ' · ' + uidOf(ME);
 
   // 演示模式角标
@@ -1093,7 +1098,7 @@ async function loadMe() {
     updateRestrictedNavItems();
   } else {
     // 管理员：两个按钮都保留
-    adminRole = ME.admin_level === 1 ? 'superadmin' : ME.admin_level === 2 ? 'ops' : 'readonly';
+    adminRole = ME.role === 'admin' ? (ME.admin_level === 1 ? 'superadmin' : ME.admin_level === 2 ? 'ops' : 'readonly') : 'limited';
     updateRestrictedNavItems();
     loadAdminOrgSelect();   // v3.5.70 顶栏「当前组织」下拉
   }
@@ -1235,6 +1240,10 @@ async function loadMe() {
       <button class="nav-item" onclick="goto('adm-grants')" id="ni-adm-grants">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l6 3v5c0 4-3 6.5-6 8-3-1.5-6-4-6-8V5z"/><path d="M7.5 10l2 2 3-3.5"/></svg>
         权限授权
+      </button>
+      <button class="nav-item" onclick="goto('adm-limited')" id="ni-adm-limited">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l2.5 5.5L18 10l-5.5 2.5L10 18l-2.5-5.5L2 10l5.5-2.5z"/></svg>
+        限权管理员
       </button>
       <button class="nav-item" onclick="goto('adm-verify-files')" id="ni-adm-verify-files">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 2h7l4 4v12H5zM12 2v4h4"/><path d="M7.5 12l2 2 3.5-4"/></svg>
@@ -2718,6 +2727,18 @@ async function loadMe() {
           <div class="card-body"><div id="grant-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
         </div>
       </div>
+      <div class="page" id="page-adm-limited">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3>限权管理员</h3>
+            <button class="btn primary" style="font-size:11px;" onclick="openLimitedModal()">+ 授权</button>
+          </div>
+          <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
+            从管理员等级派生一个<b>临时 / 限权管理员</b>：限定能管的<b>应用</b>（勾了才给，不勾=不限应用）、<b>组织 / 分组</b>范围、以及<b>生效时段</b>（起止时间，到期自动失效）。限权管理员登录后只能看到「应用管理」「组织管理」两个菜单，写操作严格限制在授权范围内。
+          </div>
+          <div class="card-body"><div id="limited-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+        </div>
+      </div>
       <div class="page" id="page-adm-verify-files">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -3322,11 +3343,61 @@ let checkedIn = false;
 let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
-const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-backups'];
+const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups'];
+// 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
+const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
 
 // ── 管理端「当前组织」切换（v3.5.70）：顶栏下拉聚焦组织资源（设备/门禁），保留管理员能力 ──
 function _curAdminOrg() { try { return localStorage.getItem('sso_admin_org') || ''; } catch (_) { return ''; } }
 function _orgQuery() { const o = _curAdminOrg(); return o ? '?org=' + encodeURIComponent(o) : ''; }
+
+// ── 成员搜索 typeahead（v3.5.73）：边输边列匹配成员，选中填唯一 UID，不再盲输 ──
+let _mtTimer = null, _mtBox = null;
+function closeMemberSuggest() { if (_mtBox) { _mtBox.remove(); _mtBox = null; } }
+function memberTypeahead(inputEl, { onPick, minLen = 1 } = {}) {
+  if (!inputEl) return;
+  inputEl.setAttribute('autocomplete', 'off');
+  inputEl.addEventListener('input', () => {
+    clearTimeout(_mtTimer);
+    const q = inputEl.value.trim();
+    closeMemberSuggest();
+    if (q.length < minLen) return;
+    _mtTimer = setTimeout(async () => {
+      const { ok, data } = await api('GET', '/admin/users?q=' + encodeURIComponent(q));
+      if (!ok) return;
+      const list = (data.users || []).slice(0, 8);
+      if (list.length) showMemberSuggest(inputEl, list, onPick);
+    }, 200);
+  });
+  inputEl.addEventListener('blur', () => setTimeout(closeMemberSuggest, 150));
+}
+function showMemberSuggest(inputEl, list, onPick) {
+  closeMemberSuggest();
+  const box = document.createElement('div');
+  box.className = 'member-suggest';
+  box.style.cssText = 'position:absolute;z-index:9999;background:var(--sf,#fff);border:1px solid var(--bd,#ddd);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);max-height:240px;overflow:auto;min-width:260px;';
+  const r = inputEl.getBoundingClientRect();
+  box.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  box.style.left = (r.left + window.scrollX) + 'px';
+  box.innerHTML = list.map(u => {
+    const uid = u.uid_code || ('#' + String(u.uid_seq || '').padStart(5, '0'));
+    const contact = [u.email, u.phone].filter(Boolean).join(' · ');
+    return `<div class="member-suggest-item" data-uid="${esc(uid)}" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--bd,#eee);">
+      <div style="color:var(--txt);">${esc(u.name || '—')} <span style="color:var(--txd);">${esc(uid)}</span></div>
+      ${contact ? `<div style="color:var(--txd);font-size:11px;">${esc(contact)}</div>` : ''}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.member-suggest-item').forEach(item => {
+    item.addEventListener('mousedown', e => {
+      e.preventDefault();
+      inputEl.value = item.dataset.uid;
+      closeMemberSuggest();
+      if (onPick) onPick(item.dataset.uid);
+    });
+  });
+  document.body.appendChild(box);
+  _mtBox = box;
+}
 async function loadAdminOrgSelect() {
   const box = document.getElementById('topbar-actions');
   if (!box) return;
@@ -3401,7 +3472,7 @@ const USER_PAGES = ['home','apps','shop','account','public','memo','access','org
 function bootToLastPage() {
   let target = null;
   try { target = localStorage.getItem('sso_last_page'); } catch (_) {}
-  const isAdmin     = !!(ME && ME.role === 'admin') && !_PUBLIC_ACCT && !_isOrgScoped();
+  const isAdmin     = !!(ME && (ME.role === 'admin' || ME.limited_admin)) && !_PUBLIC_ACCT && !_isOrgScoped();
   const isAdminPage = !!target && target.indexOf('adm-') === 0;
 
   // 校验目标页在当前身份下是否可达，不可达则丢弃（回退默认）
@@ -3409,6 +3480,7 @@ function bootToLastPage() {
     if (!isAdmin) target = null;                                  // 无管理权限
     else if (SUPERADMIN_ONLY.includes(target) && adminRole !== 'superadmin') target = null;
     else if (target === 'adm-memo' && !canMemoAdmin()) target = null;  // 备忘录管理需达标
+    else if (adminRole === 'limited' && !LIMITED_ADMIN_PAGES.includes(target)) target = null;   // 限权管理员只留应用/组织管理
   } else if (target) {
     if (!USER_PAGES.includes(target)) target = null;             // 未知页
     if (target === 'public') {                                    // 公共账号入口需已授权
@@ -3456,6 +3528,13 @@ function updateRestrictedNavItems() {
   SUPERADMIN_ONLY.forEach(page => _setNavLock(document.getElementById('ni-' + page), adminRole !== 'superadmin', '仅超级管理员可访问'));
   // 备忘录管理：按 memoAdminLevel 判定（默认仅超管），不达标则锁
   _setNavLock(document.getElementById('ni-adm-memo'), !canMemoAdmin(), `需管理员 Lv.${_MEMO_ADMIN_LEVEL} 或更高`);
+  // 限权管理员（v3.5.74）：只给「应用管理」「组织管理」两个菜单，其余管理菜单隐藏
+  if (adminRole === 'limited') {
+    document.querySelectorAll('.nav-item[id^="ni-adm-"]').forEach(b => {
+      const page = b.id.replace(/^ni-/, '');
+      if (!LIMITED_ADMIN_PAGES.includes(page)) b.style.display = 'none';
+    });
+  }
 }
 
 function goto(page) {
@@ -3468,6 +3547,11 @@ function goto(page) {
   }
   // 备忘录管理：不达标的管理员不可进入
   if (page === 'adm-memo' && !canMemoAdmin()) {
+    showLockedPage(page);
+    return;
+  }
+  // 限权管理员：只能进「应用管理」「组织管理」
+  if (adminRole === 'limited' && page.indexOf('adm-') === 0 && !LIMITED_ADMIN_PAGES.includes(page)) {
     showLockedPage(page);
     return;
   }
@@ -3510,7 +3594,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3523,6 +3607,7 @@ function goto(page) {
   if(page === 'adm-devices') loadDevices('adm');
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
+  if(page === 'adm-limited') loadLimitedAdmins();
   if(page === 'adm-deletions') { loadDeletions(); loadMerges(); }
   if(page === 'adm-anomalies') loadAnomalies();
   if(page === 'adm-backups') loadBackups();
@@ -6023,6 +6108,7 @@ async function openGrantModal() {
       <button class="btn primary" onclick="saveGrant()">授权</button>
     </div></div>`;
   document.body.appendChild(m);
+  memberTypeahead(document.getElementById('gr-account'));
 }
 function _grantScopeChanged() {
   const type = document.getElementById('gr-scope').value;
@@ -6115,6 +6201,80 @@ async function delSmsChannel(id) {
   if (!await uiConfirm('删除这条区号通道？删除后该区号回退到全局短信凭证。')) return;
   const { ok, data } = await api('DELETE', '/admin/sms-channels/' + id);
   if (ok) { showToast('已删除'); loadSmsChannels(); } else showToast('删除失败：' + (data?.error || '未知错误'));
+}
+
+// ── 限权管理员（v3.5.74）──
+async function loadLimitedAdmins() {
+  const box = document.getElementById('limited-list');
+  const { ok, data } = await api('GET', '/admin/limited-admins');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  const rows = data.data || [];
+  box.innerHTML = rows.length ? _udTable(['被授权人', '应用范围', '组织/分组范围', '生效时段', '状态', ''], rows.map(g => [
+    esc(g.user_name || '—') + ' <span style="color:var(--txd);">' + esc(g.uid) + '</span>',
+    (g.apps || []).length ? esc(g.apps.length + ' 个应用') : '不限应用',
+    esc(g.scope_name || '全部'),
+    (g.valid_from || '—') + ' 至 ' + (g.valid_to || '—'),
+    g.active ? '<span class="badge ok">生效中</span>' : '<span class="badge grey">未生效</span>',
+    `<button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delLimitedAdmin(${JSON.stringify(g.id)})'>撤销</button>`]))
+    : '<div style="padding:8px 0;">还没有限权管理员授权。</div>';
+}
+let _limitedOrgOpts = [];
+async function openLimitedModal() {
+  const [appRes, orgRes] = await Promise.all([api('GET', '/admin/apps'), api('GET', '/admin/oauth-subjects')]);
+  const appsList = (appRes.ok ? (appRes.data.apps || []) : []);
+  _limitedOrgOpts = (orgRes.ok ? (orgRes.data.data || []) : []).map(x => ({ id: x.id, name: x.name }));
+  document.getElementById('limited-modal')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-mask show'; m.id = 'limited-modal';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:13px;';
+  const appBoxes = appsList.map(a => `<label style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 6px 0;font-size:12px;"><input type="checkbox" class="la-app" value="${esc(a.id)}"> ${esc(a.name || a.id)}</label>`).join('');
+  m.innerHTML = `<div class="modal" style="min-width:460px;text-align:left;">
+    <h3 style="margin-bottom:12px;">授权限权管理员</h3>
+    <div style="font-size:12px;color:var(--txm);margin-bottom:4px;">被授权人（非管理员账号）</div>
+    <input id="la-account" placeholder="邮箱 / 手机 / UID / 用户名" style="${inp}">
+    <div style="font-size:12px;color:var(--txm);margin:12px 0 4px;">能管的应用（不勾 = 不限应用）</div>
+    <div style="max-height:140px;overflow:auto;border:1px solid var(--bd);border-radius:5px;padding:8px 10px;">${appBoxes || '<span style="color:var(--txd);font-size:12px;">暂无应用</span>'}</div>
+    <div style="font-size:12px;color:var(--txm);margin:12px 0 4px;">组织范围</div>
+    <select id="la-scope" style="${inp}" onchange="_limitedScopeChanged()">
+      <option value="all">全部</option><option value="org">某个组织</option></select>
+    <select id="la-scope-id" style="${inp}margin-top:6px;display:none;">
+      ${_limitedOrgOpts.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:10px;margin-top:12px;">
+      <div style="flex:1;"><div style="font-size:12px;color:var(--txm);margin-bottom:4px;">生效起始（可空）</div><input id="la-from" type="datetime-local" style="${inp}"></div>
+      <div style="flex:1;"><div style="font-size:12px;color:var(--txm);margin-bottom:4px;">生效截止（可空）</div><input id="la-to" type="datetime-local" style="${inp}"></div>
+    </div>
+    <div style="font-size:12px;color:var(--txm);margin:12px 0 4px;">备注（可选）</div>
+    <input id="la-note" placeholder="用途说明" style="${inp}">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
+      <button class="btn" onclick="document.getElementById('limited-modal').remove()">取消</button>
+      <button class="btn primary" onclick="saveLimitedAdmin()">授权</button>
+    </div></div>`;
+  document.body.appendChild(m);
+  memberTypeahead(document.getElementById('la-account'));
+}
+function _limitedScopeChanged() {
+  document.getElementById('la-scope-id').style.display = document.getElementById('la-scope').value === 'org' ? '' : 'none';
+}
+async function saveLimitedAdmin() {
+  const scopeType = document.getElementById('la-scope').value;
+  const body = {
+    account: document.getElementById('la-account').value.trim(),
+    apps: [...document.querySelectorAll('.la-app:checked')].map(x => x.value),
+    scope_type: scopeType, scope_id: scopeType === 'org' ? document.getElementById('la-scope-id').value : null,
+    valid_from: document.getElementById('la-from').value || null,
+    valid_to: document.getElementById('la-to').value || null,
+    note: document.getElementById('la-note').value.trim(),
+  };
+  if (!body.account) { showToast('请填写被授权人'); return; }
+  const { ok, data } = await api('POST', '/admin/limited-admins', body);
+  if (ok) { showToast('已授权'); document.getElementById('limited-modal').remove(); loadLimitedAdmins(); }
+  else showToast('授权失败：' + (data?.error || '未知错误'));
+}
+async function delLimitedAdmin(id) {
+  if (!await uiConfirm('撤销这条限权管理员授权？')) return;
+  const { ok, data } = await api('DELETE', '/admin/limited-admins/' + id);
+  if (ok) { showToast('已撤销'); loadLimitedAdmins(); } else showToast('撤销失败：' + (data?.error || '未知错误'));
 }
 
 async function sendKycLinkToUser(uid) {  if (!await uiConfirm('确认向该用户发送实名认证链接？将优先同时通过短信和邮箱双通道发送。')) return;
@@ -6492,6 +6652,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
       <div style="flex:1;">${lab('自动同步')}<select id="dsm-interval" style="${inp}">${[[0,'只手动'],[1,'每 1 小时'],[6,'每 6 小时'],[24,'每天']].map(([v,t]) => `<option value="${v}" ${Number(c.interval_hours||0)===v?'selected':''}>${t}</option>`).join('')}</select></div>
       <div style="flex:1;">${lab('组织内 UID')}<select id="dsm-uid" style="${inp}">${[['userid','用企业微信 UserId'],['rule','按本组织 UID 规则生成'],['none','不设置']].map(([v,t]) => `<option value="${v}" ${c.uid_mode===v?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
+    <div style="margin-top:8px;">${lab('每天固定时间点（可选，优先于上面的间隔）')}<input id="dsm-schedule" placeholder="留空=按上面的间隔；填如 03:00,15:00" style="${inp}" value="${esc((c.schedule_times || []).join(','))}"></div>
 
     <div style="margin-top:14px;padding:10px 12px;background:var(--sf2);border-radius:6px;">
       <div style="font-size:13px;font-weight:600;color:var(--txt);">同步回来的默认凭证</div>
@@ -6585,6 +6746,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
       type: $('#dsm-type').value, label: $('#dsm-label').value.trim(),
       corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim(), write_secret: $('#dsm-wsecret').value.trim(), clear_write_secret: !!$('#dsm-wsecret-clear')?.checked,
       dept_ids: dept_ids.length ? dept_ids : [1], dept_names, interval_hours: parseInt($('#dsm-interval').value, 10) || 0,
+      schedule_times: String($('#dsm-schedule')?.value || '').split(',').map(x => x.trim()).filter(x => /^([01]\d|2[0-3]):[0-5]\d$/.test(x)),
       uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, idonly_create: $('#dsm-idonly').checked, push_suspend: $('#dsm-suspend').checked, enabled: $('#dsm-enabled').checked,
       bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
@@ -6651,6 +6813,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
       <div style="flex:1;">${lab('自动同步')}<select id="fsm-interval" style="${inp}">${[[0,'只手动'],[1,'每 1 小时'],[6,'每 6 小时'],[24,'每天']].map(([v,t]) => `<option value="${v}" ${Number(c.interval_hours||0)===v?'selected':''}>${t}</option>`).join('')}</select></div>
       <div style="flex:1;">${lab('组织内 UID')}<select id="fsm-uid" style="${inp}">${[['userid','用飞书工号（没有则用户 ID）'],['rule','按本组织 UID 规则生成'],['none','不设置']].map(([v,t]) => `<option value="${v}" ${c.uid_mode===v?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
+    <div style="margin-top:8px;">${lab('每天固定时间点（可选，优先于上面的间隔）')}<input id="fsm-schedule" placeholder="留空=按上面的间隔；填如 03:00,15:00" style="${inp}" value="${esc((c.schedule_times || []).join(','))}"></div>
     <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
       <div style="font-size:13px;font-weight:600;color:var(--txt);">同步回来的默认凭证</div>
       ${lab('飞书登录绑定（只能绑同一个 App ID 的登录凭证：飞书 open_id 每个应用一份）')}
@@ -6739,6 +6902,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
       type: 'feishu', label: $('#fsm-label').value.trim(),
       corp_id: $('#fsm-app').value.trim(), secret: $('#fsm-secret').value.trim(),
       dept_ids: dept_ids.length ? dept_ids : ['0'], dept_names, interval_hours: parseInt($('#fsm-interval').value, 10) || 0,
+      schedule_times: String($('#fsm-schedule')?.value || '').split(',').map(x => x.trim()).filter(x => /^([01]\d|2[0-3]):[0-5]\d$/.test(x)),
       uid_mode: $('#fsm-uid').value, remove_missing: $('#fsm-remove').checked, push_suspend: $('#fsm-suspend').checked, enabled: $('#fsm-enabled').checked,
       bind_mode: $('#fsm-bindmode').value, bind_providers: [...bindSet],
       cb_token: $('#fsm-cb-token').value.trim(),
@@ -8229,6 +8393,7 @@ function openCardModal() {
     </div>
   </div>`;
   document.body.appendChild(ov);
+  memberTypeahead(document.getElementById('card-acct'));
 }
 async function genCardNo() {
   if (_IS_DEV) { document.getElementById('card-no').value = Array.from({length:10},()=>'0123456789ABCDEF'[Math.floor(Math.random()*16)]).join(''); return; }
@@ -9088,6 +9253,7 @@ async function openOrgMembers(sid, name) {
   document.getElementById('orgmem-share-list').innerHTML = '点「搜索」加载可复用成员';
   const ds = document.getElementById('orgmem-dirsync'); if (ds) ds.open = false;
   document.getElementById('orgmem-modal').classList.add('show');
+  memberTypeahead(document.getElementById('orgmem-account'));
   await loadOrgMembers();
 }
 function closeOrgMembers() { document.getElementById('orgmem-modal').classList.remove('show'); }

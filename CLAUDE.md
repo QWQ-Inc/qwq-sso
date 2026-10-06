@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.72**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,41 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.74 临时 / 限权管理员（用户反馈）
+
+三级版本。用户：「等级管理里的管理员二级权限衍生出一个临时/限权管理员的角色，比如仅某应用、某地方权限、某段时间」，确认「应用 + 组织/分组 + 时段组合」。
+
+### 数据（db.js）
+- 新表 `limited_admins(id, user_id, apps JSON, scope_type[all|org|group], scope_id, valid_from, valid_to, note, created_by, created_at)`。`limitedAdminStmts`（all 带 user_name/uid / byUser / get / insert / remove），导出 `limitedAdmins`。
+
+### 后端（auth.js + api.js）
+- `auth.js requireAdmin(level)`：非管理员但在生效时段内有有效限权授权 → 视为管理员。**读（Lv.3）放行；写（Lv.1/2）在 requireAdmin 层不放行**（防限权管理员拿全量写权限），由应用/组织接口用范围再单独放行。`validLimitedAdmin(uid)` 每次请求实时判时限（过了截止即失效）。
+- api.js：`limitedAdminOf(user)`（时限过滤）/ `limitedAdminActive(req)`（挂 `req._limitedAdmin`）/ `limitedAppsOf` / `limitedCanApp`（不限应用或 app 在列表）/ `limitedCanScope`（all 或 scope_id 匹配）/ `guardAppWrite`（Lv.2 或限权+应用范围）/ `guardOrgWrite`（canManageOrg 或限权+组织范围）。
+- 应用写端点（POST/PATCH/DELETE /admin/apps + regenerate-secret + approve/reject + deprovision）改用 `requireAuth + guardAppWrite`；组织成员端点（GET/POST/PATCH/DELETE /admin/orgs/:sid/members）改用 `requireAuth + guardOrgWrite`。
+- 管理端 CRUD `/admin/limited-admins`（GET/POST/DELETE，Lv.1）：POST 校验被授权人（resolveUser、非公共）、应用存在、组织/分组存在、截止不早于起始；审计 `admin.limited_granted/revoked`。`/user/me` 多回 `limited_admin` 布尔。
+
+### 前端（dashboard.html）
+- `loadMe`：`isAdmin` 放宽为 `role==='admin' || limited_admin`；`adminRole='limited'`；菜单里只给「应用管理」「组织管理」（`LIMITED_ADMIN_PAGES`），`goto`/`bootToLastPage` 也拦截其它 adm-* 页。角色显示「限权管理员」。
+- 新菜单「限权管理员」（`adm-limited`，SUPERADMIN_ONLY）：列表（被授权人/应用范围/组织范围/时段/状态/撤销）+ 授权弹窗（账号 typeahead、应用多选、组织范围、起止 datetime-local、备注）+ dev mock。
+
+### 测试
+- `scratchpad/limited-admin-test.js` 11 项全过：无授权 null、不限范围、未到起始/已过截止不生效、窗口内生效、限应用/限组织命中与不命中、多授权取生效那条。回归 90 项全过（phone-cc 13 / schedule 7 / departments 14 / contacts 18 / dirsync-contacts 6 / feishu-create 7 / push-provision 10 / import-multi 10 / similar-clues 5）。
+
+## v3.5.73 通讯录固定时间点同步 + 成员搜索 typeahead（用户反馈）
+
+三级版本。用户：「通讯录自动同步的时间太局限，让管理员填啥时候同步」（确认「每天固定时间点」）+「搜索成员的地方让成员显示出来，而不是盲输 UID」。
+
+### 同步时间点（api.js + dashboard.html）
+- 同步源 config 加 `schedule_times`（`["HH:MM", ...]`，本地时间，≤24 个）。`dirSourceCfgFromBody` 解析（正则校验 HH:MM、打码/留空兼容）。
+- `runDueDirSyncs`：`schedule_times` 非空时优先——`_scheduleDue(times, st.at)`：对每个时间点，`当前 >= 该点` 且 `上次同步 st.at < 该点` 才跑。⚠️ **去重靠 `st.at`**（runDirSource 每次跑完更新），无需单独记「今天已跑」，漏跑（服务停了一段时间）会补跑一次，不会重复刷。
+- 前端企业微信 / 飞书同步源弹窗各加「每天固定时间点」输入（逗号分隔，留空=按间隔），提交 `schedule_times`。
+
+### 成员搜索 typeahead（dashboard.html）
+- 通用 `memberTypeahead(inputEl, {onPick})`：输入去抖 200ms → `/admin/users?q=` → 下拉列匹配成员（名字 + UID + 邮箱/手机），mousedown 选中填唯一 UID。接入「授权·授给谁」「组织成员·按账号加入」「门禁·绑定实体卡」三处账号输入。
+
+### 测试
+- `scratchpad/schedule-test.js` 7 项全过（到点/补跑/已同步不触发/未到点/多时间点/空数组）。dev 浏览器实测 typeahead 下拉 + 选中填 UID。
 
 ## v3.5.72 部门按通讯录连接隔离 + 部门增删限权（用户反馈）
 

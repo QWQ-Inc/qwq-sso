@@ -524,6 +524,19 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS admin_grants (
   granted_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// v3.5.74：临时 / 限权管理员——从管理员等级派生，限定应用范围 + 组织/分组范围 + 生效时段，到期自动失效
+try { db.exec(`CREATE TABLE IF NOT EXISTS limited_admins (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  apps       TEXT,                           -- JSON 数组 app id；空/[] = 不限应用
+  scope_type TEXT NOT NULL DEFAULT 'all',    -- all | org | group
+  scope_id   TEXT,
+  valid_from TEXT,                           -- ISO 时间；空 = 无起始限制
+  valid_to   TEXT,                           -- ISO 时间；空 = 无截止
+  note       TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // v3.5.46：数据备份目标（本地目录 / Cloudflare R2，可多个、同时开启）
 try { db.exec(`CREATE TABLE IF NOT EXISTS backup_targets (
   id             TEXT PRIMARY KEY,
@@ -1684,6 +1697,15 @@ const dirSourceStmts = {
   linkByUserSource: db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND user_id=?'),
 };
 
+// 临时 / 限权管理员（v3.5.74）：应用范围 + 组织/分组范围 + 生效时段
+const limitedAdminStmts = {
+  all:       db.prepare(`SELECT g.*, u.name AS user_name, u.uid_seq, u.uid_code FROM limited_admins g LEFT JOIN users u ON u.id=g.user_id ORDER BY g.created_at DESC`),
+  byUser:    db.prepare('SELECT * FROM limited_admins WHERE user_id=?'),
+  get:       db.prepare('SELECT * FROM limited_admins WHERE id=?'),
+  insert:    db.prepare('INSERT INTO limited_admins (id,user_id,apps,scope_type,scope_id,valid_from,valid_to,note,created_by) VALUES (?,?,?,?,?,?,?,?,?)'),
+  remove:    db.prepare('DELETE FROM limited_admins WHERE id=?'),
+};
+
 module.exports = {
   DB_FILE, DATA_DIR,
   db,
@@ -1722,6 +1744,7 @@ module.exports = {
   groups: groupStmts,
   tags: tagStmts,
   publicAccounts: publicAcctStmts,
+  limitedAdmins: limitedAdminStmts,
   genUidCode,
   apiKeys: apiKeyStmts,
   env: envStmts,

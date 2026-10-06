@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const contactUtil = require('./contacts');
@@ -1714,7 +1714,7 @@ router.get('/admin/orgs', requireAdmin(3), (req, res) => {
 router.get('/admin/orgs/:sid/members', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!canManageOrg(req, s.id, false)) return res.status(403).json({ error: '无权管理该组织' });
+  if (!guardOrgWrite(req, s.id, false)) return;
   // 每个成员在本组织各同步源里对应的外部账号（企业微信 UserId 等）——一人多号时能看出来，好合并（v3.5.41）
   const ext = new Map();
   for (const l of db.prepare(`SELECT l.user_id, l.ext_id, d.label FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
@@ -1818,7 +1818,7 @@ async function removeMemberFromSources(subject, user) {
 router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  if (!guardOrgWrite(req, s.id)) return;
   let r;
   if (req.body?.create) {
     // 按组织建成员（v3.5.67）：直接建一个平台账号并加入本组织
@@ -1870,7 +1870,7 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
 router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  if (!guardOrgWrite(req, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
   if (req.body?.org_uid !== undefined) {
@@ -1892,7 +1892,7 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
 router.delete('/admin/orgs/:sid/members/:uid', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!canManageOrg(req, s.id)) return res.status(403).json({ error: '无权管理该组织' });
+  if (!guardOrgWrite(req, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   if (!target) return res.status(404).json({ error: '成员不存在' });
   // v3.5.69 出站删号（前端强确认后带 push 才删外部账号）
@@ -2569,6 +2569,10 @@ function dirSourceCfgFromBody(b, old, type = 'wecom') {
     // 本系统账号停用 / 删除时，同步把企业微信成员设为禁用（恢复时启用）。需有通讯录写权限的 Secret（v3.5.44，默认关）
     push_suspend: b.push_suspend !== undefined ? b.push_suspend === true : !!old.push_suspend,
     interval_hours: Math.min(168, Math.max(0, parseInt(b.interval_hours ?? old.interval_hours, 10) || 0)),
+    // v3.5.73：每天固定时间点同步（["HH:MM", ...]，本地时间；非空时优先于 interval_hours）
+    schedule_times: b.schedule_times !== undefined
+      ? (Array.isArray(b.schedule_times) ? b.schedule_times : []).map(t => String(t).trim()).filter(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t)).slice(0, 24)
+      : (old.schedule_times || []),
   } };
 }
 async function runDirSource(src, actor, opts = {}) {
@@ -3141,13 +3145,32 @@ router.post('/public/dirsync/feishu/:id', express.text({ type: () => true, limit
   res.json({ success: true });
 });
 
-// 定时同步：每 10 分钟看一眼，到点（interval_hours）的启用同步源跑一次。0 = 只手动。
+// 定时同步：每 10 分钟看一眼。优先「每天固定时间点」（schedule_times，本地时间 HH:MM）；否则按 interval_hours。0 = 只手动。
+function _scheduleDue(times, lastAt, now = new Date()) {
+  for (const t of (times || [])) {
+    const p = t.split(':').map(Number);
+    if (p.length !== 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) continue;
+    const dueAt = new Date(now); dueAt.setHours(p[0], p[1], 0, 0);
+    const last = Date.parse(lastAt || '') || 0;
+    if (now >= dueAt && last < dueAt.getTime()) return true;
+  }
+  return false;
+}
 function runDueDirSyncs() {
+  const now = new Date();
   for (const src of dirSources.dueList.all()) {
     if (src.parent_id) { const p = dirSources.get.get(src.parent_id); if (!p || !p.enabled) continue; }
     const cfg = dirsyncWecom.effectiveCfg(src);
-    if (!cfg || !(cfg.interval_hours > 0)) continue;
-    const last = Date.parse(parseJ(src.state)?.at || '') || 0;
+    if (!cfg) continue;
+    const st = parseJ(src.state) || {};
+    const times = Array.isArray(cfg.schedule_times) ? cfg.schedule_times : [];
+    if (times.length) {
+      // 固定时间点：到点且「上次同步早于该点」才跑（上次同步 at 在 runDirSource 里更新，天然去重、漏跑会补一次）
+      if (_scheduleDue(times, st.at, now)) runDirSource(src, 'system:scheduler').catch(e => console.warn('[通讯录同步]', src.label, e.message));
+      continue;
+    }
+    if (!(cfg.interval_hours > 0)) continue;
+    const last = Date.parse(st.at || '') || 0;
     if (Date.now() - last < cfg.interval_hours * 3600e3) continue;
     runDirSource(src, 'system:scheduler').catch(e => console.warn('[通讯录同步]', src.label, e.message));
   }
@@ -3311,7 +3334,7 @@ router.get('/user/me', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const oauthBinds = oauth.findByUser.all(user.id);
-  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed() });
+  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), limited_admin: !!limitedAdminOf(user) });
 });
 
 router.post('/user/profile', requireAuth, noPublic, (req, res) => {
@@ -4936,8 +4959,99 @@ router.delete('/admin/grants/:id', requireAdmin(1), (req, res) => {
   res.json({ success: true });
 });
 
+// ── 临时 / 限权管理员（v3.5.74）──
+// 从管理员等级派生：限定应用范围 + 组织/分组范围 + 生效时段，到期自动失效。读=Lv.3，写按范围（见 limitedCanApp/limitedCanScope）。
+const LIMITED_SCOPES = { all: '全部', org: '某个组织', group: '某个分组' };
+function limitedScopeName(g) {
+  if (g.scope_type === 'all') return '全部';
+  const t = oauthSubjects.get.get(g.scope_id);
+  if (t) return '组织：' + t.name;
+  const grp = db.prepare('SELECT name FROM user_groups WHERE id=?').get(g.scope_id);
+  return grp ? '分组：' + grp.name : (LIMITED_SCOPES[g.scope_type] || g.scope_type);
+}
+function limitedAdminView(g) {
+  return { id: g.id, user_id: g.user_id, user_name: g.user_name || null, uid: g.uid_code || ('#' + String(g.uid_seq || '').padStart(5, '0')),
+    apps: limitedAppsOf(g), scope_type: g.scope_type, scope_id: g.scope_id, scope_name: limitedScopeName(g),
+    valid_from: g.valid_from || '', valid_to: g.valid_to || '', note: g.note || '', created_at: g.created_at,
+    active: !(g.valid_from && Date.parse(g.valid_from) > Date.now()) && !(g.valid_to && Date.parse(g.valid_to) < Date.now()) };
+}
+router.get('/admin/limited-admins', requireAdmin(1), (req, res) => {
+  res.json({ success: true, scopes: LIMITED_SCOPES, data: limitedAdmins.all.all().map(limitedAdminView) });
+});
+router.post('/admin/limited-admins', requireAdmin(1), (req, res) => {
+  const account = String(req.body?.account || '').trim();
+  const u = account ? resolveUser(account) : null;
+  if (!u || u === AMBIGUOUS) return res.status(400).json({ error: u === AMBIGUOUS ? '账号不唯一，请用邮箱/手机/UID' : '请填写被授权人' });
+  if (u.is_public) return res.status(400).json({ error: '公共账号不能设为管理员' });
+  const appsList = (Array.isArray(req.body?.apps) ? req.body.apps : []).map(String).filter(x => apps.findById.get(x)).slice(0, 200);
+  const scope_type = ['all', 'org', 'group'].includes(req.body?.scope_type) ? req.body.scope_type : 'all';
+  const scope_id = scope_type === 'all' ? null : String(req.body?.scope_id || '').trim() || null;
+  if (scope_type === 'org' && scope_id && !oauthSubjects.get.get(scope_id)) return res.status(400).json({ error: '组织不存在' });
+  if (scope_type === 'group' && scope_id && !db.prepare('SELECT 1 FROM user_groups WHERE id=?').get(scope_id)) return res.status(400).json({ error: '分组不存在' });
+  const valid_from = String(req.body?.valid_from || '').trim() || null;
+  const valid_to = String(req.body?.valid_to || '').trim() || null;
+  if (valid_to && valid_from && Date.parse(valid_to) < Date.parse(valid_from)) return res.status(400).json({ error: '截止时间早于起始时间' });
+  const id = uuidv4();
+  limitedAdmins.insert.run(id, u.id, JSON.stringify(appsList), scope_type, scope_id, valid_from, valid_to, String(req.body?.note || '').slice(0, 200), req.user.uid);
+  audit('admin.limited_granted', { subject: String(u.uid_seq), actor: actorOf(req), detail: { apps: appsList, scope_type, scope_id, valid_from, valid_to } });
+  res.json({ success: true, id });
+});
+router.delete('/admin/limited-admins/:id', requireAdmin(1), (req, res) => {
+  const g = limitedAdmins.get.get(req.params.id);
+  if (!g) return res.status(404).json({ error: '授权不存在' });
+  limitedAdmins.remove.run(g.id);
+  const u = users.findById.get(g.user_id);
+  audit('admin.limited_revoked', { subject: String(u ? u.uid_seq : g.user_id), actor: actorOf(req), detail: { scope_type: g.scope_type, scope_id: g.scope_id } });
+  res.json({ success: true });
+});
+
 // 系统管理员判定（按等级）
 const isSysAdmin = (req, maxLevel = 2) => !req.user.org_scoped && req.user.role === 'admin' && (req.user.adminLevel || 9) <= maxLevel;
+// 临时 / 限权管理员（v3.5.74）：在生效时段内、按应用 + 组织/分组范围授予管理员权限（读=Lv.3，写按范围）
+function limitedAdminOf(user) {
+  if (!user || !user.uid) return null;
+  const now = Date.now();
+  for (const g of limitedAdmins.byUser.all(user.uid)) {
+    if (g.valid_from && Date.parse(g.valid_from) > now) continue;
+    if (g.valid_to && Date.parse(g.valid_to) < now) continue;
+    return g;
+  }
+  return null;
+}
+// 限权管理员是否可作为管理员会话（生效期内）。返回授权行或 null；命中则挂到 req._limitedAdmin。
+function limitedAdminActive(req) {
+  if (req.user.org_scoped) return null;
+  const g = limitedAdminOf(req.user);
+  if (g) req._limitedAdmin = g;
+  return g;
+}
+function limitedAppsOf(g) { try { return JSON.parse(g.apps || '[]'); } catch (_) { return []; } }
+// 限权管理员能否管某应用：不限应用 或 应用在授权列表内
+function limitedCanApp(req, appId) {
+  if (!req._limitedAdmin) return true;              // 非限权管理员（走原有 requireAdmin）不在此拦截
+  const list = limitedAppsOf(req._limitedAdmin);
+  return list.length === 0 || list.includes(appId);
+}
+// 限权管理员能否管某组织/分组：范围 all 或 scope_id 匹配
+function limitedCanScope(req, sid) {
+  if (!req._limitedAdmin) return true;
+  const g = req._limitedAdmin;
+  return g.scope_type === 'all' || g.scope_id === sid;
+}
+// 应用写权限：系统管理员(Lv.2) 直接过；限权管理员按应用范围拦（appId=null 表示新建，只有「不限应用」的能新建）
+function guardAppWrite(req, res, appId) {
+  if (isSysAdmin(req, 2)) return true;
+  if (!limitedAdminActive(req)) { res.status(403).json({ error: '需要管理员权限' }); return false; }
+  if (!limitedCanApp(req, appId)) { res.status(403).json({ error: '不在授权应用范围内' }); return false; }
+  return true;
+}
+// 组织写权限（成员等）：系统管理员 或 该组织管理员 或 限权管理员（范围匹配）
+function guardOrgWrite(req, sid, write = true) {
+  if (canManageOrg(req, sid, write)) return true;
+  if (limitedAdminActive(req) && limitedCanScope(req, sid)) return true;
+  res.status(403).json({ error: '无权管理该组织' });
+  return false;
+}
 // org-scoped 会话（v3.5.26）：组织管理员权限只限当前登录的组织
 const scopedOrgOf = req => (req.user && req.user.org_scoped ? req.user.org : null);
 function myManagedOrgs(req) {
@@ -5079,7 +5193,8 @@ const safeRequiredScopes = v => {
   return [...new Set(arr.map(s => s.trim()).filter(s => VALID_SCOPES.includes(s) && s !== 'openid'))].join(' ');
 };
 router.get('/admin/apps', requireAdmin(3), (req, res) => { res.json({ success: true, apps: apps.findAll.all() }); });
-router.post('/admin/apps', requireAdmin(2), (req, res) => {
+router.post('/admin/apps', requireAuth, (req, res) => {
+  if (!guardAppWrite(req, res, null)) return;
   const { name, icon='📦', icon_bg='#F0F0F0', description='', callback_url, launch_url='', required_scopes='', visible=false, status } = req.body;
   if (!name || !callback_url) return res.status(400).json({ error: '名称和回调地址必填' });
   // 管理员自建应用时可直接启用；只有第三方通过申请入口提交的才默认待审核。
@@ -5095,16 +5210,18 @@ router.post('/admin/apps', requireAdmin(2), (req, res) => {
   res.json({ success: true, app: apps.findById.get(id) });
 });
 // 重新生成 client_secret（密钥泄露时轮换；旧密钥立即失效）
-router.post('/admin/apps/:id/regenerate-secret', requireAdmin(2), (req, res) => {
+router.post('/admin/apps/:id/regenerate-secret', requireAuth, (req, res) => {
   const app = apps.findById.get(req.params.id);
   if (!app) return res.status(404).json({ error: '应用不存在' });
+  if (!guardAppWrite(req, res, app.id)) return;
   const client_secret = crypto.randomBytes(32).toString('hex');
   db.prepare("UPDATE apps SET client_secret=?, updated_at=datetime('now') WHERE id=?").run(client_secret, app.id);
   res.json({ success: true, client_secret });
 });
-router.patch('/admin/apps/:id', requireAdmin(2), (req, res) => {
+router.patch('/admin/apps/:id', requireAuth, (req, res) => {
   const app = apps.findById.get(req.params.id);
   if (!app) return res.status(404).json({ error: '应用不存在' });
+  if (!guardAppWrite(req, res, app.id)) return;
   const { name, icon, icon_bg, description, callback_url, launch_url, required_scopes, status, visible } = req.body;
   apps.update.run({ id: app.id, name:name??app.name, icon:icon??app.icon, icon_bg:icon_bg??app.icon_bg, description:description??app.description, callback_url:callback_url??app.callback_url, launch_url:launch_url!==undefined?safeLaunchUrl(launch_url):(app.launch_url||''), required_scopes:required_scopes!==undefined?safeRequiredScopes(required_scopes):(app.required_scopes||''), status:status??app.status, visible:visible!==undefined?(visible?1:0):app.visible });
   if (req.body.category !== undefined) db.prepare('UPDATE apps SET category=? WHERE id=?').run(String(req.body.category || '').trim(), app.id);
@@ -5114,9 +5231,10 @@ router.patch('/admin/apps/:id', requireAdmin(2), (req, res) => {
   res.json({ success: true, app: apps.findById.get(app.id) });
 });
 // 手动把「撤销某用户账号」推给某应用（SSO 主动控制）
-router.post('/admin/apps/:id/deprovision', requireAdmin(2), async (req, res) => {
+router.post('/admin/apps/:id/deprovision', requireAuth, async (req, res) => {
   const app = apps.findById.get(req.params.id);
   if (!app) return res.status(404).json({ error: '应用不存在' });
+  if (!guardAppWrite(req, res, app.id)) return;
   if (!app.deprovision_url) return res.status(400).json({ error: '该应用未配置账号撤销回调地址' });
   const u = findRealUserByUid(String(req.body?.uid || '').trim());
   if (!u) return res.status(404).json({ error: '用户不存在' });
@@ -5124,17 +5242,26 @@ router.post('/admin/apps/:id/deprovision', requireAdmin(2), async (req, res) => 
   audit('app.deprovision_pushed', { subject: String(u.uid_seq), actor: actorOf(req), detail: { app: app.name, ok } });
   res.json({ success: ok, delivered: ok });
 });
-router.post('/admin/apps/:id/approve', requireAdmin(2), (req, res) => {
+router.post('/admin/apps/:id/approve', requireAuth, (req, res) => {
+  const app = apps.findById.get(req.params.id);
+  if (!app) return res.status(404).json({ error: '应用不存在' });
+  if (!guardAppWrite(req, res, app.id)) return;
   apps.approve.run(req.params.id); res.json({ success: true });
 });
 
-router.post('/admin/apps/:id/reject', requireAdmin(2), (req, res) => {
+router.post('/admin/apps/:id/reject', requireAuth, (req, res) => {
+  const app = apps.findById.get(req.params.id);
+  if (!app) return res.status(404).json({ error: '应用不存在' });
+  if (!guardAppWrite(req, res, app.id)) return;
   const { reason } = req.body;
   db.prepare("UPDATE apps SET status='rejected',updated_at=datetime('now') WHERE id=?").run(req.params.id);
   res.json({ success: true });
 });
 
-router.delete('/admin/apps/:id', requireAdmin(2), (req, res) => {
+router.delete('/admin/apps/:id', requireAuth, (req, res) => {
+  const app = apps.findById.get(req.params.id);
+  if (!app) return res.status(404).json({ error: '应用不存在' });
+  if (!guardAppWrite(req, res, app.id)) return;
   db.prepare('DELETE FROM user_app_auth WHERE app_id=?').run(req.params.id);
   appIcons.remove.run(req.params.id); appFolders.removeApp.run(req.params.id);   // v3.5.28 图标 / 文件夹连带清
   db.prepare('DELETE FROM apps WHERE id=?').run(req.params.id);
