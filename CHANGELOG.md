@@ -4,6 +4,11 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.74.2 — 修飞书出站建号 99992402（employee_type / mobile 必填）
+
+- 🐛 根因：飞书 `POST /contact/v3/users` 有 **4 个必填字段**——`name`、`mobile`、`department_ids`、`employee_type`。此前只传了 name、可选传 mobile/department_ids，**一直没传 `employee_type`**，手机号为空时也静默省略 `mobile`，飞书因此持续报 99992402 field validation failed。
+- 修：`createMember` 补 `employee_type: 1`（正式员工）；`mobile` 改为必填（为空明确报「手机号必填」，非空按 E.164 补 +86）；`department_ids` 仍必填。缺任一必填字段都返回可读的中文报错，不再让飞书回含糊的 99992402。
+
 ## v3.5.74.1 — 修飞书出站建号 99992402（department_ids 必填）
 
 - 🐛 根因：飞书 `POST /contact/v3/users` 的 `department_ids` 是**必填**字段，且根部门 `"0"` 不能作成员归属。飞书同步源没选具体部门时 `deptIdsOf` 返回 `['0']`，旧代码把它过滤后为空、就不传 `department_ids`，飞书报 99992402 field validation failed。

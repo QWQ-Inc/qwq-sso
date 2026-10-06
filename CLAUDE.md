@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74.2**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,20 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.74.2 修飞书出站建号 99992402（employee_type / mobile 必填）（用户反馈）
+
+四级补丁（修 bug）。用户：「飞书的 99992402 仍然没有解决」——v3.5.74.1 只修了 `department_ids` 必填，但飞书 create user 还有别的必填字段没传。
+
+### 🐛 根因
+飞书 `POST /contact/v3/users` 有 **4 个必填字段**：`name`、`mobile`、`department_ids`、`employee_type`（1正式/2实习/3外包/4劳务/5顾问，或自定义 enum_value）。此前代码只传 name、可选传 mobile/department_ids，**从来没传过 `employee_type`**，且手机号为空时静默省略 `mobile`——这两处都让飞书回 99992402 field validation failed。对照飞书官方文档确认后补齐。
+
+### 修
+- `dirsync-feishu.createMember`：`body` 补 `employee_type: 1`（正式员工）；`mobile` 改为**必填**（`/^\+\d{6,15}$/` 校验，为空明确报「手机号必填」，非空按 E.164 补 +86）；`department_ids` 仍必填（根 "0" 过滤后为空报「未确定归属部门」）；name slice 上限改 255（飞书 1~255）。缺任一必填字段都返回可读中文报错。
+
+### 测试
+- `scratchpad/feishu-create-test.js` 12 项全过（新增 employee_type=1、手机号为空报错两项）。回归 push-provision 10 / departments 14 / contacts 18 / dirsync-contacts 6 / phone-cc 13 / schedule 7 / limited-admin 11 全过。
+- ⚠️ 真实飞书未联调（同既有约束）；根因来自飞书官方文档（4 必填字段），靠 createMember 单测覆盖。若还有 99992402，`call` 已透传飞书 `error.field_violations`，看具体字段名即可。
 
 ## v3.5.74.1 修飞书出站建号 99992402（department_ids 必填）（用户反馈）
 

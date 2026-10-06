@@ -431,17 +431,17 @@ async function createMember(cfg, f) {
   const tk = await token(cfg);
   const name = String(f.name || '').trim();
   if (!name) throw Object.assign(new Error('飞书建号失败：姓名不能为空'), { errcode: 99992402 });
-  const body = { name: name.slice(0, 100) };
-  // mobile 要求 E.164（+8613800000000）；只有格式合法才传（空/非法都省略，避免一个非法手机号让整单失败）
+  // 必填字段：name / mobile / department_ids / employee_type（飞书创建用户四者都必填，缺一个就 99992402 field validation failed）
+  const body = { name: name.slice(0, 255), employee_type: 1 };   // 1 = 正式员工
+  // mobile 必填，E.164 格式（+8613800000000）；11 位中国手机号补 +86 前缀
   const mob = String(f.mobile || '').trim();
-  if (mob) {
-    const norm = /^\+/.test(mob) ? mob : '+86' + mob.replace(/[^\d]/g, '');
-    if (/^\+\d{6,15}$/.test(norm)) body.mobile = norm;
-  }
-  // email：合法才传
+  const normMob = mob ? (/^\+/.test(mob) ? mob : '+86' + mob.replace(/[^\d]/g, '')) : '';
+  if (!/^\+\d{6,15}$/.test(normMob)) throw Object.assign(new Error('飞书建号失败：手机号必填且需为有效手机号'), { errcode: 99992402 });
+  body.mobile = normMob;
+  // email：合法才传（非 +86 手机号时飞书要求邮箱，但一般场景可选）
   const em = String(f.email || '').trim();
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) body.email = em;
-  // department_ids 必填、且不能是根部门 "0"（虚拟根不能作成员归属）。为空说明没确定归属部门，直接给明确报错，别让飞书回 99992402
+  // department_ids 必填、且不能是根部门 "0"（虚拟根不能作成员归属）
   const deptIds = (Array.isArray(f.department_ids) ? f.department_ids : []).map(x => String(x).trim()).filter(x => x && x !== '0');
   if (!deptIds.length) throw Object.assign(new Error('飞书建号失败：未确定成员归属部门（飞书要求部门必填，请给成员分配飞书部门，或在同步源里选择具体部门）'), { errcode: 99992402 });
   body.department_ids = deptIds;

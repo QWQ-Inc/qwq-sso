@@ -36,6 +36,7 @@ const F = require('../server/dirsync-feishu');
   ok('mobile 加 +86 前缀', createCall && createCall.body.mobile === '+8613800000001');
   ok('name 原样', createCall && createCall.body.name === '张三');
   ok('具体部门保留', createCall && Array.isArray(createCall.body.department_ids) && createCall.body.department_ids.includes('od_abc'));
+  ok('employee_type = 1（飞书必填）', createCall && createCall.body.employee_type === 1);
 
   // 已带 + 的手机号不重复加
   feishuCalls.length = 0;
@@ -45,24 +46,29 @@ const F = require('../server/dirsync-feishu');
 
   // 非法 email 不传（防 99992402）
   feishuCalls.length = 0;
-  await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '王五', email: 'bad-email', department_ids: ['od_abc'] });
+  await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '王五', mobile: '13800000002', email: 'bad-email', department_ids: ['od_abc'] });
   const c3 = feishuCalls.find(c => c.path === '/open-apis/contact/v3/users');
   ok('非法 email 不传', c3 && !c3.body.email);
 
   // 根部门 "0" → 明确报错（department_ids 必填）
   let err0 = null;
-  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '赵六', department_ids: ['0'] }); } catch (e) { err0 = e; }
+  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '赵六', mobile: '13800000003', department_ids: ['0'] }); } catch (e) { err0 = e; }
   ok('根部门 "0" 明确报「未确定归属部门」', !!err0 && /未确定成员归属部门/.test(err0.message));
 
   // 无部门 → 明确报错
   let errEmpty = null;
-  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '钱七' }); } catch (e) { errEmpty = e; }
+  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '钱七', mobile: '13800000004' }); } catch (e) { errEmpty = e; }
   ok('无部门明确报「未确定归属部门」', !!errEmpty && /未确定成员归属部门/.test(errEmpty.message));
 
   // name 为空 → 明确报错
   let errName = null;
-  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '', department_ids: ['od_abc'] }); } catch (e) { errName = e; }
+  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '', mobile: '13800000005', department_ids: ['od_abc'] }); } catch (e) { errName = e; }
   ok('姓名为空明确报错', !!errName && /姓名不能为空/.test(errName.message));
+
+  // mobile 为空 → 明确报错（mobile 必填）
+  let errMob = null;
+  try { await F.createMember({ corp_id: 'cli_test', secret: 's' }, { name: '钱七', department_ids: ['od_abc'] }); } catch (e) { errMob = e; }
+  ok('手机号为空明确报错（mobile 必填）', !!errMob && /手机号必填/.test(errMob.message));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
