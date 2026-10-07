@@ -2,7 +2,7 @@
  * JWT 签发与鉴权中间件
  */
 const jwt = require('jsonwebtoken');
-const { limitedAdmins } = require('./db');
+const { limitedAdmins, oauthSubjects } = require('./db');
 
 // 临时/限权管理员（v3.5.74）：在生效时段内、按应用 + 组织/分组范围授予管理员权限
 function validLimitedAdmin(uid) {
@@ -16,6 +16,12 @@ function validLimitedAdmin(uid) {
     }
   } catch (_) {}
   return null;
+}
+
+// 组织管理员（v3.5.76）：非系统管理员，但被指定为某组织的组织管理员 → 进管理端、完整菜单限本组织
+function validOrgAdmin(uid) {
+  if (!uid) return [];
+  try { return oauthSubjects.managedBy.all(uid); } catch (_) { return []; }
 }
 
 function getSecret() {
@@ -85,7 +91,9 @@ function requireAdmin(level = 3) {
       const isAdmin = req.user.role === 'admin';
       // 临时/限权管理员（v3.5.74）：非管理员但在生效时段内、被授予了限权管理员 → 视为管理员（具体范围在各接口用 req._limitedAdmin 拦）
       const limited = isAdmin ? null : validLimitedAdmin(req.user.uid);
-      if (!isAdmin && !limited) {
+      // 组织管理员（v3.5.76）：非系统管理员但被指定为某组织的组织管理员 → 进管理端，完整菜单限本组织（范围在接口层用 req._orgAdmin 拦）
+      const orgAdmin = (!isAdmin && !limited) ? validOrgAdmin(req.user.uid) : [];
+      if (!isAdmin && !limited && !orgAdmin.length) {
         return res.status(403).json({ error: '需要管理员权限' });
       }
       // org-scoped 会话只代表「登录到某组织」，不带系统管理员权限（v3.5.26）
@@ -96,12 +104,15 @@ function requireAdmin(level = 3) {
         if ((req.user.adminLevel || 99) > level) {
           return res.status(403).json({ error: `需要管理员 Lv.${level} 或更高` });
         }
-      } else {
+      } else if (limited) {
         // 限权管理员：读（Lv.3）放行；写（Lv.1/2）在 requireAdmin 层不放行，由应用/组织接口用 req._limitedAdmin + 范围再单独放行
         if (level < 3) {
           return res.status(403).json({ error: '限权管理员只能在授权范围内操作' });
         }
         req._limitedAdmin = limited;
+      } else {
+        // 组织管理员：读/写都放行，范围在接口层用 req._orgAdmin 拦（限本组织）
+        req._orgAdmin = orgAdmin;
       }
       next();
     });

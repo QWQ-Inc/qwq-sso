@@ -3403,7 +3403,7 @@ router.get('/user/me', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const oauthBinds = oauth.findByUser.all(user.id);
-  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), limited_admin: !!limitedAdminOf(user) });
+  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), limited_admin: !!limitedAdminOf(user), org_admin: !!(oauthSubjects.managedBy.all(user.id) || []).length });
 });
 
 router.post('/user/profile', requireAuth, noPublic, (req, res) => {
@@ -4036,6 +4036,7 @@ router.get('/admin/stats', requireAdmin(3), (req, res) => {
 
 router.get('/admin/users', requireAdmin(3), (req, res) => {
   const { status, q, org } = req.query;
+  if (!orgAdminCanOrg(req, org)) return res.status(403).json({ error: '无权查看该组织' });   // v3.5.76 组织管理员限本组织
   let rows;
   if (org) {
     // v3.5.74.4：顶栏「当前组织」聚焦某组织时，用户管理只列该组织成员
@@ -5110,6 +5111,12 @@ function limitedCanScope(req, sid) {
   const g = req._limitedAdmin;
   return g.scope_type === 'all' || g.scope_id === sid;
 }
+// 组织管理员（v3.5.76）：req._orgAdmin 是其管理的组织列表；org 参数必须在其范围内（非组织管理员不限制）
+function orgAdminCanOrg(req, org) {
+  if (!req._orgAdmin) return true;
+  if (!org) return false;
+  return req._orgAdmin.some(o => o.id === org);
+}
 // 应用写权限：系统管理员(Lv.2) 直接过；限权管理员按应用范围拦（appId=null 表示新建，只有「不限应用」的能新建）
 function guardAppWrite(req, res, appId) {
   if (isSysAdmin(req, 2)) return true;
@@ -5430,7 +5437,16 @@ router.put('/user/app-folders/assign', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-router.get('/admin/logs', requireAdmin(3), (req, res) => { res.json({ success: true, logs: logs.findAll.all() }); });
+router.get('/admin/logs', requireAdmin(3), (req, res) => {
+  if (req._orgAdmin) {
+    // v3.5.76 组织管理员：只返回其管理的组织成员的登录日志
+    const orgIds = req._orgAdmin.map(o => o.id);
+    const ph = orgIds.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT l.* FROM login_logs l JOIN org_members m ON m.user_id=l.user_id WHERE m.subject_id IN (${ph}) ORDER BY l.created_at DESC LIMIT 500`).all(...orgIds);
+    return res.json({ success: true, logs: rows });
+  }
+  res.json({ success: true, logs: logs.findAll.all() });
+});
 
 router.get('/admin/api-keys', requireAdmin(1), (req, res) => { res.json({ success: true, keys: apiKeys.findAll.all() }); });
 router.post('/admin/api-keys', requireAdmin(2), (req, res) => {
@@ -7088,6 +7104,7 @@ router.get('/user/access/doors', requireAuth, (req, res) => {
 // ── 管理端：门 CRUD ──
 router.get('/admin/access/doors', requireAdmin(3), (req, res) => {
   const org = String(req.query?.org || '').trim();
+  if (!orgAdminCanOrg(req, org)) return res.status(403).json({ error: '无权查看该组织' });   // v3.5.76 组织管理员限本组织
   const rows = access.allDoors.all()
     .filter(d => !org || d.subject_id === org)   // v3.5.70 聚焦组织时只显示该组织的门（全局门不显示）
     .map(d => ({

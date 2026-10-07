@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.75.2**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.76**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,21 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.76 组织管理员进管理端（完整菜单限本组织）+ 系统配置子菜单重组织（用户反馈）
+
+三级版本。用户：「组织管理员本质上就是限权到本组织的 A2 削弱版运营管理员，应该有管理端的」「环境变量页大改版为系统配置，子菜单分系统与页脚/消息通知（并入短信区号通道）/数据备份/域名验证」。确认：组织管理员「完整菜单但限本组织」；多端点「多节点各自独立+互同步」；分站点「每组织独立域名多租户」。
+
+### 组织管理员管理端（auth.js + api.js + dashboard.html）
+- `auth.js`：`validOrgAdmin(uid)`（`oauthSubjects.managedBy.all`）；`requireAdmin` 识别组织管理员——非系统管理员/非限权管理员，但有管理组织 → 通过，设 `req._orgAdmin`（组织对象数组）。读/写都放行，范围在接口层拦。
+- `api.js`：`/user/me` 回 `org_admin`；`orgAdminCanOrg(req, org)` helper（组织管理员 org 必须在其管理范围内）；`/admin/users`、`/admin/access/doors` 加 `orgAdminCanOrg` 校验；`/admin/logs` 组织管理员只回其管理组织成员的日志（JOIN org_members）。`/admin/devices`、组织成员/部门接口本就走 `myManagedOrgs`/`canManageOrg`，已限本组织。
+- `dashboard.html`：`loadMe` 的 `isAdmin` 加 `ME.org_admin`，`adminRole='orgadmin'`；`ORGADMIN_PAGES = ['adm-users','adm-oauth','adm-devices','adm-access','adm-logs']`，`updateRestrictedNavItems`/`goto`/`bootToLastPage` 对 orgadmin 只放行这些页；`loadAdminOrgSelect` 对 orgadmin 不显示「全部」、默认聚焦到自己管理的第一个组织。
+
+### 系统配置子菜单重组织（dashboard.html）
+- `ENV_CATEGORIES` 加 `backup`（jump=adm-backups）/ `verify`（jump=adm-verify-files）；`renderEnvCards` 侧边栏对 `c.jump` 渲染为跳转项（点击 `goto`）。侧边栏独立菜单 `ni-adm-backups`、`ni-adm-verify-files` 加 `display:none`（并入系统配置）。
+
+### ⚠️ 未做（后续单列，大架构）
+- 数据备份「多端点互同步」（多节点各自独立库 + 定期互相同步）与「每组织独立域名多租户」——已澄清方向，属新的分布式/多租户子系统，需单独设计再上。
 
 ## v3.5.75.2 合并记录折叠 + 额外凭证按组织过滤 + API 文档外链 + 删除实名权限（用户反馈）
 

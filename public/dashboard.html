@@ -1088,8 +1088,8 @@ async function loadMe() {
     loadPublicSwitcher();
     loadManagedGroups();
   }
-  const isAdmin = (isPublic || orgScoped) ? false : (ME.role === 'admin' || !!ME.limited_admin);
-  const lvlLabel = isAdmin ? (ME.role === 'admin' ? `管理员 Lv.${ME.admin_level}` : '限权管理员') : `用户 Lv.${ME.user_level}`;
+  const isAdmin = (isPublic || orgScoped) ? false : (ME.role === 'admin' || !!ME.limited_admin || !!ME.org_admin);
+  const lvlLabel = isAdmin ? (ME.role === 'admin' ? `管理员 Lv.${ME.admin_level}` : (ME.limited_admin ? '限权管理员' : '组织管理员')) : `用户 Lv.${ME.user_level}`;
   document.getElementById('nav-urole').textContent = lvlLabel + ' · ' + uidOf(ME);
 
   // 演示模式角标
@@ -1107,7 +1107,7 @@ async function loadMe() {
     updateRestrictedNavItems();
   } else {
     // 管理员：两个按钮都保留
-    adminRole = ME.role === 'admin' ? (ME.admin_level === 1 ? 'superadmin' : ME.admin_level === 2 ? 'ops' : 'readonly') : 'limited';
+    adminRole = ME.role === 'admin' ? (ME.admin_level === 1 ? 'superadmin' : ME.admin_level === 2 ? 'ops' : 'readonly') : (ME.limited_admin ? 'limited' : 'orgadmin');
     updateRestrictedNavItems();
     loadAdminOrgSelect();   // v3.5.70 顶栏「当前组织」下拉
   }
@@ -1242,7 +1242,7 @@ async function loadMe() {
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 3h12v14H4zM7 7h6M7 10h6M7 13h3"/></svg>
         短信区号通道
       </button>
-      <button class="nav-item" onclick="goto('adm-backups')" id="ni-adm-backups">
+      <button class="nav-item" onclick="goto('adm-backups')" id="ni-adm-backups" style="display:none;">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><ellipse cx="10" cy="5" rx="6" ry="2.5"/><path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5"/></svg>
         数据备份
       </button>
@@ -1254,7 +1254,7 @@ async function loadMe() {
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 2l2.5 5.5L18 10l-5.5 2.5L10 18l-2.5-5.5L2 10l5.5-2.5z"/></svg>
         限权管理员
       </button>
-      <button class="nav-item" onclick="goto('adm-verify-files')" id="ni-adm-verify-files">
+      <button class="nav-item" onclick="goto('adm-verify-files')" id="ni-adm-verify-files" style="display:none;">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 2h7l4 4v12H5zM12 2v4h4"/><path d="M7.5 12l2 2 3.5-4"/></svg>
         域名验证文件
       </button>
@@ -3365,6 +3365,8 @@ let adminRole = 'superadmin';
 const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups'];
 // 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
 const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
+// 组织管理员（v3.5.76）可进的管理页：组织维度的菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
+const ORGADMIN_PAGES = ['adm-users', 'adm-oauth', 'adm-devices', 'adm-access', 'adm-logs'];
 
 // ── 管理端「当前组织」切换（v3.5.70）：顶栏下拉聚焦组织资源（设备/门禁），保留管理员能力 ──
 function _curAdminOrg() { try { return localStorage.getItem('sso_admin_org') || ''; } catch (_) { return ''; } }
@@ -3423,11 +3425,16 @@ async function loadAdminOrgSelect() {
   const { ok, data } = await api('GET', '/account/managed-orgs');
   const orgs = (ok && data.orgs) ? data.orgs : [];
   if (!orgs.length) { box.innerHTML = ''; return; }
+  const isOrgAdmin = adminRole === 'orgadmin';
+  // 组织管理员：默认聚焦到自己管理的第一个组织，且不能看「全部」
+  if (isOrgAdmin && !_curAdminOrg() && orgs.length) {
+    try { localStorage.setItem('sso_admin_org', orgs[0].id); } catch (_) {}
+  }
   const cur = _curAdminOrg();
   box.innerHTML = `
     <label style="font-size:12px;color:var(--txd);white-space:nowrap;">当前组织</label>
     <select id="admin-org-select" onchange="onAdminOrgChange()" style="padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:13px;background:var(--sf);color:var(--tx);max-width:220px;">
-      <option value="">全部</option>
+      ${isOrgAdmin ? '' : '<option value="">全部</option>'}
       ${orgs.map(o => `<option value="${esc(o.id)}" ${o.id === cur ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}
     </select>`;
   if (cur) renderAdminOrgBanner(orgs.find(o => o.id === cur));
@@ -3504,6 +3511,7 @@ function bootToLastPage() {
     else if (SUPERADMIN_ONLY.includes(target) && adminRole !== 'superadmin') target = null;
     else if (target === 'adm-memo' && !canMemoAdmin()) target = null;  // 备忘录管理需达标
     else if (adminRole === 'limited' && !LIMITED_ADMIN_PAGES.includes(target)) target = null;   // 限权管理员只留应用/组织管理
+    else if (adminRole === 'orgadmin' && !ORGADMIN_PAGES.includes(target)) target = null;       // 组织管理员只留组织维度菜单
   } else if (target) {
     if (!USER_PAGES.includes(target)) target = null;             // 未知页
     if (target === 'public') {                                    // 公共账号入口需已授权
@@ -3558,6 +3566,13 @@ function updateRestrictedNavItems() {
       if (!LIMITED_ADMIN_PAGES.includes(page)) b.style.display = 'none';
     });
   }
+  // 组织管理员（v3.5.76）：只给组织维度菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
+  if (adminRole === 'orgadmin') {
+    document.querySelectorAll('.nav-item[id^="ni-adm-"]').forEach(b => {
+      const page = b.id.replace(/^ni-/, '');
+      if (!ORGADMIN_PAGES.includes(page)) b.style.display = 'none';
+    });
+  }
 }
 
 function goto(page) {
@@ -3575,6 +3590,11 @@ function goto(page) {
   }
   // 限权管理员：只能进「应用管理」「组织管理」
   if (adminRole === 'limited' && page.indexOf('adm-') === 0 && !LIMITED_ADMIN_PAGES.includes(page)) {
+    showLockedPage(page);
+    return;
+  }
+  // 组织管理员：只能进组织维度菜单
+  if (adminRole === 'orgadmin' && page.indexOf('adm-') === 0 && !ORGADMIN_PAGES.includes(page)) {
     showLockedPage(page);
     return;
   }
@@ -10439,6 +10459,8 @@ const ENV_CATEGORIES = [
   { key: 'kyc',    label: '实名认证',   icon: '🪪' },
   { key: 'pay',    label: '支付',       icon: '💳' },
   { key: 'system', label: '系统与页脚', icon: '⚙️' },
+  { key: 'backup', label: '数据备份',   icon: '💾', jump: 'adm-backups' },
+  { key: 'verify', label: '域名验证',   icon: '🔗', jump: 'adm-verify-files' },
 ];
 let currentEnvCategory = 'all';
 let openEnvCategories = new Set(['all']); // 展开状态记忆
@@ -10472,6 +10494,14 @@ function renderEnvCards() {
         return `<div class="env-cat-item">
           <div class="env-cat-head ${currentEnvCategory==='all' && currentEnvGroup==='all' ?'active':''}" onclick="filterEnvCategory('all')">
             <span class="env-cat-icon">${c.icon}</span><span>${c.label}</span>
+          </div>
+        </div>`;
+      }
+      if (c.jump) {
+        return `<div class="env-cat-item">
+          <div class="env-cat-head" onclick="goto('${c.jump}')" title="跳转到「${c.label}」">
+            <span class="env-cat-icon">${c.icon}</span><span>${c.label}</span>
+            <span style="margin-left:auto;font-size:11px;color:var(--txd);">↗</span>
           </div>
         </div>`;
       }
