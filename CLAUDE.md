@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.80.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.81**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,20 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.81 iOS 人员管理（按组织 + 第三方同步源部门树）（用户反馈）
+
+三级版本（iOS 为主）。承接用户「手机端的人员管理还没做。基于现在第三方同步源，比如企业微信或者飞书，做成那种像是部门的我觉得会更好」。复用 v3.5.79/80 的 scoped 写接口，不加新写接口。
+
+### 后端（api.js）
+- `GET /user/app-center` 加 `members` 工具：`(sysRead || managed.length) ? { orgs: myManagedOrgs, write: sysWrite } : null`——系统管理员看全部组织、组织管理员看自己管理的组织。只决定磁贴显隐，真正权限仍由各接口校验。
+
+### iOS（`ios/QWQSSO/OrgMembersManageView.swift` 新文件 + AppsTabView 磁贴）
+- 应用中心「管理工具」加「人员管理」磁贴（`person.3.fill`，紫色），gated on `tools.members`。
+- `OrgMembersManageView`：多组织时顶部组织下拉（换组织 `.id()` 重建重载）。
+- `OrgMemberListView`：并发拉 `GET /admin/orgs/:sid/members` + `GET /admin/orgs/:sid/departments`；`orderedDepts` 把部门按 `parent_id` 组织成树、DFS 输出带缩进层级（环/孤儿兜底平铺）；顶部「部门」下拉 = 全部 / 未分配部门 / 待分配(pending=1) / 已挂起(pending=2) / 各部门(缩进+人数)；成员行显示姓名/UID/管理员徽章/状态(正常·已停用)/部门徽章/待分配·挂起/工号/邮箱；搜索(姓名/UID/邮箱)；非管理员成员左滑停用/启用。
+- `OrgMemberDetailSheet`：联系方式（手机 / 邮箱·企业邮箱，来源徽章 企业微信/企业邮箱/主要）增(POST)删(DELETE,左滑)改(PATCH)——改主要联系方式被别账号占用时提示未镜像；操作区（非管理员）重置登录密码(alert SecureField≥6 位)、停用/启用。全部复用 `/admin/users/:id/contacts(/:cid)`、`/admin/users/:id/reset-password`、`/admin/users/:id/(disable|enable)`（均 v3.5.79/80 的 `{orgAdmin:true}` opt-in + `orgAdminMemberDenied` 本组织成员校验）。
+- ⚠️ 本机 Windows 无 Swift 工具链，靠 GitHub Actions（macos-15）云端编译验证；真机交互需装到 iPhone 确认。部门的增删改、同步源配置仍只在网页管理端（手机端只读部门树 + 管成员）。
 
 ## v3.5.80.1 修企业微信同步拿不到手机/邮箱/企业邮箱（user/list 剥字段→改用 user/get 补全）（用户反馈）
 

@@ -147,8 +147,13 @@ struct AppsTabView: View {
     }
 
     // ── 管理工具磁贴（同一套管理接口，只是手机上的入口）──
-    private var hasTools: Bool { ["users", "devices", "access", "verify"].contains { tools[$0] is [String: Any] } }
+    private var hasTools: Bool { ["users", "members", "devices", "access", "verify"].contains { tools[$0] is [String: Any] } }
     @ViewBuilder private var toolTiles: some View {
+        if let mem = tools["members"] as? [String: Any] {
+            NavigationLink { OrgMembersManageView(orgs: (mem["orgs"] as? [[String: Any]]) ?? [], canWrite: (mem["write"] as? Bool) ?? false) }
+                label: { ToolTile(title: "人员管理", symbol: "person.3.fill", color: .purple) }
+                .buttonStyle(.plain)
+        }
         if let acc = tools["access"] as? [String: Any] {
             NavigationLink { AccessManageView(isAdmin: (acc["admin"] as? Bool) ?? false, canPass: (acc["passes"] as? Bool) ?? false, passDoors: passDoors) }
                 label: { ToolTile(title: "门禁", symbol: "door.left.hand.closed", color: .blue) }
