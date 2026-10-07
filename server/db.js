@@ -421,6 +421,8 @@ try {
 } catch(_) {}
 // 组织可覆盖某区号的短信凭证（v3.5.71）：JSON { "+86": {QWQ_MESSAGE_URL/KEY/SMS_GROUP...} }，空=回退全局
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN sms_channels TEXT'); } catch(_) {}
+// 组织独立站点域名（v3.5.77）：每个组织一个独立访问域名（如 a.qwqsso.com），空=无独立站点；配合 MULTITENANT_BASE_DOMAIN 子域通配
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN domain TEXT'); } catch(_) {}
 // 全局「区号 → 短信通道」配置（v3.5.71）：country_code 唯一（+86/+1/+852…），config=QWQ Message 凭证 JSON
 try { db.exec(`CREATE TABLE IF NOT EXISTS sms_channels (
   id           TEXT PRIMARY KEY,
@@ -1215,7 +1217,9 @@ const oauthSubjectStmts = {
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   setContactLimits: db.prepare('UPDATE oauth_subjects SET max_phones=?, max_emails=? WHERE id=?'),
   setSmsChannels: db.prepare('UPDATE oauth_subjects SET sms_channels=? WHERE id=?'),   // v3.5.71 组织覆盖某区号短信凭证
+  setDomain: db.prepare('UPDATE oauth_subjects SET domain=? WHERE id=?'),             // v3.5.77 组织独立站点域名
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),
+  byDomain: db.prepare('SELECT * FROM oauth_subjects WHERE domain=?'),               // v3.5.77 按独立域名找组织
   // 组织管理员（v3.5.8，套用分组管理员的概念）
   admins:       db.prepare('SELECT user_id FROM oauth_subject_admins WHERE subject_id=?'),
   isAdmin:      db.prepare('SELECT 1 FROM oauth_subject_admins WHERE subject_id=? AND user_id=?'),

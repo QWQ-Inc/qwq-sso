@@ -3098,6 +3098,11 @@ async function loadMe() {
         组织码：<code id="sm-orgcode" style="user-select:all;background:var(--bg);padding:1px 6px;border-radius:4px;">—</code>
         <span style="color:var(--txd);">（发给需临时登录到本组织的人，在登录页「用组织码登录」里输入）</span>
       </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--txd);">
+        独立站点域名（可选，v3.5.77）：
+        <input id="sm-domain" placeholder="如 sso.a.com；访问该域名时登录页只显示本组织的登录方式（留空=无独立站点）" style="box-sizing:border-box;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);width:100%;margin-top:4px;">
+        <div style="font-size:11px;color:var(--txd);margin-top:3px;">也可用子域通配：系统配置里设「多租户主域名」后，<code>&lt;组织码&gt;.主域名</code> 自动指向本组织。</div>
+      </div>
     </details>
 
     <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
@@ -9248,6 +9253,7 @@ function openSubjectModal(subj) {
   document.getElementById('sm-listed').checked = editing ? (subj.direct_listed !== false) : true;
   document.getElementById('sm-maxphones').value = editing ? (subj.max_phones || '') : '';
   document.getElementById('sm-maxemails').value = editing ? (subj.max_emails || '') : '';
+  document.getElementById('sm-domain').value = editing ? (subj.domain || '') : '';
   const ocRow = document.getElementById('sm-orgcode-row');
   if (editing && subj.allow_direct_login && subj.org_code) { document.getElementById('sm-orgcode').textContent = subj.org_code; ocRow.style.display = ''; }
   else ocRow.style.display = 'none';
@@ -9281,7 +9287,8 @@ async function saveSubject() {
   const folder_id = document.getElementById('sm-folder').value || null;
   const max_phones = parseInt(document.getElementById('sm-maxphones').value, 10) || 0;
   const max_emails = parseInt(document.getElementById('sm-maxemails').value, 10) || 0;
-  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id, max_phones, max_emails };
+  const domain = document.getElementById('sm-domain').value.trim().toLowerCase();
+  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id, max_phones, max_emails, domain };
   let res;
   if (id) {
     res = await api('PATCH', '/admin/oauth-subjects/' + id, { name, enabled, ...policy, ...extra });
@@ -11117,6 +11124,13 @@ const ENV_GROUPS = [
     vars: [
       { key: 'MEMBER_MAX_PHONES', label: '每人手机上限', desc: '单个成员最多可挂多少个手机号。默认 10，范围 1~50', required: false, secret: false, placeholder: '10', value: '' },
       { key: 'MEMBER_MAX_EMAILS', label: '每人邮箱上限', desc: '单个成员最多可挂多少个邮箱。默认 20，范围 1~50', required: false, secret: false, placeholder: '20', value: '' },
+    ]
+  },
+  {
+    key: 'multitenant', category: 'system', label: '多租户分域', icon: '🌐', color: '#1D4E89',
+    desc: '按组织分站点（多租户）：每个组织可在「组织管理」里设一个独立站点域名；此处设一个「主域名」，则 <组织码>.主域名 会自动指向对应组织（子域通配）。',
+    vars: [
+      { key: 'MULTITENANT_BASE_DOMAIN', label: '多租户主域名', desc: '子域通配用，如 qwqsso.com → <组织码>.qwqsso.com 自动进入该组织站点。留空=不启用子域通配', required: false, secret: false, placeholder: 'qwqsso.com', value: '' },
     ]
   },
   {

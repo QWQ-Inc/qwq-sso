@@ -73,6 +73,26 @@ function userKycCfg(user) {
 // ── org-first 登录（v3.5.17）──
 // 「直接登录到某组织」：组织须 enabled 且 allow_direct_login=1 才作为公开的直登目标。
 // 登录页发验证码时按此组织的专属短信/邮件凭证下发（公开面，只认已 opt-in 的组织）。
+// v3.5.77：按 Host 识别「组织站点」（多租户分域）——显式域名优先，其次子域通配（<org_code>.<MULTITENANT_BASE_DOMAIN>）
+function orgByHost(host) {
+  const h = String(host || '').toLowerCase().trim().replace(/:\d+$/, '');
+  if (!h) return null;
+  try {
+    const byDomain = oauthSubjects.byDomain.get(h);
+    if (byDomain && byDomain.enabled) return byDomain;
+  } catch (_) {}
+  const base = String(process.env.MULTITENANT_BASE_DOMAIN || '').toLowerCase().trim();
+  if (base && h.endsWith('.' + base)) {
+    const sub = h.slice(0, -(base.length + 1));
+    if (sub && sub !== 'www') {
+      try {
+        const byCode = oauthSubjects.byOrgCode.get(sub);
+        if (byCode && byCode.enabled) return byCode;
+      } catch (_) {}
+    }
+  }
+  return null;
+}
 function directLoginSubject(orgId) {
   if (!orgId) return null;
   try { const s = oauthSubjects.get.get(orgId); return (s && s.enabled && s.allow_direct_login) ? s : null; } catch (_) { return null; }
@@ -1279,27 +1299,39 @@ function inappAutoPlatforms() {
   return v.split(/[,，\s]+/).filter(p => INAPP_PLATFORMS.includes(p));
 }
 router.get('/public/login-methods', (req, res) => {
+  const orgSite = orgByHost(req.headers.host);   // v3.5.77 组织站点（多租户分域）
   const methods = [];
-  for (const platform of Object.keys(OAUTH_META)) {
-    if (envConfigured(platform)) methods.push(defaultPublic(platform));
-    for (const inst of oauthProviders.enabledByPlatform.all(platform)) {
-      methods.push(instancePublic(platform, inst));
+  if (orgSite) {
+    // 组织站点：只返回该组织的登录凭证（不返回默认主体/其他组织的凭证）
+    for (const platform of Object.keys(OAUTH_META)) {
+      for (const inst of oauthProviders.enabledByPlatform.all(platform)) {
+        if (inst.subject_id === orgSite.id) methods.push(instancePublic(platform, inst));
+      }
+    }
+  } else {
+    for (const platform of Object.keys(OAUTH_META)) {
+      if (envConfigured(platform)) methods.push(defaultPublic(platform));
+      for (const inst of oauthProviders.enabledByPlatform.all(platform)) {
+        methods.push(instancePublic(platform, inst));
+      }
+    }
+    // 一个都没配置时，登录页兜底（与 configured-platforms 一致）；?raw=1 不兜底
+    if (methods.length === 0 && !req.query.raw) {
+      methods.push(defaultPublic('wechat'), defaultPublic('wecom'));
     }
   }
-  // 一个都没配置时，登录页兜底（与 configured-platforms 一致）；?raw=1 不兜底
-  if (methods.length === 0 && !req.query.raw) {
-    methods.push(defaultPublic('wechat'), defaultPublic('wecom'));
-  }
-  res.json({ success: true, methods, inapp_auto: inappAutoPlatforms() });
+  res.json({ success: true, methods, inapp_auto: inappAutoPlatforms(), org_site: orgSite ? { id: orgSite.id, name: orgSite.name } : null });
 });
 
 // org-first 登录（v3.5.17）：登录页「直接登录到某组织」可选项。
 // 只列 enabled 且 allow_direct_login=1 的组织，只给 id/name（无任何凭证/成员信息）。
 router.get('/public/orgs', (req, res) => {
+  const orgSite = orgByHost(req.headers.host);   // v3.5.77 组织站点：只返回该组织
   let orgs = [];
   try {
     orgs = oauthSubjects.all.all()
       .filter(s => s.enabled && s.allow_direct_login && (s.direct_listed == null ? true : s.direct_listed))  // 仅显性
+      .filter(s => !orgSite || s.id === orgSite.id)
       .map(s => ({ id: s.id, name: s.name }));
   } catch (_) {}
   res.json({ success: true, orgs });
@@ -1364,6 +1396,8 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     org_code: s.allow_direct_login ? ensureOrgCode(s) : (s.org_code || ''),
     // 成员多联系方式上限（0=用全局默认）
     max_phones: s.max_phones || 0, max_emails: s.max_emails || 0,
+    // 独立站点域名（v3.5.77 多租户分域）
+    domain: s.domain || '',
     // 成员数 / 开放应用数（卡片上直接显示，更直观）
     member_count: orgMembers.countBySubject.get(s.id).n,
     dir_sources: dirSources.bySubject.all(s.id).map(x => dirSourceView(x, s)),   // 通讯录同步源（v3.5.36，secret 已打码）
@@ -1575,6 +1609,11 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
       req.body.max_phones !== undefined ? clamp(req.body.max_phones) : (row.max_phones || 0),
       req.body.max_emails !== undefined ? clamp(req.body.max_emails) : (row.max_emails || 0),
       row.id);
+  }
+  // v3.5.77：组织独立站点域名（多租户分域）
+  if (req.body.domain !== undefined) {
+    const domain = String(req.body.domain || '').trim().toLowerCase().slice(0, 200);
+    oauthSubjects.setDomain.run(domain || null, row.id);
   }
   // 开了直登就确保有组织码（不显性组织靠它被搜索到）
   if (req.body.allow_direct_login) ensureOrgCode(oauthSubjects.get.get(row.id));

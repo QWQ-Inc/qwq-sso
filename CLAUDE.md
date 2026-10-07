@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.76**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.77**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,28 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.77 按组织分站点（多租户分域）（用户反馈）
+
+三级版本。用户要「允许按组织分站点、设置独立域名」。确认：显式域名 + 子域通配两者都要；「多端点互同步」丢掉（R2 备份已够）。
+
+### 数据（db.js）
+- `oauth_subjects` 加 `domain`（独立站点域名，空=无）；`oauthSubjectStmts` 加 `setDomain` / `byDomain`。
+
+### 后端（api.js）
+- `orgByHost(host)`：去端口 + 小写；先 `byDomain` 命中（显式域名），否则 `MULTITENANT_BASE_DOMAIN` 子域通配（`<sub>.<base>` → `byOrgCode(sub)`，排除 www）。
+- `/api/public/login-methods`：orgSite 命中时只返回该组织（subject_id 匹配）的登录凭证，并回 `org_site:{id,name}`；否则照旧（默认主体 + 各额外主体）。
+- `/api/public/orgs`：orgSite 命中时只返回该组织。
+- `PATCH /admin/oauth-subjects/:id` 收 `domain`（小写、≤200、空=清空）；`GET` 回带 `domain`。
+
+### 前端（dashboard.html + login.html）
+- 组织弹窗加「独立站点域名」输入（`sm-domain`），回填 + 提交 `domain`。
+- 系统配置「系统与页脚」加 `multitenant` 组（`MULTITENANT_BASE_DOMAIN`）；init.js ENV_KEYS 同步。
+- 登录页加 `#org-site-banner`，`renderPlatformList` 拉 login-methods 时显示「正在登录 · XX」。
+
+### ⚠️ 说明
+- 应用市场/授权本就按「用户所属组织」过滤，orgSite 不需要额外干预。
+- 多端点互同步（多节点独立库 + 互同步）按用户决定**不做**，靠 R2 备份兜底。
 
 ## v3.5.76 组织管理员进管理端（完整菜单限本组织）+ 系统配置子菜单重组织（用户反馈）
 

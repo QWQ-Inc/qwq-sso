@@ -1015,6 +1015,8 @@
 
       <div class="left-sep"></div>
 
+      <div id="org-site-banner" style="display:none;width:100%;padding:8px 12px;border-radius:6px;background:rgba(29,78,137,.08);border:1px solid rgba(29,78,137,.25);color:#1D4E89;font-size:13px;font-weight:600;text-align:center;margin-bottom:10px;"></div>
+
       <div class="platform-list" id="platform-list">
         <!-- 由 JS 根据配置动态渲染 -->
       </div>
@@ -1262,10 +1264,18 @@
 
     let methods = [];
     let _inappCfg = null;
+    let orgSite = null;
     try {
       const res = await fetch('/api/public/login-methods');
-      if (res.ok) { const d = await res.json(); methods = d.methods || []; _inappCfg = d.inapp_auto; }
+      if (res.ok) { const d = await res.json(); methods = d.methods || []; _inappCfg = d.inapp_auto; orgSite = d.org_site || null; }
     } catch(_) {}
+
+    // 组织站点（多租户分域 v3.5.77）：顶部显示「正在登录 XXX」
+    const siteBanner = document.getElementById('org-site-banner');
+    if (siteBanner) {
+      if (orgSite) { siteBanner.textContent = '正在登录 · ' + orgSite.name; siteBanner.style.display = ''; }
+      else siteBanner.style.display = 'none';
+    }
 
     // 接口不通（file://）时兜底：微信 + 企业微信 默认主体
     if (!methods.length) {
