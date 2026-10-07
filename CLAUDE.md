@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.77.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.78**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,26 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.78 修组织管理员越权 + 管理端可达性重做（安全 + 用户反馈）
+
+三级版本（含**安全修复**）。用户：「组织管理员应是略低于 A2 运营管理员、限本组织的角色，现在的界面明显不合理。」核查发现 v3.5.76 的实现既**进不去又越权**：
+
+### 🔴 越权（核心，必须修）
+v3.5.76 让 `requireAdmin(level)` 对组织管理员「读写都放行、范围在接口层拦」。但全项目 **177 个 `requireAdmin` 接口里只有 ~6 个真的用 `req._orgAdmin` 做了组织过滤**，其余 ~170 个（`/admin/env` 写系统配置、`/admin/levels`、`/admin/grants` 给自己授权、`/admin/backups/:id/files` 下载含密钥的整库备份、`/admin/api-keys`、`/admin/shop/*`、`/admin/announcements`…）对组织管理员**全部敞开** = 提权。
+- 修（`auth.js`）：`requireAdmin(level, opts)` **默认拒绝组织管理员**，只有显式 `opts.orgAdmin:true` 的接口才放行并设 `req._orgAdmin`。默认拒绝（fail-safe）：漏标只会让某组织功能 403，绝不泄露。
+- 只给 3 个**已验证确实做了范围过滤**的 GET opt-in：`/admin/users`（org 必须在其管辖内，否则 403，只回该组织成员）、`/admin/logs`（硬 JOIN 其管辖组织）、`/admin/access/doors`（必须传其管辖 org）。其余 requireAdmin 接口组织管理员一律 403。
+- ⚠️ 组织管理员真正要用的功能本就走 `requireAuth + canManageOrg` / `myManagedOrgs`（组织成员、部门、凭证、组织密码、设备 `/admin/devices`、`/account/managed-orgs`），**不受本次反转影响**，照常可用。
+
+### 🐛 进不去 / 界面不合理（dashboard.html）
+- `setMode('admin')` 原来硬判 `ME.role !== 'admin'` → 组织管理员（role=user）点「管理端」被弹到「权限不足」。改为判 `adminRole === 'none'`（组织/限权管理员的 role 虽是 user 但 adminRole 已标记）——顺带修好限权管理员同样进不去的问题。
+- `bootToLastPage` 的 `isAdmin` 原来不含 `org_admin` → 组织管理员刷新永远回用户端。已加入 `ME.org_admin`。
+- `setMode` 进管理端默认落地页写死 `adm-users`，但它不在组织/限权管理员菜单里 → 落到锁定页。新增 `firstAdminPage()`：组织管理员→`adm-devices`、限权→`adm-apps`、其余→`adm-users`。
+- `ORGADMIN_PAGES` 去掉 `adm-oauth`（**全局登录主体/凭证/分站点**，绝不能给组织管理员），收窄为 `['adm-devices','adm-logs']`——两页读写对组织管理员都可用、无 403 死按钮；成员管理走用户端「我的组织」。
+- ⚠️ dev 浏览器实测：组织管理员进管理端落 adm-devices 不锁定、菜单只剩 设备/日志、adm-oauth/adm-users/adm-env 隐藏、直接 goto('adm-oauth') 锁定；回归 ops 管理员仍落 adm-users、真·普通用户仍被挡、限权管理员落 adm-apps。auth.js/api.js `node --check` 通过。
+
+### 下一步（已问用户待确认的能力边界）
+组织管理员的「A2 scoped 写能力」具体给到哪：是否可在本组织内 停用/启用用户、重置密码、分配分组/标签、管理门禁规则？这些要逐接口加 `{orgAdmin:true}` + 范围过滤 + 前端放开按钮。确认后单独一版做（本版先把洞堵死、把入口修通）。
 
 ## v3.5.77 按组织分站点（多租户分域）（用户反馈）
 

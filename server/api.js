@@ -4073,7 +4073,7 @@ router.get('/admin/stats', requireAdmin(3), (req, res) => {
   res.json({ success: true, stats: { total, verified, todayActive, newThisMonth, daily7 } });
 });
 
-router.get('/admin/users', requireAdmin(3), (req, res) => {
+router.get('/admin/users', requireAdmin(3, { orgAdmin: true }), (req, res) => {
   const { status, q, org } = req.query;
   if (!orgAdminCanOrg(req, org)) return res.status(403).json({ error: '无权查看该组织' });   // v3.5.76 组织管理员限本组织
   let rows;
@@ -5476,7 +5476,7 @@ router.put('/user/app-folders/assign', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-router.get('/admin/logs', requireAdmin(3), (req, res) => {
+router.get('/admin/logs', requireAdmin(3, { orgAdmin: true }), (req, res) => {
   if (req._orgAdmin) {
     // v3.5.76 组织管理员：只返回其管理的组织成员的登录日志
     const orgIds = req._orgAdmin.map(o => o.id);
@@ -7141,7 +7141,7 @@ router.get('/user/access/doors', requireAuth, (req, res) => {
 });
 
 // ── 管理端：门 CRUD ──
-router.get('/admin/access/doors', requireAdmin(3), (req, res) => {
+router.get('/admin/access/doors', requireAdmin(3, { orgAdmin: true }), (req, res) => {
   const org = String(req.query?.org || '').trim();
   if (!orgAdminCanOrg(req, org)) return res.status(403).json({ error: '无权查看该组织' });   // v3.5.76 组织管理员限本组织
   const rows = access.allDoors.all()

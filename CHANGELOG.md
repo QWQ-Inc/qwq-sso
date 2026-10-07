@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.78 — 修组织管理员越权 + 管理端可达性重做（安全）
+
+- 🔴 安全：v3.5.76 让 `requireAdmin` 对组织管理员「读写全放行、接口层自己拦」，但 177 个 requireAdmin 接口只有 ~6 个真做了组织过滤，其余 ~170 个（写系统配置、授权、下载整库备份…）对组织管理员敞开 = 提权。改为 `requireAdmin(level, {orgAdmin})` **默认拒绝组织管理员**，只给 3 个已验证范围过滤的 GET（/admin/users、/admin/logs、/admin/access/doors）opt-in。组织管理员真正要用的功能走 requireAuth+canManageOrg，不受影响。
+- 🐛 组织管理员进不去管理端（setMode 硬判 role!=='admin'）、刷新回退、默认落地页锁定、菜单含全局「组织管理」——全部修正：`setMode` 改判 `adminRole==='none'`、`bootToLastPage` 纳入 org_admin、新增 `firstAdminPage()`、`ORGADMIN_PAGES` 去掉 adm-oauth（收窄为 设备/日志）。顺带修好限权管理员同样的进入/落地问题。
+- dev 浏览器实测 + 回归通过；成员管理仍走用户端「我的组织」。组织管理员的 scoped 写能力（停用/重置/门禁规则等）待确认能力边界后单列一版。
+
 ## v3.5.77.1 — 企业微信登录二维码改为网页登录跳转（用户反馈）
 
 - 电脑端企业微信登录的二维码调不出来——根因是旧的内嵌 `WWLogin` JS-SDK（`wwcdn.weixin.net.cn`）已失效。改为点「企业微信」直接跳 `/auth/wecom`，后端跳企业微信「网页登录」（`login.work.weixin.qq.com/wwlogin/sso/login`，自带扫码 / 一键登录）。企业微信内 / 手机端的应用内授权行为不变。

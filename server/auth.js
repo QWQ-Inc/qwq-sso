@@ -85,14 +85,16 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function requireAdmin(level = 3) {
+function requireAdmin(level = 3, opts = {}) {
   return (req, res, next) => {
     requireAuth(req, res, () => {
       const isAdmin = req.user.role === 'admin';
       // 临时/限权管理员（v3.5.74）：非管理员但在生效时段内、被授予了限权管理员 → 视为管理员（具体范围在各接口用 req._limitedAdmin 拦）
       const limited = isAdmin ? null : validLimitedAdmin(req.user.uid);
-      // 组织管理员（v3.5.76）：非系统管理员但被指定为某组织的组织管理员 → 进管理端，完整菜单限本组织（范围在接口层用 req._orgAdmin 拦）
-      const orgAdmin = (!isAdmin && !limited) ? validOrgAdmin(req.user.uid) : [];
+      // 组织管理员（v3.5.78 起 默认拒绝）：只有显式 opts.orgAdmin=true 的「已做组织范围过滤」接口才放行，
+      // 并在接口内用 req._orgAdmin 限本组织。其余 requireAdmin 接口一律视组织管理员为普通用户 → 403。
+      // ⚠️ 不要图省事把某接口标 orgAdmin:true 却不在接口里做范围过滤——那等于把全平台数据开放给组织管理员。
+      const orgAdmin = (!isAdmin && !limited && opts.orgAdmin) ? validOrgAdmin(req.user.uid) : [];
       if (!isAdmin && !limited && !orgAdmin.length) {
         return res.status(403).json({ error: '需要管理员权限' });
       }

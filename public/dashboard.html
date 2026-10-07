@@ -3371,7 +3371,16 @@ const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grant
 // 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
 const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
 // 组织管理员（v3.5.76）可进的管理页：组织维度的菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
-const ORGADMIN_PAGES = ['adm-users', 'adm-oauth', 'adm-devices', 'adm-access', 'adm-logs'];
+// 组织管理员的管理端菜单：只给「已做组织范围过滤且写操作对组织管理员可用」的页。
+// adm-oauth（全局登录主体/凭证/分站点）绝不给；adm-users/adm-access 的写操作目前仍是 Lv.2（组织管理员会 403），
+// 故暂不放进菜单——用户/门禁的组织维度只读/成员管理走用户端「我的组织」(page-orgadmin)。设备=requireAuth+本组织，登录日志=按本组织过滤，二者读写对组织管理员都可用。
+const ORGADMIN_PAGES = ['adm-devices', 'adm-logs'];
+// 各管理身份进管理端时的默认落地页（adm-users 不在限权/组织管理员菜单里，不能作默认，否则落到锁定页）
+function firstAdminPage() {
+  if (adminRole === 'orgadmin') return ORGADMIN_PAGES[0];
+  if (adminRole === 'limited')  return (typeof LIMITED_ADMIN_PAGES !== 'undefined' && LIMITED_ADMIN_PAGES[0]) || 'adm-apps';
+  return 'adm-users';
+}
 
 // ── 管理端「当前组织」切换（v3.5.70）：顶栏下拉聚焦组织资源（设备/门禁），保留管理员能力 ──
 function _curAdminOrg() { try { return localStorage.getItem('sso_admin_org') || ''; } catch (_) { return ''; } }
@@ -3482,8 +3491,8 @@ function clearAdminOrg() {
 }
 
 function setMode(mode, targetPage) {
-  // 普通用户不允许进管理端
-  if (mode === 'admin' && ME && ME.role !== 'admin') {
+  // 只有「毫无管理权限」的身份不允许进管理端（组织管理员 / 限权管理员的 role 是 user，但 adminRole 已标记）
+  if (mode === 'admin' && adminRole === 'none') {
     // 显示权限不足提示页
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('page-locked').classList.add('active');
@@ -3499,7 +3508,7 @@ function setMode(mode, targetPage) {
   document.getElementById('mode-admin').classList.toggle('active', mode === 'admin');
   updateRestrictedNavItems();
   if (mode === 'user')  goto(targetPage || 'home');
-  else                  goto(targetPage || 'adm-users');
+  else                  goto(targetPage || firstAdminPage());
 }
 
 // ── 刷新后恢复上次所在菜单（否则每次刷新都回退到首页/用户管理）──
@@ -3507,7 +3516,7 @@ const USER_PAGES = ['home','apps','shop','account','public','memo','access','org
 function bootToLastPage() {
   let target = null;
   try { target = localStorage.getItem('sso_last_page'); } catch (_) {}
-  const isAdmin     = !!(ME && (ME.role === 'admin' || ME.limited_admin)) && !_PUBLIC_ACCT && !_isOrgScoped();
+  const isAdmin     = !!(ME && (ME.role === 'admin' || ME.limited_admin || ME.org_admin)) && !_PUBLIC_ACCT && !_isOrgScoped();
   const isAdminPage = !!target && target.indexOf('adm-') === 0;
 
   // 校验目标页在当前身份下是否可达，不可达则丢弃（回退默认）
