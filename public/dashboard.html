@@ -1236,7 +1236,7 @@ async function loadMe() {
       </button>
       <button class="nav-item" onclick="goto('adm-env')" id="ni-adm-env">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M6 7l3 3-3 3M11 13h3"/></svg>
-        环境变量
+        系统配置
       </button>
       <button class="nav-item" onclick="goto('adm-sms-channels')" id="ni-adm-sms-channels">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 3h12v14H4zM7 7h6M7 10h6M7 13h3"/></svg>
@@ -2001,6 +2001,10 @@ async function loadMe() {
 
         <!-- ── 接口文档 ── -->
         <div id="api-tab-docs" style="display:none">
+          <div style="margin-bottom:10px;padding:10px 14px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);font-size:12px;color:var(--tx);line-height:1.7;">
+            📖 下面是常用接口速览；<b>完整、最新的参数说明与示例</b>见仓库里的
+            <a href="https://github.com/QWQ-Inc/qwq-sso/blob/main/API-docs.md" target="_blank" rel="noopener" style="color:var(--ac);">API-docs.md（GitHub · 外链）</a>。
+          </div>
           <div id="api-docs-list">
             <!-- JS 渲染 -->
           </div>
@@ -2718,11 +2722,11 @@ async function loadMe() {
           <div id="lo-bulk" style="display:none;gap:6px;align-items:center;padding:0 20px 6px;font-size:12px;"></div>
           <div class="card-body"><div id="lo-list" style="font-size:12px;color:var(--txd);">点「检查通讯录」查看。</div></div>
         </div>
-        <div class="card" style="margin-top:16px;">
-          <div class="card-header"><h3>账号合并记录</h3></div>
+        <details class="card" style="margin-top:16px;" open>
+          <summary class="card-header" style="cursor:pointer;list-style:none;user-select:none;"><h3>账号合并记录 <span style="font-size:11px;color:var(--txd);font-weight:400;">（点击折叠 / 展开）</span></h3></summary>
           <div id="merge-note" style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;"></div>
           <div class="card-body"><div id="merge-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
-        </div>
+        </details>
       </div>
       <div class="page" id="page-adm-grants">
         <div class="card">
@@ -2768,7 +2772,7 @@ async function loadMe() {
             <button class="btn primary" style="font-size:11px;" onclick="openSmsChannelModal()">+ 添加区号</button>
           </div>
           <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
-            手机号现在带国家码存储（如 <code>+8613800000000</code> / <code>+85212345678</code>）。在这里给不同区号各自配置一套 QWQ Message 凭证（就像添加登录凭证那样），发短信时按手机号区号路由到对应分发中心。<b>优先级：组织覆盖该区号 &gt; 这里的全局区号通道 &gt; 组织默认凭证 &gt; 系统配置里的全局短信凭证</b>。没单独配的区号回退全局短信凭证。默认区号在「环境变量 → 消息分发（QWQ Message）」里设（<code>DEFAULT_PHONE_CC</code>）。
+            手机号现在带国家码存储（如 <code>+8613800000000</code> / <code>+85212345678</code>）。在这里给不同区号各自配置一套 QWQ Message 凭证（就像添加登录凭证那样），发短信时按手机号区号路由到对应分发中心。<b>优先级：组织覆盖该区号 &gt; 这里的全局区号通道 &gt; 组织默认凭证 &gt; 系统配置里的全局短信凭证</b>。没单独配的区号回退全局短信凭证。默认区号在「系统配置 → 消息分发（QWQ Message）」里设（<code>DEFAULT_PHONE_CC</code>）。
           </div>
           <div class="card-body"><div id="sms-channel-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
         </div>
@@ -2885,6 +2889,7 @@ async function loadMe() {
             <div style="font-size:12px;color:var(--txm);margin-top:3px;">管理系统所有外部接口的密钥、AppID 及系统行为配置项。标记 <span style="color:var(--err);font-weight:700;">*必填</span> 的变量缺失将导致对应功能不可用。</div>
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button class="btn" onclick="goto('adm-sms-channels')">📱 短信区号通道</button>
             <button class="btn" onclick="exportEnv()">↓ 导出 .env</button>
             <button class="btn primary" onclick="saveAllEnv()">保存所有修改</button>
           </div>
@@ -3432,8 +3437,9 @@ function onAdminOrgChange() {
   const v = sel ? sel.value : '';
   try { localStorage.setItem('sso_admin_org', v); } catch (_) {}
   renderAdminOrgBanner();
-  // 刷新组织资源页面（用户/设备/门禁），使其按当前组织过滤
+  // 刷新组织资源页面（用户/组织/设备/门禁），使其按当前组织过滤
   if (typeof loadAdmUsers === 'function') loadAdmUsers();
+  if (typeof loadOauthSubjects === 'function') loadOauthSubjects();
   if (typeof loadDevices === 'function') loadDevices('adm');
   if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
 }
@@ -3458,6 +3464,7 @@ function clearAdminOrg() {
   const sel = document.getElementById('admin-org-select'); if (sel) sel.value = '';
   renderAdminOrgBanner();
   if (typeof loadAdmUsers === 'function') loadAdmUsers();
+  if (typeof loadOauthSubjects === 'function') loadOauthSubjects();
   if (typeof loadDevices === 'function') loadDevices('adm');
   if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
 }
@@ -3610,7 +3617,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'环境变量','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -3665,7 +3672,7 @@ function showLockedPage(page) {
   const ni = document.getElementById('ni-' + page);
   if (ni) ni.classList.add('active');
 
-  const titles = { 'adm-levels':'等级管理', 'adm-env':'环境变量', 'adm-memo':'备忘录管理', 'adm-verify-files':'域名验证文件', 'adm-grants':'权限授权', 'adm-backups':'数据备份' };
+  const titles = { 'adm-levels':'等级管理', 'adm-env':'系统配置', 'adm-memo':'备忘录管理', 'adm-verify-files':'域名验证文件', 'adm-grants':'权限授权', 'adm-backups':'数据备份' };
   document.getElementById('page-title').textContent = titles[page] || page;
   document.getElementById('locked-feature-name').textContent = titles[page] || page;
 }
@@ -5482,7 +5489,7 @@ async function renderUserMerges(u) {
   const wrap = document.getElementById('ud-mg-' + u.id); if (!wrap || _IS_DEV) return;
   const { ok, data } = await api('GET', '/admin/merges?user=' + encodeURIComponent(u.id));
   if (!ok || !(data.merges || []).length) { wrap.innerHTML = ''; return; }
-  wrap.innerHTML = `<div class="detail-section"><h4>合并记录 <span style="font-size:10px;color:var(--txd);font-weight:400;">（其他账号并入此账号）</span></h4><div id="ud-merges" data-uid="${u.id}" style="font-size:12px;color:var(--txd);"></div></div>`;
+  wrap.innerHTML = `<details class="detail-section"><summary style="cursor:pointer;list-style:none;user-select:none;"><h4>合并记录 <span style="font-size:10px;color:var(--txd);font-weight:400;">（其他账号并入此账号 · 点击展开）</span></h4></summary><div id="ud-merges" data-uid="${u.id}" style="font-size:12px;color:var(--txd);"></div></details>`;
   _mergeList = data.merges;
   document.getElementById('ud-merges').innerHTML = data.merges.map(_mergeRowHtml).join('');
 }
@@ -7062,6 +7069,9 @@ async function loadOauthSubjects() {
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">加载失败</div>'; return; }
   _oauthPlatforms = data.platforms || [];
   _oauthSubjects = data.data || [];
+  // v3.5.75.2：顶栏「当前组织」聚焦某组织时，额外主体列表只显示该组织
+  const _orgFocus = _curAdminOrg();
+  if (_orgFocus) _oauthSubjects = _oauthSubjects.filter(o => o.id === _orgFocus);
   _orgFolders = data.folders || [];
   const _nk = {}; _oauthSubjects.forEach(o => { const k = _orgNameKey(o.name); _nk[k] = (_nk[k] || 0) + 1; });
   const _dupNames = new Set(Object.keys(_nk).filter(k => _nk[k] > 1));
@@ -10027,8 +10037,8 @@ function openAnnounceModal(a) {
           <input type="checkbox" id="an-webhook" ${_annWebhook.ready ? '' : 'disabled'} ${_annWebhook.ready && !edit && _annWebhook.default_on ? 'checked' : ''}> 同时推送到 Webhook / 群机器人${edit ? '（作为「公告更新」）' : ''}
         </label>
         <div style="font-size:11px;color:var(--txd);margin-top:2px;">${_annWebhook.ready
-          ? '推到「环境变量 → 消息通知 → 系统通知（Webhook / 群机器人）」里填的通知分组（飞书 / 钉钉 / 企业微信群机器人或自定义 Webhook）。'
-          : '还没配置通知分组：先在 QWQ Message 分发中心建一个 Webhook 或群机器人分组，再到左侧「环境变量 → 消息通知 → 系统通知（Webhook / 群机器人）」填分组编号。'}</div>
+          ? '推到「系统配置 → 消息通知 → 系统通知（Webhook / 群机器人）」里填的通知分组（飞书 / 钉钉 / 企业微信群机器人或自定义 Webhook）。'
+          : '还没配置通知分组：先在 QWQ Message 分发中心建一个 Webhook 或群机器人分组，再到左侧「系统配置 → 消息通知 → 系统通知（Webhook / 群机器人）」填分组编号。'}</div>
       </div>
       <div style="padding:12px 20px;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:8px;background:var(--bg);">
         <button class="btn" onclick="document.getElementById('bind-modal').classList.remove('show')">取消</button>
@@ -10479,6 +10489,11 @@ function renderEnvCards() {
               <span class="env-cat-dot" style="background:${groupDot(g)};"></span>
               <span>${g.label}</span>
             </div>`).join('')}
+          ${c.key === 'msg' ? `
+            <div class="env-sub-item" onclick="goto('adm-sms-channels')" title="按手机号区号路由短信凭证（并入消息通知）">
+              <span class="env-cat-icon" style="font-size:12px;">📱</span>
+              <span>短信区号通道</span>
+            </div>` : ''}
         </div>
       </div>`;
     }).join('');

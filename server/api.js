@@ -5433,9 +5433,13 @@ router.put('/user/app-folders/assign', requireAuth, (req, res) => {
 router.get('/admin/logs', requireAdmin(3), (req, res) => { res.json({ success: true, logs: logs.findAll.all() }); });
 
 router.get('/admin/api-keys', requireAdmin(1), (req, res) => { res.json({ success: true, keys: apiKeys.findAll.all() }); });
-router.post('/admin/api-keys', requireAdmin(1), (req, res) => {
+router.post('/admin/api-keys', requireAdmin(2), (req, res) => {
   const { name, scopes = [], key_type = 'live', trusted_ips = '' } = req.body;
   if (!name) return res.status(400).json({ error: '密钥名称必填' });
+  // v3.5.75.2：删除实名（users:kyc）是特殊高危权限——A2（运营管理员）创建的密钥不能直接授予，需 A1 创建/批准
+  if (Array.isArray(scopes) && scopes.includes('users:kyc') && (req.user.adminLevel || 9) > 1) {
+    return res.status(403).json({ error: '删除实名（users:kyc）属于特殊权限，需要超级管理员（A1）创建该密钥' });
+  }
 
   const prefix = key_type === 'test' ? 'sk_test_' : 'sk_live_';
   const token  = prefix + crypto.randomBytes(20).toString('hex');

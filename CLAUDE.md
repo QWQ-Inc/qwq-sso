@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.75.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.75.2**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.75.2 合并记录折叠 + 额外凭证按组织过滤 + API 文档外链 + 删除实名权限（用户反馈）
+
+四级补丁（一批小改 + 权限收紧）。用户一次提了多件，本版做明确的小件，大件（组织管理员管理端、数据备份多端点/多租户分域）单列后续：
+
+- **合并记录折叠**：账号详情「合并记录」（`renderUserMerges`）改为 `<details>` 默认折叠；「注销与删除 → 账号合并记录」卡改为可折叠 `<details open>`。
+- **额外凭证按组织过滤**：`loadOauthSubjects` 里 `_oauthSubjects` 按 `_curAdminOrg()` 过滤（聚焦组织只显示该组织主体）；`onAdminOrgChange`/`clearAdminOrg` 加 `loadOauthSubjects()`。
+- **API 文档外链**：`api-tab-docs` 顶部加 GitHub `API-docs.md` 外链。
+- **删除实名权限**：`POST /admin/api-keys` 从 `requireAdmin(1)` 放宽到 `requireAdmin(2)`（A2 也能建 key），但 scopes 含 `users:kyc` 且非 A1 → 403（需 A1 创建/批准）。
+- **系统配置改名 + 短信区号通道并入消息通知**：菜单/标题「环境变量」→「系统配置」；`renderEnvCards` 侧边栏「消息通知」分类下加「短信区号通道」子项（跳 `adm-sms-channels`）+ 顶部入口按钮。
+
+⚠️ 未做（后续单列）：① 组织管理员管理端（完整菜单限本组织，权限模型大改）；② 系统配置子菜单重组织把「数据备份 / 域名验证」并入；③ 数据备份「多端点互同步」「每组织独立域名多租户」（架构级，多节点独立库+互同步、多租户分域）。
 
 ## v3.5.75.1 成员列表手动改部门时清除待分配/挂起（用户反馈）
 
