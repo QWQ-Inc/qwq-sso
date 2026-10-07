@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.81**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.81.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,25 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.81.1 企业微信联系方式：读取 Secret 填反自动纠正 + 诊断按钮（用户反馈）
+
+四级补丁（承接 v3.5.80.1，用户：「企业微信问题仍没有解决」）。v3.5.80.1 让 user/list 剥空时用 user/get 补全——但如果**读取用 Secret 本身就无权读通讯录详情**（48009），user/get 同样被拒，补全那条路根本到不了。本版从「选对 Secret」和「看清卡点」两头解决，不再盲改。
+
+### ① 读取 Secret 自动纠正（dirsync-wecom.js `resolveReadToken`）
+- 很常见的真实原因：把**「自建应用」Secret 填到了「管理用 Secret（write_secret）」栏**、把受限的**「通讯录同步」Secret 填到了「读取 Secret（secret）」栏** → 读取恒 48009、永远只拿到 UserId、联系方式全空。
+- `fetchDirectory` 现在先 `resolveReadToken(cfg, root)`：用 `secret` 探根部门，若 48009 且 `write_secret` 存在且不同，就改用 `write_secret` 再探一次；哪个能读通讯录详情就用哪个 token 拉成员。**自动纠正填反**，无需用户改配置即可拿到联系方式（诊断里仍会提示把两栏填对）。只在主 Secret 受限时才触发，不影响正常配置。
+
+### ② 诊断按钮（dirsync-wecom.js `diagnose` + api.js + dashboard.html）
+- 企业微信同步源行加「诊断」按钮（仅 wecom）→ `POST /admin/dir-sources/:id/diagnose`（`dirSourceFor` 守卫，只读不改，**只回布尔/计数，不回联系方式明文**）→ `drv.diagnose(cfg)` 逐步探：gettoken → 读部门（判 48009）→（受限则试管理用 Secret）→ user/list 批量（多少人带联系方式）→ 抽一个成员 user/get（手机/个人邮箱/企业邮箱 有/无）→ 给出**结论**：
+  - 两个 Secret 填反 → 自动用管理用读到 + 提示填对；
+  - 能读成员但手机/邮箱全空 → **企业微信后台没开字段读取权限**（指引：应用管理 → 自建应用 → 通讯录 → 可调整权限/成员详情 勾选 手机/邮箱/企业邮箱 + 成员在可见范围 + 企业已开企业邮箱）；
+  - 读取 Secret 48009 且无管理用 Secret → 读取请改用「自建应用」Secret（+ 可见范围 + 可信 IP）。
+- 前端 `diagnoseDirSource` → `uiAlert` 多行报告（`.ui-dlg-msg` 本就 `white-space:pre-wrap` + 可滚）。
+
+### 测试
+- `scratchpad/wecom-diagnose-test.js` 6 项全过（填反自动切换、两 Secret 都受限不切换、诊断四类结论：填反/字段没开/正常/读取无权）；`wecom-contacts-fetch-test.js` 8 项回归全过。
+- ⚠️ 真实企业微信未联调（本机无企业微信企业）；逻辑靠决策单测覆盖。诊断按钮就是为真实环境准备——用户点一次即知卡在哪一步，不用再来回猜。
 
 ## v3.5.81 iOS 人员管理（按组织 + 第三方同步源部门树）（用户反馈）
 

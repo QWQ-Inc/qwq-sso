@@ -6661,6 +6661,7 @@ function dirSourceRowsHtml(sid, sources, indent) {
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" title="连成员被单独改过的登录绑定 / 组织密码也改回本同步源的默认值" onclick="forceRunDirSource('${x.id}','${esc(sid)}')">全部覆盖…</button>` : ''}
     <button class="btn" style="${_rowBtn}" onclick="toggleDirSource('${x.id}','${esc(sid)}',${!x.enabled})">${x.enabled ? '停用' : '启用'}</button>
     <button class="btn" style="${_rowBtn}" onclick="openDirSourceDept('${esc(sid)}','${x.id}')">选部门</button>
+    ${x.type === 'wecom' ? `<button class="btn" style="${_rowBtn}" title="一步步探企业微信，看手机/邮箱为什么拉不回来" onclick="diagnoseDirSource('${x.id}','${esc(sid)}')">诊断</button>` : ''}
     <button class="btn" style="${_rowBtn}" onclick="openDirSourceModal('${esc(sid)}','${x.id}')">编辑</button>
     <button class="btn" style="${_rowDanger}" onclick="delDirSource('${x.id}','${esc(sid)}')">删除</button>
   </div>`).join('');
@@ -7045,6 +7046,16 @@ async function runDirSource(id, sid, force) {
   refreshDirSourceViews(sid);
   const modal = document.getElementById('orgmem-modal');
   if (modal && modal.classList.contains('show') && _orgMemSid === sid) loadOrgMembers();
+}
+// 诊断（v3.5.81.1）：探企业微信看手机/邮箱卡在哪，逐步报告
+async function diagnoseDirSource(id, sid) {
+  showToast('诊断中…');
+  const { ok, data } = await api('POST', '/admin/dir-sources/' + id + '/diagnose', {});
+  if (!ok) { await uiAlert('诊断失败：' + (data.error || '')); return; }
+  const r = data.report || {};
+  const lines = (r.steps || []).map(s => `${s.ok ? '✅' : '❌'} ${s.step}\n    ${s.detail}`).join('\n\n');
+  const concl = r.conclusion ? `\n\n——结论——\n${r.conclusion}` : '';
+  await uiAlert('企业微信通讯录诊断\n\n' + (lines || '（无结果）') + concl, { title: '诊断报告' });
 }
 // 全部覆盖同步：强确认（原样输入口令），连被单独改过的登录绑定 / 组织密码也改回同步源默认值
 async function forceRunDirSource(id, sid) {

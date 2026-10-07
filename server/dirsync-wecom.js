@@ -213,10 +213,29 @@ async function fetchScopeTree(cfg) {
 /** 成员是否带回了任何联系方式（手机 / 个人邮箱 / 企业邮箱） */
 const hasContactFields = (m) => !!(m && (m.mobile || m.email || m.biz_mail));
 
+/**
+ * 选一个「能读通讯录详情」的 access_token：先用读取 Secret（cfg.secret），若对根部门就 48009 受限，
+ * 而「管理用 Secret」（write_secret）存在且不同，就改用它探一次——很多人把「自建应用」Secret 填到了
+ * 管理用那一栏、把受限的「通讯录同步」Secret 填到了读取栏，这里自动纠正。返回能读到详情的那个 token。
+ */
+async function resolveReadToken(cfg, root) {
+  let access_token = await token(cfg);
+  let limited;
+  try { limited = (await deptList(access_token, root)).limited; }
+  catch (e) { if (e.errcode === FORBIDDEN) limited = true; else return { access_token, probed: false }; }
+  if (limited && cfg.write_secret && cfg.write_secret !== cfg.secret) {
+    try {
+      const alt = await token({ ...cfg, secret: cfg.write_secret });
+      if (!(await deptList(alt, root)).limited) return { access_token: alt, probed: true, limited: false, swapped: true };
+    } catch (_) {}
+  }
+  return { access_token, probed: true, limited };
+}
+
 /** 从企业微信拉取：所选各部门（含子部门）的成员，合并去重。limited=true 表示只拿到了 ID（通讯录同步 Secret 受限） */
 async function fetchDirectory(cfg) {
-  const access_token = await token(cfg);
   const roots = deptIdsOf(cfg);
+  const { access_token } = await resolveReadToken(cfg, roots[0]);
   const deptName = new Map();
   const deptTree = [];   // v3.5.68：含父子关系的部门节点，供自动建 org_departments
   const inScope = new Set();
@@ -283,6 +302,67 @@ async function fetchDirectory(cfg) {
   const byId = new Map();
   for (const m of members) if (m && m.userid && !byId.has(m.userid)) byId.set(m.userid, m);
   return { members: [...byId.values()], deptName, deptTree, limited };
+}
+
+/**
+ * 诊断：一步步探企业微信，看手机 / 邮箱 / 企业邮箱到底卡在哪一步。只回布尔 / 计数，不下发联系方式明文。
+ * 给管理端「诊断」按钮用——不改任何数据。
+ */
+async function diagnose(cfg) {
+  const out = { steps: [], fields: null, conclusion: '' };
+  const log = (step, ok, detail) => out.steps.push({ step, ok, detail });
+  const roots = deptIdsOf(cfg);
+  // 1) 读取 Secret 换 token
+  let access_token, usedWriteSecret = false;
+  try { access_token = await token(cfg); log('用「读取 Secret」换 access_token', true, '成功'); }
+  catch (e) {
+    log('用「读取 Secret」换 access_token', false, e.message);
+    out.conclusion = '读取用 Secret 连 access_token 都拿不到：核对企业 ID（corpid）和这一栏填的 Secret。';
+    return out;
+  }
+  // 2) 读部门（判断是不是受限 Secret）
+  let deptOk = false;
+  try { const r = await deptList(access_token, roots[0]); deptOk = !r.limited; log('读取通讯录详情权限', !r.limited, r.limited ? '48009 受限：这个 Secret 无权读通讯录详情（多半是「通讯录同步」Secret）——读取请改用「自建应用」Secret' : `正常，拿到 ${r.depts.length} 个部门`); }
+  catch (e) { log('读取通讯录详情权限', false, e.message); }
+  // 2b) 受限时，试试「管理用 Secret」能不能读（判断是否把两个 Secret 填反了）
+  if (!deptOk && cfg.write_secret && cfg.write_secret !== cfg.secret) {
+    try {
+      const alt = await token({ ...cfg, secret: cfg.write_secret });
+      const r2 = await deptList(alt, roots[0]);
+      if (!r2.limited) { access_token = alt; deptOk = true; usedWriteSecret = true; log('改用「管理用 Secret」读通讯录', true, '它反而能读——你把两个 Secret 填反了！系统本次已自动用它，但建议把这个填到「读取 Secret」栏'); }
+      else log('改用「管理用 Secret」读通讯录', false, '也受限（两个 Secret 都无权读详情）');
+    } catch (e) { log('改用「管理用 Secret」读通讯录', false, e.message); }
+  }
+  // 3) 取一个成员，看 user/get 回不回手机 / 邮箱
+  let sampleId = null, sampleName = '';
+  try {
+    const j = await call('GET', '/cgi-bin/user/list', { access_token, department_id: roots[0], fetch_child: 1 });
+    const list = j.userlist || [];
+    const withContact = list.filter(hasContactFields).length;
+    if (list[0]) { sampleId = list[0].userid; sampleName = list[0].name || ''; }
+    log('user/list 批量读成员', true, `${list.length} 人，其中自带手机/邮箱的 ${withContact} 人` + (list.length && !withContact ? '（企业微信把联系方式字段剥掉了，会逐个 user/get 补全）' : ''));
+  } catch (e) {
+    log('user/list 批量读成员', false, e.message + '（会回退 user/list_id + user/get）');
+    try { const j = await call('POST', '/cgi-bin/user/list_id', { access_token }, { cursor: '', limit: 100 }); const du = (j.dept_user || [])[0]; if (du) sampleId = du.userid; } catch (_) {}
+  }
+  if (sampleId) {
+    try {
+      const u = await call('GET', '/cgi-bin/user/get', { access_token, userid: sampleId });
+      out.fields = { mobile: !!u.mobile, email: !!u.email, biz_mail: !!u.biz_mail };
+      log('user/get 读单个成员详情', true, `成员「${u.name || sampleName || sampleId}」→ 手机:${u.mobile ? '有' : '无'}、个人邮箱:${u.email ? '有' : '无'}、企业邮箱:${u.biz_mail ? '有' : '无'}`);
+    } catch (e) { log('user/get 读单个成员详情', false, e.message); }
+  } else {
+    log('user/get 读单个成员详情', false, '没取到任何成员 UserId，无法抽样');
+  }
+  // 结论
+  if (out.fields && !out.fields.mobile && !out.fields.email && !out.fields.biz_mail) {
+    out.conclusion = '企业微信能返回成员，但手机/邮箱/企业邮箱全部为空 → 这是企业微信后台的「字段读取权限」没开：到 企业微信管理后台 → 应用管理 → 这个自建应用 → 通讯录 →「可调整的权限 / 成员详情」里勾上 手机号、邮箱、企业邮箱，并确认要同步的成员在该应用「可见范围」内（企业邮箱还需企业已开通企业邮箱）。改好后回来「立即同步」。若无法开放，改用「批量导入」补联系方式。';
+  } else if (out.fields) {
+    out.conclusion = '企业微信能返回联系方式，同步会写入 user_contacts。' + (usedWriteSecret ? '（注意：本次是靠「管理用 Secret」读到的，请把两个 Secret 填到正确的栏位）' : '若页面上仍为空，点一次「立即同步」再看成员详情。');
+  } else if (!deptOk) {
+    out.conclusion = '当前「读取 Secret」无权读通讯录详情。企业微信自 2022 起「通讯录同步」Secret 在新服务器 IP 上会被限制（48009）——读取请填「自建应用」的 Secret（该自建应用需在「可见范围」里包含要同步的部门，并把本服务器出口 IP 加进它的可信 IP）。';
+  }
+  return out;
 }
 
 /** 这家企业微信在本系统的「登录凭证」provider key（同 corp），用于绑定 UserId；没配企业微信登录则返回 null */
@@ -635,4 +715,4 @@ async function moveMemberDept(cfg, userid, deptId) {
   await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), department: [parseInt(deptId, 10)] });
 }
 
-module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, createMember, upsertMember, moveMemberDept, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, createMember, upsertMember, moveMemberDept, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, diagnose, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

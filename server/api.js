@@ -2850,6 +2850,16 @@ router.post('/admin/dir-sources/:id/run', requireAuth, async (req, res) => {
   try { res.json({ success: true, state: await runDirSource(src, actorOf(req), { force }) }); }
   catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
+// 诊断（v3.5.81.1）：一步步探企业微信，看手机 / 邮箱 / 企业邮箱卡在哪——只读不改，只回布尔/计数不回明文
+router.post('/admin/dir-sources/:id/diagnose', requireAuth, async (req, res) => {
+  const src = dirSourceFor(req, res); if (!src) return;
+  const drv = dirsync.driver(src.type);
+  if (!drv || !drv.diagnose) return res.status(400).json({ error: '该类型同步源暂不支持诊断' });
+  const cfg = drv.effectiveCfg(src);
+  if (!cfg || !cfg.corp_id || !cfg.secret) return res.status(400).json({ error: '同步源配置不完整（企业 ID / Secret）' });
+  try { res.json({ success: true, report: await drv.diagnose(cfg) }); }
+  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
 // ── 文件夹资源（v3.5.47）：通讯录连接 + 共用登录凭证，文件夹里的组织套用 ──
 // 只有系统管理员能管（文件夹的 Secret 看得到整个企业）。组织管理员能看到 / 启停 / 立即同步自己组织的「套用」。
 function folderConnFor(req, res) {
