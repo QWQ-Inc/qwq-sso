@@ -629,6 +629,11 @@ function _devApi(method, path, body) {
   if (dpp && method === 'DELETE') { db._orgDepts[dpp[1]]=(db._orgDepts[dpp[1]]||[]).filter(x=>x.id!==dpp[2]); return ok({ success:true }); }
   let mm = path.match(/^\/admin\/orgs\/([^/]+)\/members$/);
   if (mm && method === 'GET') { const s=(db._oauthSubjects||[]).find(x=>x.id===mm[1])||{}; const r=db._orgUidRule[mm[1]]||{}; return ok({ success:true, org:{ id:mm[1], name:s.name, uid_prefix:r.prefix||'', uid_len:r.len||4, members_open:!!s.members_open }, members: db._orgMembers[mm[1]]||[] }); }
+  // 待分配成员（演示模式）
+  let pnd = path.match(/^\/admin\/orgs\/([^/]+)\/pending-members$/);
+  if (pnd && method === 'GET') return ok({ success:true, members: (db._orgMembers[pnd[1]]||[]).filter(m => m.pending === 1) });
+  let pndAct = path.match(/^\/admin\/orgs\/([^/]+)\/pending-members\/([^/]+)\/(assign|suspend)$/);
+  if (pndAct && method === 'POST') { const m = (db._orgMembers[pndAct[1]]||[]).find(x => x.user_id === pndAct[2]); if (m) { if (pndAct[3] === 'assign') { m.pending = 0; m.dept_id = body.dept_id; m.dept_name = deptNameOf(pndAct[1], body.dept_id); } else { m.pending = 2; } } return ok({ success:true, push_results: pndAct[3]==='assign' ? [{ source_id:'s1', label:'企业微信', ok:true }] : null }); }
   let msh = path.split('?')[0].match(/^\/admin\/orgs\/([^/]+)\/shareable$/);
   if (msh && method === 'GET') return ok({ success:true, data:[{ uid:'#01008', name:'周可复用', email:'z**@corp.com', phone:'138****8899', from_orgs:'B集团,示例集团' }] });
   if (mm && method === 'POST') { const sid=mm[1]; db._orgMembers[sid]=db._orgMembers[sid]||[]; const r=db._orgUidRule[sid]||{prefix:'',len:4,seq:0}; let uid=body.org_uid||null; if(!uid&&(r.prefix||body.auto_uid)){ r.seq=(r.seq||0)+1; uid=(r.prefix||'')+String(r.seq).padStart(r.len||4,'0'); db._orgUidRule[sid]=r; } const nm=body.create?(body.name||body.email||body.phone):body.account; const did=body.dept_id||null; db._orgMembers[sid].push({ user_id:'dev'+Date.now(), name:nm, uid_seq:Math.floor(Math.random()*9000)+1000, org_uid:uid, dept_id:did, dept_name:did?deptNameOf(sid,did):'', has_pw:body.create&&body.password?1:0 }); const push_results = body.push ? [{ source_id:'s1', label:'企业微信', ok:true, ext_id:'u_'+Date.now().toString(36) }] : null; return ok({ success:true, org_uid:uid, push_results }); }
@@ -3163,6 +3168,11 @@ async function loadMe() {
     <div id="orgmem-merge" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-creds" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--ac);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;">加载中…</div>
+    <details id="orgmem-pending" style="margin-top:10px;font-size:12px;border:1px solid #E8C26A;border-radius:6px;padding:8px 10px;" ontoggle="if(this.open)loadPendingMembers()">
+      <summary style="cursor:pointer;color:#8a6d3b;">⏳ 待分配成员</summary>
+      <div style="font-size:11px;color:var(--txd);margin:6px 0;">这些成员在同步源的「待分配部门」里，还没分到实际部门。给每个成员选部门后「分配」（会同步回飞书/企微），或「挂起」暂不处理。</div>
+      <div id="orgmem-pending-list" style="max-height:24vh;overflow:auto;"></div>
+    </details>
     <details style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadOrgMembers()">
       <summary style="cursor:pointer;color:var(--txm);">🏢 部门（树状）</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">组织下的树状部门。通讯录同步（企微/飞书）会自动建部门并把成员归进去；也可手动建顶级部门。成员可在上方成员行的「部门」下拉里改归属。</div>
@@ -6664,6 +6674,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
     </div>
     <div id="dsm-tree" style="display:none;max-height:200px;overflow:auto;border:1px solid var(--bd);border-radius:4px;margin-top:6px;padding:6px 8px;font-size:13px;"></div>
     <div style="display:flex;gap:6px;margin-top:6px;font-size:12px;color:var(--txd);align-items:center;">或手动加部门 ID：<input id="dsm-dept-add" type="number" min="1" style="width:90px;padding:3px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><button class="btn" id="dsm-dept-addbtn" style="font-size:12px;padding:3px 10px;">添加</button></div>
+    <div style="margin-top:8px;">${lab('待分配部门 ID（可选）：成员在这个部门 → 标记「待分配」，不自动分实际部门，到成员列表里分配或挂起')}<input id="dsm-pending" placeholder="留空 = 不启用待分配" style="${inp}" value="${esc(c.pending_dept_id || '')}"></div>
 
     <div style="display:flex;gap:10px;">
       <div style="flex:1;">${lab('自动同步')}<select id="dsm-interval" style="${inp}">${[[0,'只手动'],[1,'每 1 小时'],[6,'每 6 小时'],[24,'每天']].map(([v,t]) => `<option value="${v}" ${Number(c.interval_hours||0)===v?'selected':''}>${t}</option>`).join('')}</select></div>
@@ -6764,6 +6775,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
       corp_id: $('#dsm-corp').value.trim(), secret: $('#dsm-secret').value.trim(), write_secret: $('#dsm-wsecret').value.trim(), clear_write_secret: !!$('#dsm-wsecret-clear')?.checked,
       dept_ids: dept_ids.length ? dept_ids : [1], dept_names, interval_hours: parseInt($('#dsm-interval').value, 10) || 0,
       schedule_times: String($('#dsm-schedule')?.value || '').split(',').map(x => x.trim()).filter(x => /^([01]\d|2[0-3]):[0-5]\d$/.test(x)),
+      pending_dept_id: $('#dsm-pending').value.trim(),
       uid_mode: $('#dsm-uid').value, remove_missing: $('#dsm-remove').checked, idonly_create: $('#dsm-idonly').checked, push_suspend: $('#dsm-suspend').checked, enabled: $('#dsm-enabled').checked,
       bind_mode: $('#dsm-bindmode').value, bind_providers: [...ov.querySelectorAll('.dsm-bindcb:checked')].map(x => x.value),
     };
@@ -6831,6 +6843,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
       <div style="flex:1;">${lab('组织内 UID')}<select id="fsm-uid" style="${inp}">${[['userid','用飞书工号（没有则用户 ID）'],['rule','按本组织 UID 规则生成'],['none','不设置']].map(([v,t]) => `<option value="${v}" ${c.uid_mode===v?'selected':''}>${t}</option>`).join('')}</select></div>
     </div>
     <div style="margin-top:8px;">${lab('每天固定时间点（可选，优先于上面的间隔）')}<input id="fsm-schedule" placeholder="留空=按上面的间隔；填如 03:00,15:00" style="${inp}" value="${esc((c.schedule_times || []).join(','))}"></div>
+    <div style="margin-top:8px;">${lab('待分配部门 ID（可选）：成员在这个部门 → 标记「待分配」，不自动分实际部门，到成员列表里分配或挂起')}<input id="fsm-pending" placeholder="留空 = 不启用待分配（填 open_department_id）" style="${inp}" value="${esc(c.pending_dept_id || '')}"></div>
     <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
       <div style="font-size:13px;font-weight:600;color:var(--txt);">同步回来的默认凭证</div>
       ${lab('飞书登录绑定（只能绑同一个 App ID 的登录凭证：飞书 open_id 每个应用一份）')}
@@ -6920,6 +6933,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
       corp_id: $('#fsm-app').value.trim(), secret: $('#fsm-secret').value.trim(),
       dept_ids: dept_ids.length ? dept_ids : ['0'], dept_names, interval_hours: parseInt($('#fsm-interval').value, 10) || 0,
       schedule_times: String($('#fsm-schedule')?.value || '').split(',').map(x => x.trim()).filter(x => /^([01]\d|2[0-3]):[0-5]\d$/.test(x)),
+      pending_dept_id: $('#fsm-pending').value.trim(),
       uid_mode: $('#fsm-uid').value, remove_missing: $('#fsm-remove').checked, push_suspend: $('#fsm-suspend').checked, enabled: $('#fsm-enabled').checked,
       bind_mode: $('#fsm-bindmode').value, bind_providers: [...bindSet],
       cb_token: $('#fsm-cb-token').value.trim(),
@@ -9359,6 +9373,40 @@ async function delDept(id, name) {
   if (ok) { showToast('已删除'); await loadOrgDepts(); renderOrgDepts(); loadOrgMembers(); }
   else showToast('删除失败：' + (data?.error || '未知错误'));
 }
+// ── 待分配成员（v3.5.75）：同步源「待分配部门」里的成员，等分配实际部门或挂起 ──
+async function loadPendingMembers() {
+  const box = document.getElementById('orgmem-pending-list');
+  if (!box) return;
+  const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/pending-members');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
+  const rows = data.members || [];
+  const sum = document.querySelector('#orgmem-pending summary');
+  if (sum) sum.textContent = `⏳ 待分配成员（${rows.length}）`;
+  box.innerHTML = rows.length ? rows.map(m => {
+    const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
+      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span></span>
+      <select id="pend-dept-${esc(m.user_id)}" style="max-width:150px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">${_deptOpts('')}</select>
+      <button class="btn primary" style="font-size:11px;padding:2px 7px;" onclick='assignPending(${JSON.stringify(m.user_id)})'>分配</button>
+      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='suspendPending(${JSON.stringify(m.user_id)},${JSON.stringify(m.name||"")})'>挂起</button>
+    </div>`;
+  }).join('') : '<div style="color:var(--txd);padding:6px 0;">没有待分配成员。</div>';
+}
+async function assignPending(userId) {
+  const deptId = document.getElementById('pend-dept-' + userId)?.value || '';
+  if (!deptId) { showToast('请先选要分配的部门'); return; }
+  const { ok, data } = await api('POST', `/admin/orgs/${_orgMemSid}/pending-members/${userId}/assign`, { dept_id: deptId });
+  if (!ok) { showToast('分配失败：' + (data?.error || '未知错误')); return; }
+  showToast('已分配' + _pushToast(data.push_results));
+  loadPendingMembers(); loadOrgMembers();
+}
+async function suspendPending(userId, name) {
+  if (!await uiConfirm(`挂起「${name}」？暂不分配，之后可在成员列表里重新处理。`)) return;
+  const { ok, data } = await api('POST', `/admin/orgs/${_orgMemSid}/pending-members/${userId}/suspend`);
+  if (ok) { showToast('已挂起'); loadPendingMembers(); loadOrgMembers(); }
+  else showToast('挂起失败：' + (data?.error || '未知错误'));
+}
+
 async function loadOrgMembers() {
   const box = document.getElementById('orgmem-list');
   box.innerHTML = '加载中…';
@@ -9377,10 +9425,11 @@ async function loadOrgMembers() {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
     const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
     const deptShow = m.dept_name ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">🏢 ${esc(m.dept_name)}</span>` : '';
+    const pendingBadge = m.pending === 1 ? '<span style="color:#8a6d3b;font-size:10px;margin-left:4px;">⏳ 待分配</span>' : (m.pending === 2 ? '<span style="color:var(--txd);font-size:10px;margin-left:4px;">挂起</span>' : '');
     const ext = (m.ext_ids || []).length ? `<br><span style="color:var(--txd);font-size:10px;">外部账号：${m.ext_ids.map(x => esc(x.id) + (x.source ? '（' + esc(x.source) + '）' : '')).join('、')}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
       <input type="checkbox" class="omsel" data-id="${esc(m.user_id)}" ${_orgMemSel.has(m.user_id) ? 'checked' : ''} onchange="toggleOrgMemSel(this)" title="勾选多个 → 合并为同一人">
-      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${deptShow}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
+      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${deptShow}${pendingBadge}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
       <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:110px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemUid(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存UID</button>
       <select id="omd-${esc(m.user_id)}" style="max-width:150px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">${_deptOpts(m.dept_id)}</select>

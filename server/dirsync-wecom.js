@@ -425,8 +425,16 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
       } else if (!existing.org_uid && uidMode === 'userid' && !orgMembers.orgUidTaken.get(subject.id, extId, user.id)) {
         orgMembers.setOrgUid.run(extId, subject.id, user.id);
       }
-      // v3.5.68：成员归部门（取第一个有对应 org_departments 的外部部门 id；只给非 idOnly 成员）
-      if (!m._idOnly && Array.isArray(m.department)) {
+      // v3.5.68：成员归部门；v3.5.75：成员在「待分配部门」→ 标记待分配（不自动分实际部门）
+      const pendingDept = cfg.pending_dept_id ? String(cfg.pending_dept_id) : '';
+      const inPending = pendingDept && !m._idOnly && Array.isArray(m.department) && m.department.some(d => String(d) === pendingDept);
+      const wasSuspended = existing && existing.pending === 2;
+      if (wasSuspended) {
+        // 挂起的成员：同步不自动改状态，保持挂起，等管理员手动分配
+      } else if (inPending) {
+        orgMembers.setPending.run(1, subject.id, user.id);
+      } else if (!m._idOnly && Array.isArray(m.department)) {
+        orgMembers.setPending.run(0, subject.id, user.id);
         for (const did of m.department) {
           const deptId = extToDeptId.get(String(did));
           if (deptId) { orgMembers.setDeptId.run(deptId, subject.id, user.id); break; }
@@ -600,4 +608,10 @@ async function upsertMember(cfg, f) {
   }
 }
 
-module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, createMember, upsertMember, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };
+// 把成员移动到指定部门（v3.5.75 待分配成员分配部门时用）：department 直接设为 [deptId]（替换，不是增补）
+async function moveMemberDept(cfg, userid, deptId) {
+  const access_token = await token(writeCfg(cfg));
+  await call('POST', '/cgi-bin/user/update', { access_token }, { userid: String(userid), department: [parseInt(deptId, 10)] });
+}
+
+module.exports = { writeCfg, corpScope, corpUsers, corpOfProvider, findCorpDuplicates, memberStatus, deleteMember, createMember, upsertMember, moveMemberDept, effectiveCfg, CONN_KEYS, setMemberEnabled, LIMITED_HINT, cbSignature, cbVerify, cbDecrypt, cbEncrypt, xmlField, renameExtId, syncWecom, fetchDirectory, fetchScopeTree, loginProviderFor, loginProviderChoices, bindProvidersFor, deptIdsOf, apiBase };

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74.4**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.75**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,31 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.75 通讯录同步「待分配成员」工作流（用户反馈）
+
+三级版本。用户：组织在某三方同步源有多级部门 + 一个「待分配」部门，期望「成员创建账号后先进待分配部门，再产生待办项让管理员分配实际部门或挂起」。确认：① 仅在「待分配部门」的成员进待分配；② 分配部门时同时出站同步回飞书/企微；③ 每同步源预设一个待分配部门 id。
+
+### 数据（db.js）
+- `org_members` 加 `pending`（0=正常，1=待分配，2=挂起）。`orgMemberStmts` 加 `setPending` / `pendingMembers`（pending=1 列表）；`listBySubject` 回带 `m.pending`。
+
+### 同步源配置（api.js dirSourceCfgFromBody）
+- config 加 `pending_dept_id`（待分配部门 id，企微=数字、飞书=open_department_id；空=不启用）。`dirSourceView` 经 `...pub` 自动回带。
+
+### 同步识别（dirsync-wecom.js / dirsync-feishu.js）
+- syncWecom/syncFeishu 成员归部门前：若 `cfg.pending_dept_id` 有值且成员的 department/department_ids 含它 → `pending=1`，不 setDeptId；否则 `pending=0` + 正常归部门。⚠️ **挂起（pending=2）的成员同步时不覆盖**（保持挂起，等管理员手动处理）。
+
+### 出站移动 + 接口（api.js + dirsync）
+- `dirsync-wecom/feishu` 加 `moveMemberDept(cfg, extId, deptId)`（企微 `user/update department=[deptId]`；飞书 `PATCH users/:id department_ids=[deptId]`，都是**替换**不是增补）。
+- 接口：`GET /admin/orgs/:sid/pending-members`（guardOrgWrite 读）、`POST .../pending-members/:uid/assign {dept_id}`（dept_id 校验本组织 → setDeptId + pending=0 → 遍历该组织启用同步源，目标部门有同类型 ext_id 时 `moveMemberDept`，返回 push_results）、`POST .../pending-members/:uid/suspend`（pending=2）。
+
+### 前端（dashboard.html）
+- 企微/飞书同步源弹窗各加「待分配部门 ID」输入（`dsm-pending`/`fsm-pending`），保存提交 `pending_dept_id`。
+- 组织成员弹窗成员列表下方加「⏳ 待分配成员」折叠区（`orgmem-pending`，ontoggle 调 `loadPendingMembers`）：每行部门下拉（`_deptOpts`）+「分配」`assignPending` /「挂起」`suspendPending`（uiConfirm）；成员列表行加待分配/挂起徽章。
+
+### 测试
+- dev 浏览器实测：成员列表「⏳ 待分配」徽章、待分配折叠区（1）→ 分配后 pending=0 + dept 更新、挂起后 pending=2。回归 8 套 91 项全过（feishu-create 12 / push-provision 10 / departments 14 / contacts 18 / dirsync-contacts 6 / phone-cc 13 / schedule 7 / limited-admin 11）。console 里 renderUserDeletionSection/renderUserSiblings 是既有 dev-mock 缺失，与本版无关。
+- ⚠️ 真实企微/飞书「移动成员部门」未联调（同既有约束）；moveMemberDept 是标准 user/update / PATCH users，靠逻辑审查。
 
 ## v3.5.74.4 同步源「选部门」入口 + 用户管理按组织过滤（用户反馈）
 

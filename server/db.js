@@ -380,6 +380,8 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_org_depts_subject ON org_departmen
 try { db.exec('DROP INDEX IF EXISTS idx_org_depts_ext'); } catch(_) {}
 try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_org_depts_ext ON org_departments(source_id, ext_id) WHERE ext_id IS NOT NULL'); } catch(_) {}
 try { db.exec('ALTER TABLE org_members ADD COLUMN dept_id TEXT'); } catch(_) {}
+// 待分配标记（v3.5.75）：0=正常，1=待分配（在同步源的「待分配部门」里，等人分配），2=挂起（暂不分配）
+try { db.exec('ALTER TABLE org_members ADD COLUMN pending INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // 组织内 org_uid 自动生成规则 + per-组织自增计数（挂在主体上）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_prefix TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN uid_len INTEGER NOT NULL DEFAULT 4'); } catch(_) {}
@@ -1227,13 +1229,18 @@ const oauthSubjectStmts = {
 
 // 组织成员（org=主体）
 const orgMemberStmts = {
-  listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept_id,
+  listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept_id, m.pending,
       d.name AS dept_name,
       (m.password_hash IS NOT NULL) AS has_pw,
       u.name, u.email, u.uid_seq, u.uid_code
     FROM org_members m JOIN users u ON m.user_id=u.id
     LEFT JOIN org_departments d ON d.id=m.dept_id
     WHERE m.subject_id=? AND u.is_public=0 ORDER BY m.created_at`),
+  pendingMembers: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept_id,
+      d.name AS dept_name, u.name, u.email, u.uid_seq, u.uid_code
+    FROM org_members m JOIN users u ON m.user_id=u.id
+    LEFT JOIN org_departments d ON d.id=m.dept_id
+    WHERE m.subject_id=? AND m.pending=1 AND u.is_public=0 ORDER BY m.created_at`),
   get:        db.prepare('SELECT * FROM org_members WHERE subject_id=? AND user_id=?'),
   add:        db.prepare('INSERT OR IGNORE INTO org_members (subject_id,user_id,org_uid,source) VALUES (?,?,?,?)'),
   remove:     db.prepare('DELETE FROM org_members WHERE subject_id=? AND user_id=?'),
@@ -1242,6 +1249,7 @@ const orgMemberStmts = {
   setOrgUid:  db.prepare('UPDATE org_members SET org_uid=? WHERE subject_id=? AND user_id=?'),
   setPassword: db.prepare('UPDATE org_members SET password_hash=? WHERE subject_id=? AND user_id=?'),  // v3.5.20 组织自有密码
   setDeptId:  db.prepare('UPDATE org_members SET dept_id=? WHERE subject_id=? AND user_id=?'),           // v3.5.68 成员归属部门
+  setPending: db.prepare('UPDATE org_members SET pending=? WHERE subject_id=? AND user_id=?'),             // v3.5.75 待分配标记
   deptOfUser: db.prepare('SELECT dept_id FROM org_members WHERE user_id=? AND dept_id IS NOT NULL'),      // 门禁 dept 判定用
   countBySubject: db.prepare('SELECT COUNT(*) n FROM org_members m JOIN users u ON m.user_id=u.id WHERE m.subject_id=? AND u.is_public=0'),
   orgUidTaken: db.prepare('SELECT 1 FROM org_members WHERE subject_id=? AND org_uid=? AND user_id<>?'),

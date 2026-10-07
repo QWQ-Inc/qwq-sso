@@ -1929,6 +1929,59 @@ router.post('/admin/orgs/:sid/members/:uid/push', requireAuth, async (req, res) 
   res.json({ success: true, push_results: results });
 });
 
+// ── 待分配成员（v3.5.75）：同步源把成员拉进「待分配部门」后标记 pending=1，等人分配实际部门或挂起 ──
+router.get('/admin/orgs/:sid/pending-members', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!guardOrgWrite(req, s.id, false)) return;
+  res.json({ success: true, members: orgMembers.pendingMembers.all(s.id) });
+});
+// 分配部门：给待分配成员指定实际部门（dept_id + pending=0），并出站把成员从「待分配部门」移到目标部门
+router.post('/admin/orgs/:sid/pending-members/:uid/assign', requireAuth, async (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!guardOrgWrite(req, s.id)) return;
+  const target = findRealUserByUid(req.params.uid);
+  const mem = target && orgMembers.get.get(s.id, target.id);
+  if (!target || !mem) return res.status(404).json({ error: '成员不存在' });
+  if (mem.pending !== 1) return res.status(400).json({ error: '该成员不在待分配状态' });
+  const deptId = String(req.body?.dept_id || '').trim();
+  const dp = deptId ? departments.get.get(deptId) : null;
+  if (!dp || dp.subject_id !== s.id) return res.status(400).json({ error: '部门不存在或不属于本组织' });
+  orgMembers.setDeptId.run(deptId, s.id, target.id);
+  orgMembers.setPending.run(0, s.id, target.id);
+  // 出站移动：把成员从「待分配部门」移到目标部门（目标部门要有对应同步源类型的 ext_id）
+  const push_results = [];
+  let rows = [];
+  try { rows = dirSources.bySubject.all(s.id).filter(x => x.enabled); } catch (_) {}
+  for (const src of rows) {
+    const drv = require('./dirsync').driver(src.type);
+    if (!drv || !drv.moveMemberDept) continue;
+    if (!dp.ext_id || dp.source !== src.type) continue;   // 手动部门无外部 id、或部门类型不匹配则不出站移动
+    const link = db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND user_id=?').get(src.id, target.id);
+    if (!link) continue;
+    try {
+      await drv.moveMemberDept(drv.effectiveCfg(src), link.ext_id, dp.ext_id);
+      push_results.push({ source_id: src.id, label: src.label || drv.label, ok: true });
+    } catch (e) {
+      push_results.push({ source_id: src.id, label: src.label || drv.label, ok: false, error: String(e.message || e).slice(0, 200) });
+    }
+  }
+  res.json({ success: true, push_results });
+});
+// 挂起：暂不分配（pending=2），从待分配列表移除，之后可在成员列表里重新处理
+router.post('/admin/orgs/:sid/pending-members/:uid/suspend', requireAuth, (req, res) => {
+  const s = oauthSubjects.get.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: '组织不存在' });
+  if (!guardOrgWrite(req, s.id)) return;
+  const target = findRealUserByUid(req.params.uid);
+  const mem = target && orgMembers.get.get(s.id, target.id);
+  if (!target || !mem) return res.status(404).json({ error: '成员不存在' });
+  if (mem.pending !== 1) return res.status(400).json({ error: '该成员不在待分配状态' });
+  orgMembers.setPending.run(2, s.id, target.id);
+  res.json({ success: true });
+});
+
 // ── 组织树状部门（v3.5.68）──────────────────────────────
 // 每组织一套部门树；canManageOrg 同成员接口。手动部门 source=manual、ext_id 空；通讯录同步建的 source=wecom|feishu。
 function deptIsDescendant(deptId, ancestorId) {
@@ -2586,6 +2639,8 @@ function dirSourceCfgFromBody(b, old, type = 'wecom') {
     schedule_times: b.schedule_times !== undefined
       ? (Array.isArray(b.schedule_times) ? b.schedule_times : []).map(t => String(t).trim()).filter(t => /^([01]\d|2[0-3]):[0-5]\d$/.test(t)).slice(0, 24)
       : (old.schedule_times || []),
+    // v3.5.75：待分配部门 id（成员在这个部门 → 标记「待分配」，等人分配实际部门；空=不启用）
+    pending_dept_id: b.pending_dept_id !== undefined ? String(b.pending_dept_id || '').trim().slice(0, 64) : (old.pending_dept_id || ''),
   } };
 }
 async function runDirSource(src, actor, opts = {}) {
