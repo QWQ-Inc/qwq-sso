@@ -1898,6 +1898,7 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
       if (!dp || dp.subject_id !== s.id) return res.status(400).json({ error: '部门不存在或不属于本组织' });
     }
     orgMembers.setDeptId.run(deptId, s.id, target.id);   // v3.5.68 成员归属部门
+    orgMembers.setPending.run(0, s.id, target.id);       // v3.5.75 手动改部门 = 完成分配，清除待分配/挂起
   }
   res.json({ success: true });
 });
