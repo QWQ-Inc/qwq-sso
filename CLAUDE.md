@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.77**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.77.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -460,6 +460,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 ### ⚠️ 说明
 - 应用市场/授权本就按「用户所属组织」过滤，orgSite 不需要额外干预。
 - 多端点互同步（多节点独立库 + 互同步）按用户决定**不做**，靠 R2 备份兜底。
+
+## v3.5.77.1 企业微信登录二维码改为网页登录跳转（用户反馈）
+
+四级补丁（修 bug）。用户：企业微信登录的二维码调不出来。
+
+- 🐛 根因：电脑端企业微信登录用旧的内嵌 `WWLogin` JS-SDK（`wwcdn.weixin.net.cn/node/wework/wwopen/js/libs/wwLogin-1.2.7.js`），该 CDN / SDK 已失效，二维码永远不显示。
+- 修：`login.html` 的 `selectMethod` 里企业微信分支不再 `renderWecomQR`，改为直接 `window.location.href = methodAuthUrl(m)` 跳 `/auth/wecom`；后端 `oauth.js` 的 `/auth/wecom` 对非企业微信 UA 本就会跳企业微信「网页登录」（`login.work.weixin.qq.com/wwlogin/sso/login?login_type=CorpApp...`，自带扫码 / 一键登录），无需改后端。
+- ⚠️ 企业微信「网页登录」依赖企业微信后台开通「网页登录」并配置可信域名（redirect_uri 所在域名）；未开通会在企业微信侧报错，与本系统无关。企业微信内 / 手机端的应用内授权（`open.weixin.qq.com` 静默授权）不受影响，行为不变。
+- `renderWecomQR` 函数保留未删（现为死代码，无害，便于将来若恢复内嵌 SDK 时复用）。
 
 ## v3.5.76 组织管理员进管理端（完整菜单限本组织）+ 系统配置子菜单重组织（用户反馈）
 

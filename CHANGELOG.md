@@ -4,6 +4,10 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.77.1 — 企业微信登录二维码改为网页登录跳转（用户反馈）
+
+- 电脑端企业微信登录的二维码调不出来——根因是旧的内嵌 `WWLogin` JS-SDK（`wwcdn.weixin.net.cn`）已失效。改为点「企业微信」直接跳 `/auth/wecom`，后端跳企业微信「网页登录」（`login.work.weixin.qq.com/wwlogin/sso/login`，自带扫码 / 一键登录）。企业微信内 / 手机端的应用内授权行为不变。
+
 ## v3.5.77 — 按组织分站点（多租户分域）（用户反馈）
 
 - 每个组织可在「组织管理」里设一个「独立站点域名」（`oauth_subjects.domain`）；系统配置加 `MULTITENANT_BASE_DOMAIN`（多租户主域名），`<组织码>.主域名` 自动指向对应组织（子域通配）。两者都支持。

@@ -1455,7 +1455,11 @@
 
     const qr = m.qr || {};
     if (key === 'wechat') renderWechatQR(qr);
-    else if (key === 'wecom') renderWecomQR(qr);
+    else if (key === 'wecom') {
+      // v3.5.77.1：企业微信 WWLogin JS-SDK（wwcdn.weixin.net.cn）已失效，电脑端不再内嵌二维码，
+      // 改为直接跳 /auth/wecom，后端会跳企业微信「网页登录」（login.work.weixin.qq.com，自带二维码）。
+      window.location.href = methodAuthUrl(m);
+    }
   }
 
   function refreshCurrentQR() {
