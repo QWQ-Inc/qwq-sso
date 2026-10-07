@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.79**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.80**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,26 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.80 管理端直接改成员联系方式（手机/邮箱/企业邮箱）（用户反馈）
+
+三级版本。用户：企业微信同步源回传的邮箱/企业邮箱/手机，管理端要能**直接改**（如企业邮箱 a@example.us → b@example.us），这些值也用于辨认疑似重复账号。
+
+- ⚠️ **「传不回来」是企业微信权限，不是代码 bug**：企业微信自建应用 / 通讯录同步 Secret 的手机/邮箱/企业邮箱读取要在企业微信后台单独开「敏感字段」权限并经管理员授权，否则 `user/get` 不返回这些字段（还可能 48009 降级成只拿 UserId）。代码侧 `importWecomContacts`（v3.5.64）早已在 syncWecom / 登录时把 mobile/email/biz_mail 灌进 `user_contacts`——**API 返回了就灌**。本版补的是「人工直接改」这条路（API 拿不到就手工填/改）。
+- 这些值喂疑似重复识别：`findSimilarUsers`（v3.5.65）本就从 `user_contacts` 取手机/邮箱做线索，改完即时生效。
+
+### 后端
+- `contacts.js` 加 `updateContact(userId, cid, value)`：保留原 kind、归一化、同用户同 kind 去重；若是主要联系方式则镜像回 `users.email/phone`（但该值已被别的账号用作登录主字段则不镜像，返回 `occupied`，避免登录标识冲突）。`contactStmts` 加 `updateValue`。
+- 新接口 `PATCH /admin/users/:id/contacts/:cid` 与 `PATCH /user/contacts/:cid`（都收 `{value}`）。
+- **4 个 admin 联系方式接口（GET/POST/PATCH/DELETE）改 `requireAdmin(2或3,{orgAdmin:true})` + `orgAdminMemberDenied`**——组织管理员也能管本组织成员的联系方式（承接 v3.5.78/79 的默认拒绝模型）。
+
+### 前端
+- 管理端用户详情「联系方式」每行加「编辑」（`admEditContact`，弹框改值 → PATCH；主字段镜像/占用都有 toast 提示）。
+- **用户端「我的组织」成员行加「联系方式」按钮** → `openOrgMemContacts` 弹窗（列手机/邮箱/企业邮箱，逐条 编辑/删除 + 添加）——组织管理员改本组织成员企业邮箱的主入口（例：把 a@example.us 改成 b@example.us）。
+- ⚠️ dev 浏览器实测：弹窗渲染（标题/添加/下拉/函数就位）、无新增报错；`node --check` 三文件通过。真实企业微信联调仍受权限限制（见上）。
+
+### 下一步（用户同批要求，单列）
+- **iOS 人员管理**：手机端按三方同步源（企业微信/飞书）的**部门树**浏览成员 + 管理。iOS 为 CI 云编译验证，单列下一版做。
 
 ## v3.5.79 组织管理员 scoped 写能力：停用/启用、重置密码、管理本组织门禁（用户反馈）
 

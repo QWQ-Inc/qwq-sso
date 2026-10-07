@@ -1630,6 +1630,7 @@ const contactStmts = {
   exists:     db.prepare('SELECT 1 FROM user_contacts WHERE user_id=? AND kind=? AND value=?'),
   getOne:     db.prepare('SELECT * FROM user_contacts WHERE id=? AND user_id=?'),
   insert:     db.prepare('INSERT OR IGNORE INTO user_contacts (id,user_id,kind,value,source,is_primary) VALUES (?,?,?,?,?,?)'),
+  updateValue:db.prepare('UPDATE user_contacts SET value=? WHERE id=? AND user_id=?'),
   remove:     db.prepare('DELETE FROM user_contacts WHERE id=? AND user_id=?'),
   removeByUser: db.prepare('DELETE FROM user_contacts WHERE user_id=?'),
   clearPrimary: db.prepare('UPDATE user_contacts SET is_primary=0 WHERE user_id=? AND kind=?'),

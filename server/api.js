@@ -1640,25 +1640,38 @@ router.delete('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
 function firstSubjectOfUser(userId) {
   try { const r = orgMembers.subjectIdsOfUser.all(userId); return (r[0] && r[0].subject_id) || null; } catch (_) { return null; }
 }
-const SKIP_MSG = { bad: '格式不正确', dup: '该联系方式已存在', limit: '已达到数量上限' };
+const SKIP_MSG = { bad: '格式不正确', dup: '该联系方式已存在', limit: '已达到数量上限', notfound: '联系方式不存在' };
 
 // 管理端：查看/增删某用户的联系方式
-router.get('/admin/users/:id/contacts', requireAdmin(3), (req, res) => {
+// 联系方式（v3.5.80 起组织管理员也能管本组织成员的，用于改企业邮箱 / 手机等同步回来的数据）
+router.get('/admin/users/:id/contacts', requireAdmin(3, { orgAdmin: true }), (req, res) => {
   const u = users.findById.get(req.params.id);
   if (!u) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, u); if (denied) return res.status(403).json({ error: denied });
   res.json({ success: true, data: contactUtil.listContacts(u.id) });
 });
-router.post('/admin/users/:id/contacts', requireAdmin(2), (req, res) => {
+router.post('/admin/users/:id/contacts', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const u = users.findById.get(req.params.id);
   if (!u) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, u); if (denied) return res.status(403).json({ error: denied });
   const { kind, value } = req.body || {};
   const r = contactUtil.addContact(u.id, kind, value, 'manual', firstSubjectOfUser(u.id));
   if (!r.ok) return res.status(400).json({ error: SKIP_MSG[r.skip] || '添加失败' });
   res.json({ success: true, id: r.id });
 });
-router.delete('/admin/users/:id/contacts/:cid', requireAdmin(2), (req, res) => {
+// 直接修改某条联系方式的值（如企业邮箱 a@→b@）。保留 kind，主要联系方式会镜像回登录主字段。
+router.patch('/admin/users/:id/contacts/:cid', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const u = users.findById.get(req.params.id);
   if (!u) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, u); if (denied) return res.status(403).json({ error: denied });
+  const r = contactUtil.updateContact(u.id, req.params.cid, (req.body || {}).value);
+  if (!r.ok) return res.status(400).json({ error: SKIP_MSG[r.skip] || '修改失败' });
+  res.json({ success: true, mirrored: r.mirrored, occupied: r.occupied });
+});
+router.delete('/admin/users/:id/contacts/:cid', requireAdmin(2, { orgAdmin: true }), (req, res) => {
+  const u = users.findById.get(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, u); if (denied) return res.status(403).json({ error: denied });
   contacts.remove.run(req.params.cid, u.id);
   res.json({ success: true });
 });
@@ -3528,6 +3541,11 @@ router.post('/user/contacts', requireAuth, noPublic, (req, res) => {
   const r = contactUtil.addContact(req.user.uid, kind, value, 'manual', firstSubjectOfUser(req.user.uid));
   if (!r.ok) return res.status(400).json({ error: SKIP_MSG[r.skip] || '添加失败' });
   res.json({ success: true, id: r.id });
+});
+router.patch('/user/contacts/:cid', requireAuth, noPublic, (req, res) => {
+  const r = contactUtil.updateContact(req.user.uid, req.params.cid, (req.body || {}).value);
+  if (!r.ok) return res.status(400).json({ error: SKIP_MSG[r.skip] || '修改失败' });
+  res.json({ success: true, mirrored: r.mirrored, occupied: r.occupied });
 });
 router.delete('/user/contacts/:cid', requireAuth, noPublic, (req, res) => {
   contacts.remove.run(req.params.cid, req.user.uid);

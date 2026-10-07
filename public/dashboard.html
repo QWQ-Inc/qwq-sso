@@ -5496,6 +5496,7 @@ async function renderUserContactsSection(u) {
       <span style="flex:1;color:var(--txt);">${esc(x.value)}</span>
       ${x.is_primary ? '<span class="badge ok" style="font-size:10px;">主要</span>' : ''}
       <span class="badge grey" style="font-size:10px;">${srcTag(x.source)}</span>
+      <button class="btn" style="font-size:10px;padding:1px 7px;" onclick="admEditContact('${u.id}','${x.id}','${kind}',${JSON.stringify(x.value)})">编辑</button>
       <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick="admDelContact('${u.id}','${x.id}')">删除</button>
     </div>`;
   const list = [...c.phones.map(x => row('phone', x)), ...c.emails.map(x => row('email', x))].join('') || '<span style="color:var(--txd);">暂无额外联系方式</span>';
@@ -5513,6 +5514,14 @@ async function admAddContact(uid) {
   const { ok, data } = await api('POST', '/admin/users/' + uid + '/contacts', { kind, value });
   if (ok) { showToast('✓ 已添加'); renderUserContactsSection({ id: uid }); }
   else showToast('添加失败：' + (data?.error || '未知错误'));
+}
+async function admEditContact(uid, cid, kind, oldVal) {
+  const v = await uiPrompt(`修改${kind === 'phone' ? '手机号' : '邮箱'}（原：${oldVal}）`, oldVal);
+  if (v == null) return;
+  const nv = v.trim(); if (!nv || nv === oldVal) return;
+  const { ok, data } = await api('PATCH', '/admin/users/' + uid + '/contacts/' + cid, { value: nv });
+  if (ok) { showToast('✓ 已修改' + (data.occupied ? '（该值已被别的账号用作登录，未改登录主字段）' : (data.mirrored ? '（已同步为登录主' + (kind === 'phone' ? '手机' : '邮箱') + '）' : ''))); renderUserContactsSection({ id: uid }); }
+  else showToast('修改失败：' + (data?.error || '未知错误'));
 }
 async function admDelContact(uid, cid) {
   if (!await uiConfirm('确定删除该联系方式？')) return;
@@ -9517,6 +9526,7 @@ async function loadOrgMembers() {
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>组织密码</button>
       ${m.has_pw ? `<button class="btn" style="font-size:11px;padding:2px 7px;" onclick='clearOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>清除</button>` : ''}
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='openOrgMemCreds(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>登录凭证</button>
+      <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='openOrgMemContacts(${JSON.stringify(m.user_id)},${JSON.stringify(m.name||"")})'>联系方式</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='pushOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>同步</button>
       ${acctBtns}
       <button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='delOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>移出</button>
@@ -9671,6 +9681,60 @@ async function clearOrgMemPw(uidSeq, name) {
   if (!await uiConfirm(`清除「${name}」的组织密码？清除后若组织非「独立安全」，可用平台密码登录到组织；独立安全组织将无法登录直到重设。`)) return;
   const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/password');
   if (ok) { showToast('已清除组织密码'); loadOrgMembers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
+}
+// 成员联系方式管理（v3.5.80）：查看 / 编辑 / 增删本组织成员的手机/邮箱/企业邮箱（企业微信/飞书同步回来的也能直接改）。
+let _omcUser = null, _omcName = '';
+async function openOrgMemContacts(userId, name) {
+  _omcUser = userId; _omcName = name || '';
+  let modal = document.getElementById('orgmem-ct-modal');
+  if (!modal) { modal = document.createElement('div'); modal.id = 'orgmem-ct-modal'; modal.className = 'modal-mask'; document.body.appendChild(modal); }
+  modal.classList.add('show');
+  await renderOrgMemContacts();
+}
+async function renderOrgMemContacts() {
+  const modal = document.getElementById('orgmem-ct-modal');
+  const { ok, data } = await api('GET', '/admin/users/' + _omcUser + '/contacts');
+  const c = ok ? (data.data || { phones: [], emails: [] }) : { phones: [], emails: [] };
+  const srcTag = s => s === 'wecom' ? '企业微信' : (s === 'wecom_biz' ? '企业邮箱' : '手动');
+  const row = (kind, x) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd);">
+      <span style="font-size:12px;">${kind === 'phone' ? '📞' : '✉️'}</span>
+      <span style="flex:1;color:var(--txt);font-size:13px;">${esc(x.value)}</span>
+      ${x.is_primary ? '<span class="badge ok" style="font-size:10px;">主要</span>' : ''}
+      <span class="badge grey" style="font-size:10px;">${srcTag(x.source)}</span>
+      <button class="btn" style="font-size:10px;padding:1px 7px;" onclick='omcEdit(${JSON.stringify(x.id)},"${kind}",${JSON.stringify(x.value)})'>编辑</button>
+      <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='omcDel(${JSON.stringify(x.id)})'>删除</button>
+    </div>`;
+  const list = [...c.phones.map(x => row('phone', x)), ...c.emails.map(x => row('email', x))].join('') || '<div style="color:var(--txd);font-size:12px;padding:6px 0;">暂无联系方式</div>';
+  modal.innerHTML = `<div class="modal" style="min-width:420px;max-width:520px;text-align:left;">
+    <h3 style="margin-bottom:4px;">联系方式 · ${esc(_omcName)}</h3>
+    <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">手机 / 邮箱 / 企业邮箱可直接改；企业微信 / 飞书同步回来的值也在这里改。主要联系方式会同步为登录用的主字段。</div>
+    ${list}
+    <div style="display:flex;gap:6px;margin-top:12px;">
+      <select id="omc-kind" style="padding:5px 8px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:12px;"><option value="phone">手机</option><option value="email">邮箱</option></select>
+      <input id="omc-val" placeholder="新手机号 / 邮箱" style="flex:1;padding:5px 9px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:12px;">
+      <button class="btn primary" style="font-size:12px;" onclick="omcAdd()">添加</button>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn" onclick="document.getElementById('orgmem-ct-modal').classList.remove('show')">关闭</button></div>
+  </div>`;
+}
+async function omcEdit(cid, kind, oldVal) {
+  const v = await uiPrompt(`修改${kind === 'phone' ? '手机号' : '邮箱'}（原：${oldVal}）`, oldVal);
+  if (v == null) return; const nv = v.trim(); if (!nv || nv === oldVal) return;
+  const { ok, data } = await api('PATCH', '/admin/users/' + _omcUser + '/contacts/' + cid, { value: nv });
+  if (ok) { showToast('✓ 已修改' + (data.occupied ? '（该值已被别的账号用作登录，未改主字段）' : (data.mirrored ? '（已同步为登录主字段）' : ''))); renderOrgMemContacts(); }
+  else showToast('修改失败：' + (data?.error || '未知错误'));
+}
+async function omcDel(cid) {
+  if (!await uiConfirm('确定删除该联系方式？')) return;
+  const { ok, data } = await api('DELETE', '/admin/users/' + _omcUser + '/contacts/' + cid);
+  if (ok) { showToast('✓ 已删除'); renderOrgMemContacts(); } else showToast('删除失败：' + (data?.error || '未知错误'));
+}
+async function omcAdd() {
+  const kind = document.getElementById('omc-kind').value;
+  const value = document.getElementById('omc-val').value.trim();
+  if (!value) return;
+  const { ok, data } = await api('POST', '/admin/users/' + _omcUser + '/contacts', { kind, value });
+  if (ok) { showToast('✓ 已添加'); renderOrgMemContacts(); } else showToast('添加失败：' + (data?.error || '未知错误'));
 }
 // 平台账号级操作（v3.5.79）：重置平台密码 / 停用启用。按 user_id(UUID) 调 /admin/users/*，后端限本组织成员。
 async function orgMemResetPw(userId, name) {

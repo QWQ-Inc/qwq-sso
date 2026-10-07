@@ -75,6 +75,34 @@ function addContact(userId, kind, value, source = 'manual', subjectId = null) {
   return { ok: true, id };
 }
 
+/**
+ * 修改某条联系方式的值（v3.5.80，管理端/用户端直接改，如企业邮箱 a@→b@）。
+ * 保持原 kind；归一化后去重（同用户同 kind 不能撞别的条）；若是主要联系方式则镜像回 users 主字段
+ * （但若该值已被别的账号用作登录主字段则不镜像，返回 occupied，避免登录标识冲突）。
+ * @returns {{ok:true,id,mirrored:boolean,occupied?:boolean}|{ok:false,skip:'notfound'|'bad'|'dup'}}
+ */
+function updateContact(userId, cid, value) {
+  const row = contacts.getOne.get(cid, userId);
+  if (!row) return { ok: false, skip: 'notfound' };
+  const val = normValue(row.kind, value);
+  if (!val) return { ok: false, skip: 'bad' };
+  if (val === row.value) return { ok: true, id: cid, mirrored: false };
+  // 同用户同 kind 下，别的条已是这个值 → 去重拒绝
+  const dup = contacts.byUserKind.all(userId, row.kind).some(r => r.id !== cid && r.value === val);
+  if (dup) return { ok: false, skip: 'dup' };
+  contacts.updateValue.run(val, cid, userId);
+  let mirrored = false, occupied = false;
+  if (row.is_primary) {
+    const col = row.kind === 'phone' ? 'phone' : 'email';
+    const other = row.kind === 'phone'
+      ? db.prepare('SELECT 1 FROM users WHERE phone=? AND id<>?').get(val, userId)
+      : db.prepare('SELECT 1 FROM users WHERE email=? AND id<>?').get(val, userId);
+    if (other) occupied = true;                       // 被别的账号用作登录主字段 → 不镜像
+    else { db.prepare(`UPDATE users SET ${col}=?, updated_at=datetime('now') WHERE id=?`).run(val, userId); mirrored = true; }
+  }
+  return { ok: true, id: cid, mirrored, occupied };
+}
+
 /** 列出某用户的联系方式，分组为 {phones, emails} */
 function listContacts(userId) {
   const rows = contacts.byUser.all(userId);
@@ -103,5 +131,5 @@ function importWecomContacts(userId, d, subjectId = null) {
 module.exports = {
   contactLimits, globalLimits,
   normPhone, normEmail, normValue,
-  addContact, listContacts, importWecomContacts,
+  addContact, updateContact, listContacts, importWecomContacts,
 };
