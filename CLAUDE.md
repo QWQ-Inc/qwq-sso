@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74.2**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.74.4**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,23 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.74.4 同步源「选部门」入口 + 用户管理按组织过滤（用户反馈）
+
+四级补丁（补全 UX）。用户：「同步源分部门的还是没有出现入口，没有很方便」「按组织管理也没有生效」。
+
+- **同步源「选部门」入口**（dashboard.html）：`dirSourceRowsHtml` 同步源行加「选部门」按钮 → 新 `openDirSourceDept(sid, srcId)` 直接开对应弹窗（企微/飞书按类型转）并自动 `.click()`「加载部门」按钮 + 滚动到部门区。之前要「编辑 → 加载部门」两步。
+- **按组织管理补到用户管理**：实测确认设备/门禁页的顶栏下拉过滤本就生效；补的是「用户管理」没跟着过滤。后端 `GET /admin/users` 加 `?org=`（JOIN org_members 只列该组织成员，优先于 q/status）；前端 `loadAdmUsers` 用 `_curAdminOrg()` 拼 `?org=`，空态/计数标「该组织成员」；`onAdminOrgChange`/`clearAdminOrg` 加 `loadAdmUsers()`。dev mock `/admin/users?org=` 同步处理。
+- ⚠️ 测试：dev 浏览器实测——同步源行「选部门」点开即出部门树；聚焦组织后用户列表「共 1 人（该组织成员）」。回归（feishu-create 12 / push-provision 10 / departments 14 / contacts 18 / dirsync-contacts 6 / phone-cc 13 / schedule 7 / limited-admin 11）全过。
+
+## v3.5.74.3 出站建号：无手机号的成员跳过飞书（用户反馈）
+
+四级补丁。用户实测出站建号：「海南许白集团 ✓ 成功；熵序前言（上海）教育科技有限公司飞书：手机号必填且需为有效手机号」——飞书 `mobile` 单独必填、不能只用邮箱替代（错误码 41010），所以企业微信同步进来、没回传手机号的成员，飞书建号必然失败。
+- `api.js pushMemberToSources`：飞书源遇成员无手机号（`!String(rawMobile).trim()`）→ 直接 `results.push({ ok:false, skipped:true, error:'成员无手机号，跳过飞书建号…' })` 并 `continue`，**不调 createMember**，企业微信源照常建号。
+- `dashboard.html _pushToast`：结果弹窗区分「成功 / ⏭ 跳过 / ✗ 失败」计数与行样式。
+
+### 测试
+- 语法校验过；逻辑简单（无手机号跳过），靠代码审查。回归 7 套 79 项全过（feishu-create 12 项仍过——createMember 层仍对「手机号为空」明确报错，只是 push 层先拦掉）。
 
 ## v3.5.74.2 修飞书出站建号 99992402（employee_type / mobile 必填）（用户反馈）
 

@@ -1778,6 +1778,11 @@ async function pushMemberToSources(subject, user, opts = {}) {
     };
     if (src.type === 'wecom') { fields.userid = String(extId); fields.department = deptIds; }
     else {
+      // 飞书要求 mobile 必填；没手机号的成员跳过飞书（企业微信仍建号），标 skipped 而非「失败」
+      if (!String(rawMobile || '').trim()) {
+        results.push({ source_id: src.id, label, ok: false, skipped: true, error: '成员无手机号，跳过飞书建号（飞书要求手机号必填，请先给成员补手机号）' });
+        continue;
+      }
       // 飞书 department_ids 必填、且不能是根部门 "0"。优先用「成员归属部门」的飞书 ext_id，否则回退同步范围（去掉根部门）
       let fds = (Array.isArray(deptIds) ? deptIds : []).map(x => String(x).trim()).filter(x => x && x !== '0');
       if (opts.deptId) {
@@ -3974,9 +3979,12 @@ router.get('/admin/stats', requireAdmin(3), (req, res) => {
 });
 
 router.get('/admin/users', requireAdmin(3), (req, res) => {
-  const { status, q } = req.query;
+  const { status, q, org } = req.query;
   let rows;
-  if (q) {
+  if (org) {
+    // v3.5.74.4：顶栏「当前组织」聚焦某组织时，用户管理只列该组织成员
+    rows = db.prepare('SELECT u.* FROM users u JOIN org_members m ON m.user_id=u.id WHERE m.subject_id=? AND u.is_public=0 ORDER BY u.uid_seq').all(org);
+  } else if (q) {
     // 支持 UID（纯数字）、昵称、邮箱、手机、组织搜索
     const isUid = /^\d+$/.test(q.trim());
     if (isUid) {

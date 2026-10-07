@@ -780,7 +780,11 @@ function _devApi(method, path, body) {
     total:1482, verified:896, todayActive:218, newThisMonth:43,
     daily7:[{d:'06-19',n:8},{d:'06-20',n:12},{d:'06-21',n:6},{d:'06-22',n:15},{d:'06-23',n:9},{d:'06-24',n:11},{d:'06-25',n:7}]
   }});
-  if (path === '/admin/users' || path.startsWith('/admin/users?')) return ok({ success:true, users: db.mockUsers });
+  if (path === '/admin/users' || path.startsWith('/admin/users?')) {
+    const org = decodeURIComponent((path.split('?org=')[1] || '').split('&')[0] || '');
+    const users = org ? db.mockUsers.filter(u => u.id === 'u1') : db.mockUsers;   // dev 演示：聚焦组织只留 u1
+    return ok({ success:true, users });
+  }
   if (path.match(/^\/admin\/users\/\w+$/) && method === 'GET') {
     const id = path.split('/')[3];
     const u = db.mockUsers.find(u=>u.id===id) || db.mockUsers[0];
@@ -3418,7 +3422,8 @@ function onAdminOrgChange() {
   const v = sel ? sel.value : '';
   try { localStorage.setItem('sso_admin_org', v); } catch (_) {}
   renderAdminOrgBanner();
-  // 刷新组织资源页面（设备/门禁），使其按当前组织过滤
+  // 刷新组织资源页面（用户/设备/门禁），使其按当前组织过滤
+  if (typeof loadAdmUsers === 'function') loadAdmUsers();
   if (typeof loadDevices === 'function') loadDevices('adm');
   if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
 }
@@ -3442,6 +3447,7 @@ function clearAdminOrg() {
   try { localStorage.setItem('sso_admin_org', ''); } catch (_) {}
   const sel = document.getElementById('admin-org-select'); if (sel) sel.value = '';
   renderAdminOrgBanner();
+  if (typeof loadAdmUsers === 'function') loadAdmUsers();
   if (typeof loadDevices === 'function') loadDevices('adm');
   if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
 }
@@ -5066,19 +5072,20 @@ async function loadAdmStats() {
 }
 
 async function loadAdmUsers(q) {
-  const url = q ? `/admin/users?q=${encodeURIComponent(q)}` : '/admin/users';
+  const org = _curAdminOrg();
+  const url = org ? `/admin/users?org=${encodeURIComponent(org)}` : (q ? `/admin/users?q=${encodeURIComponent(q)}` : '/admin/users');
   const { ok, data } = await api('GET', url);
   if (!ok) return;
   const list = document.getElementById('adm-user-list');
   if (!list) return;
   if (!data.users?.length) {
-    list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--txd);font-size:12px;">${q ? '未找到匹配用户' : '暂无用户'}</div>`;
+    list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--txd);font-size:12px;">${org ? '该组织暂无成员' : (q ? '未找到匹配用户' : '暂无用户')}</div>`;
     document.getElementById('user-detail-panel').innerHTML = '';
     return;
   }
   _admUserRows = data.users;
   data.users.forEach(u => { if (_uSel.has(u.id)) _uSel.set(u.id, u); });
-  list.innerHTML = `<div class="detail-list-count" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="user-sel-all" title="全选当前列表" onclick="userSelAll(this.checked)" style="cursor:pointer;"> 共 ${data.users.length} 人${q ? '（搜索结果）' : ''}</div>` + data.users.map((u,i) => `
+  list.innerHTML = `<div class="detail-list-count" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="user-sel-all" title="全选当前列表" onclick="userSelAll(this.checked)" style="cursor:pointer;"> 共 ${data.users.length} 人${org ? '（该组织成员）' : (q ? '（搜索结果）' : '')}</div>` + data.users.map((u,i) => `
     <div class="detail-list-item ${i===0?'active':''}" onclick="selectUserById(this,'${u.id}')" style="display:flex;gap:8px;align-items:flex-start;">
       ${u.is_public ? '<span style="width:13px;"></span>' : `<input type="checkbox" class="user-sel" data-id="${u.id}" ${_uSel.has(u.id) ? 'checked' : ''} onclick="event.stopPropagation();userSelToggle('${u.id}',this.checked)" style="margin-top:3px;cursor:pointer;">`}
       <div style="min-width:0;flex:1;"><div class="din">${esc(u.name||u.email||'—')}${u.group?`<span style="font-size:10px;font-weight:500;color:${u.group.color};margin-left:6px;">●${esc(u.group.name)}</span>`:''}</div>
@@ -6592,9 +6599,19 @@ function dirSourceRowsHtml(sid, sources, indent) {
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" onclick="runDirSource('${x.id}','${esc(sid)}')">立即同步</button>` : ''}
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" title="连成员被单独改过的登录绑定 / 组织密码也改回本同步源的默认值" onclick="forceRunDirSource('${x.id}','${esc(sid)}')">全部覆盖…</button>` : ''}
     <button class="btn" style="${_rowBtn}" onclick="toggleDirSource('${x.id}','${esc(sid)}',${!x.enabled})">${x.enabled ? '停用' : '启用'}</button>
+    <button class="btn" style="${_rowBtn}" onclick="openDirSourceDept('${esc(sid)}','${x.id}')">选部门</button>
     <button class="btn" style="${_rowBtn}" onclick="openDirSourceModal('${esc(sid)}','${x.id}')">编辑</button>
     <button class="btn" style="${_rowDanger}" onclick="delDirSource('${x.id}','${esc(sid)}')">删除</button>
   </div>`).join('');
+}
+// 列表行「选部门」：直接打开同步源弹窗并自动加载部门树（不用再点「编辑」→「加载部门」）
+async function openDirSourceDept(sid, srcId) {
+  const src = srcId ? (_dirSourcesBySid[sid] || []).find(x => x.id === srcId) : null;
+  const isFeishu = !!(src && src.type === 'feishu');
+  if (isFeishu) await openFeishuSourceModal(sid, srcId);
+  else await openDirSourceModal(sid, srcId);
+  const btn = document.getElementById(isFeishu ? 'fsm-load' : 'dsm-load-dept');
+  if (btn) { btn.click(); btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
 }
 async function refreshDirSourceViews(sid) {
   const modal = document.getElementById('orgmem-modal');
@@ -9451,11 +9468,13 @@ async function doOrgMerge() {
 // v3.5.69 出站建号结果反馈
 function _pushToast(rr) {
   if (!rr || !rr.length) return '';
-  const ok = rr.filter(x => x.ok).length, fail = rr.length - ok;
-  if (fail) {
-    // 失败用弹窗显示每个源的详细原因（含 errcode），toast 放不下也 2.5 秒就没了
-    const detail = rr.map(x => (x.ok ? `${x.label}：✓ 成功` : `${x.label}：${x.error || '未知错误'}`)).join('\n');
-    uiAlert(`成功 ${ok}/${rr.length}\n\n${detail}`, { title: '出站建号结果', multiline: true });
+  const ok = rr.filter(x => x.ok).length;
+  const skipped = rr.filter(x => x.skipped).length;
+  const fail = rr.length - ok - skipped;
+  if (fail || skipped) {
+    // 失败/跳过用弹窗显示每个源的详细原因（含 errcode），toast 放不下也 2.5 秒就没了
+    const detail = rr.map(x => x.ok ? `${x.label}：✓ 成功` : (x.skipped ? `${x.label}：⏭ 跳过（${x.error || '跳过'}）` : `${x.label}：✗ ${x.error || '未知错误'}`)).join('\n');
+    uiAlert(`成功 ${ok}${skipped ? ` · 跳过 ${skipped}` : ''}${fail ? ` · 失败 ${fail}` : ''}（共 ${rr.length}）\n\n${detail}`, { title: '出站建号结果', multiline: true });
     return `（出站建号成功 ${ok}/${rr.length}，详情见弹窗）`;
   }
   return `（已同步到 ${rr.map(x => x.label).join('、')}）`;
