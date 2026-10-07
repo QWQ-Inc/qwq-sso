@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.78**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.79**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,22 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.79 组织管理员 scoped 写能力：停用/启用、重置密码、管理本组织门禁（用户反馈）
+
+三级版本。承接 v3.5.78（先堵洞），用户确认组织管理员应能：**停用/启用本组织成员、重置本组织成员密码、管理本组织门禁**（分组/标签被用户排除——平台级风险高）。逐接口加 `{orgAdmin:true}` + 范围过滤，默认拒绝的大门不动。
+
+### 后端（api.js + auth.js）
+- 两个 helper：`orgAdminMemberDenied(req, target)`（仅组织管理员生效：target 必须是其管辖组织成员 + 非管理员 + 非公共账号，否则拒）、`orgAdminDoorDenied(req, door)`（门必须归属其管辖组织；全局门 subject_id 空 → 拒）。系统管理员 `req._orgAdmin` 为空 → 两函数都放行，不受影响。
+- 用户：`/admin/users/:id/disable`、`/enable`、`/reset-password` 改 `requireAdmin(2,{orgAdmin:true})` + `orgAdminMemberDenied`。重置密码补审计 `user.password_reset`。
+- 门禁：`/admin/access/doors` POST（org 必须在其管辖内，不能建全局门）、PATCH/DELETE（门属本组织 + 不能移出）、`/admin/access/doors/:id/rules` GET/POST/DELETE（门属本组织）改 `{orgAdmin:true}` + `orgAdminDoorDenied`。**实体卡 / 人脸 / 访客码 / 跨系统联邦 / 伙伴应用仍只系统管理员**（跨用户/跨系统，不属单组织）。
+- ⚠️ 门禁一直没有「门↔组织」归属的 UI，存量门都是全局（subject_id 空）→ 组织管理员本来一个门都管不了。本版给门加归属组织。
+
+### 前端（dashboard.html）
+- **门归属组织**：门弹窗加「归属组织」字段——系统管理员是「全局 + 各组织」下拉，组织管理员锁定为当前组织（隐藏域 + 只读显示，不能建全局/他组织门）。`saveDoor` 带 `subject_id`。`loadAdminOrgSelect` 把组织列表缓存到 `window._adminOrgsCache` 供弹窗用。
+- **门禁页按角色收窄**：`applyAccessAdminRole()` 对组织管理员隐藏 实体卡/人脸/访客码/联邦/伙伴应用 五张卡、`loadAccessAdmin` 对其只拉 门+日志（不拉那几个会 403 的）。门列表本就按 `?org=` 过滤（顶栏当前组织）。`ORGADMIN_PAGES` 加 `adm-access`（现为 设备/门禁/日志）。
+- **成员停用/启用 + 重置密码**：放在用户端「我的组织」成员列表行（组织管理员的本来就该用的 scoped 面）——非管理员成员行加「重置密码」+「停用/启用」（`orgMemResetPw`/`orgMemSetStatus` 调 `/admin/users/:id/*`，后端限本组织），已停用成员标红。不动重量级的 adm-users 详情页（等级/分组/合并/注销仍系统管理员专属）。`listBySubject` 加回 `u.status, u.role`。
+- ⚠️ dev 浏览器实测：门弹窗组织管理员锁定 / 系统管理员下拉含全局+组织、门禁页组织管理员只剩「门/通道」卡、菜单=设备/门禁/日志、新函数就位；auth.js/api.js/db.js `node --check` 通过；12 处 `{orgAdmin:true}` opt-in（3 读 + 9 写）。真实端到端（成员停用/建门）未起服务器跑，靠范围 helper 逻辑审查 + 既有同构接口。
 
 ## v3.5.78 修组织管理员越权 + 管理端可达性重做（安全 + 用户反馈）
 

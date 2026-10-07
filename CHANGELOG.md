@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.79 — 组织管理员 scoped 写能力（停用/启用、重置密码、本组织门禁）
+
+- 承接 v3.5.78，按用户确认放开组织管理员在**本组织范围内**的写：停用/启用成员、重置成员密码、管理本组织门禁（门+规则）。分组/标签（平台级）不放开。
+- 后端：`orgAdminMemberDenied`/`orgAdminDoorDenied` 两个范围 helper；相关 user/door/rule 写接口改 `requireAdmin(2,{orgAdmin:true})` + 范围校验（12 处 opt-in = 3 读 + 9 写）。实体卡/人脸/访客码/联邦/伙伴应用仍系统管理员专属。
+- 前端：门弹窗加「归属组织」（组织管理员锁定本组织、系统管理员可选全局/组织）；门禁页对组织管理员只留「门/通道」；成员停用启用+重置密码放在「我的组织」成员行。
+- dev 实测 + 回归；门↔组织归属此前无 UI（存量门皆全局），本版补上。
+
 ## v3.5.78 — 修组织管理员越权 + 管理端可达性重做（安全）
 
 - 🔴 安全：v3.5.76 让 `requireAdmin` 对组织管理员「读写全放行、接口层自己拦」，但 177 个 requireAdmin 接口只有 ~6 个真做了组织过滤，其余 ~170 个（写系统配置、授权、下载整库备份…）对组织管理员敞开 = 提权。改为 `requireAdmin(level, {orgAdmin})` **默认拒绝组织管理员**，只给 3 个已验证范围过滤的 GET（/admin/users、/admin/logs、/admin/access/doors）opt-in。组织管理员真正要用的功能走 requireAuth+canManageOrg，不受影响。

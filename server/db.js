@@ -1236,7 +1236,7 @@ const orgMemberStmts = {
   listBySubject: db.prepare(`SELECT m.subject_id, m.user_id, m.org_uid, m.source, m.created_at, m.dept_id, m.pending,
       d.name AS dept_name,
       (m.password_hash IS NOT NULL) AS has_pw,
-      u.name, u.email, u.uid_seq, u.uid_code
+      u.name, u.email, u.uid_seq, u.uid_code, u.status, u.role
     FROM org_members m JOIN users u ON m.user_id=u.id
     LEFT JOIN org_departments d ON d.id=m.dept_id
     WHERE m.subject_id=? AND u.is_public=0 ORDER BY m.created_at`),

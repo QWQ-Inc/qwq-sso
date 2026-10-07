@@ -3371,10 +3371,10 @@ const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grant
 // 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
 const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
 // 组织管理员（v3.5.76）可进的管理页：组织维度的菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
-// 组织管理员的管理端菜单：只给「已做组织范围过滤且写操作对组织管理员可用」的页。
-// adm-oauth（全局登录主体/凭证/分站点）绝不给；adm-users/adm-access 的写操作目前仍是 Lv.2（组织管理员会 403），
-// 故暂不放进菜单——用户/门禁的组织维度只读/成员管理走用户端「我的组织」(page-orgadmin)。设备=requireAuth+本组织，登录日志=按本组织过滤，二者读写对组织管理员都可用。
-const ORGADMIN_PAGES = ['adm-devices', 'adm-logs'];
+// 组织管理员的管理端菜单（v3.5.79）：设备（requireAuth+本组织）、门禁（门/规则按本组织过滤，v3.5.79 放开）、登录日志（本组织）。
+// adm-oauth（全局登录主体/凭证/分站点）绝不给；adm-users 的重量级详情（等级/分组/合并/注销/联系方式）仍是系统管理员专属，
+// 组织管理员的「成员 + 停用启用 + 重置密码」走用户端「我的组织」(page-orgadmin) 的成员列表。
+const ORGADMIN_PAGES = ['adm-devices', 'adm-access', 'adm-logs'];
 // 各管理身份进管理端时的默认落地页（adm-users 不在限权/组织管理员菜单里，不能作默认，否则落到锁定页）
 function firstAdminPage() {
   if (adminRole === 'orgadmin') return ORGADMIN_PAGES[0];
@@ -3438,6 +3438,7 @@ async function loadAdminOrgSelect() {
   if (!box) return;
   const { ok, data } = await api('GET', '/account/managed-orgs');
   const orgs = (ok && data.orgs) ? data.orgs : [];
+  window._adminOrgsCache = orgs;   // 供门弹窗等复用（系统管理员=全部组织，组织管理员=其管辖）
   if (!orgs.length) { box.innerHTML = ''; return; }
   const isOrgAdmin = adminRole === 'orgadmin';
   // 组织管理员：默认聚焦到自己管理的第一个组织，且不能看「全部」
@@ -7952,12 +7953,23 @@ async function loadAccessAdmin() {
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   renderDoorList(data.doors || []);
   _accessDoorsCache = data.doors || [];
+  applyAccessAdminRole();
+  loadAccessLogs();
+  // 组织管理员只管「门 / 通道 + 规则」（+ 日志）；实体卡 / 人脸 / 访客码 / 跨系统联邦 / 伙伴应用 仅系统管理员
+  if (adminRole === 'orgadmin') return;
   loadAccessCards();
   loadAccessFaces();
   loadAccessPasses('adm-pass-list');
   loadAccessPeers();
   loadFedApps();
-  loadAccessLogs();
+}
+// 组织管理员的门禁页：只保留「门 / 通道」区（+ 日志），隐藏其余系统管理员专属区块
+function applyAccessAdminRole() {
+  const oa = adminRole === 'orgadmin';
+  ['adm-card-list', 'adm-face-list', 'adm-pass-list', 'adm-peer-list', 'adm-fedapp-list'].forEach(id => {
+    const el = document.getElementById(id); const card = el && el.closest('.card');
+    if (card) card.style.display = oa ? 'none' : '';
+  });
 }
 async function loadFedApps() {
   const box = document.getElementById('adm-fedapp-list'); if (!box) return;
@@ -8534,8 +8546,21 @@ function openDoorModal(door) {
         <option value="enabled"${d.status==='enabled'?' selected':''}>启用</option>
         <option value="disabled"${d.status==='disabled'?' selected':''}>停用</option>
       </select>
-      <label style="font-size:12px;color:var(--txd);">备注</label>
-      <input id="door-note" value="${esc(d.note||'')}" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+      <label style="font-size:12px;color:var(--txd);">归属组织${adminRole === 'orgadmin' ? '' : '（空 = 全局门，不归属任何组织）'}</label>
+      ${(() => {
+        const orgs = window._adminOrgsCache || [];
+        const cur = _curAdminOrg();
+        if (adminRole === 'orgadmin') {
+          // 组织管理员：锁定到当前组织，不能建全局门 / 他组织的门
+          const oid = d.subject_id || cur || (orgs[0] && orgs[0].id) || '';
+          const nm = (orgs.find(o => o.id === oid) || {}).name || oid;
+          return `<input id="door-subject" type="hidden" value="${esc(oid)}"><input value="${esc(nm)}" disabled style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--txd);">`;
+        }
+        return `<select id="door-subject" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+          <option value="">全局（所有组织）</option>
+          ${orgs.map(o => `<option value="${esc(o.id)}"${d.subject_id === o.id ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}
+        </select>`;
+      })()}
       <div style="border-top:1px solid var(--bd);margin-top:4px;padding-top:10px;">
         <div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:6px;">开门码规则（本门独立）</div>
         <label style="font-size:12px;color:var(--txd);">开门码模式</label>
@@ -8568,6 +8593,8 @@ async function saveDoor(id) {
     escort_required: document.getElementById('door-escort').checked,
     blackout: bwCollect('door'),
   };
+  const subjEl = document.getElementById('door-subject');   // 归属组织（v3.5.79；组织管理员锁定为其组织）
+  if (subjEl) body.subject_id = subjEl.value || null;
   if (!body.name) { showToast('请填写门名称'); return; }
   const { ok, data } = id
     ? await api('PATCH', '/admin/access/doors/' + id, body)
@@ -9472,10 +9499,17 @@ async function loadOrgMembers() {
     const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
     const deptShow = m.dept_name ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">🏢 ${esc(m.dept_name)}</span>` : '';
     const pendingBadge = m.pending === 1 ? '<span style="color:#8a6d3b;font-size:10px;margin-left:4px;">⏳ 待分配</span>' : (m.pending === 2 ? '<span style="color:var(--txd);font-size:10px;margin-left:4px;">挂起</span>' : '');
+    const disabledBadge = m.status === 'disabled' ? '<span style="color:var(--err);font-size:10px;margin-left:4px;">已停用</span>' : '';
+    // 停用/启用 + 重置密码（v3.5.79）：仅非管理员成员；后端按本组织成员范围校验
+    const acctBtns = m.role === 'admin' ? '' :
+      `<button class="btn" style="font-size:11px;padding:2px 7px;" onclick='orgMemResetPw(${JSON.stringify(m.user_id)},${JSON.stringify(m.name||"")})'>重置密码</button>` +
+      (m.status === 'disabled'
+        ? `<button class="btn primary" style="font-size:11px;padding:2px 7px;" onclick='orgMemSetStatus(${JSON.stringify(m.user_id)},${JSON.stringify(m.name||"")},"enable")'>启用</button>`
+        : `<button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='orgMemSetStatus(${JSON.stringify(m.user_id)},${JSON.stringify(m.name||"")},"disable")'>停用</button>`);
     const ext = (m.ext_ids || []).length ? `<br><span style="color:var(--txd);font-size:10px;">外部账号：${m.ext_ids.map(x => esc(x.id) + (x.source ? '（' + esc(x.source) + '）' : '')).join('、')}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
       <input type="checkbox" class="omsel" data-id="${esc(m.user_id)}" ${_orgMemSel.has(m.user_id) ? 'checked' : ''} onchange="toggleOrgMemSel(this)" title="勾选多个 → 合并为同一人">
-      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${deptShow}${pendingBadge}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
+      <span style="flex:1;min-width:120px;color:var(--txt);">${esc(m.name || '—')} <span style="color:var(--txd);font-size:11px;">${esc(uidShow)}</span>${hasPw}${deptShow}${pendingBadge}${disabledBadge}${m.source === 'wecom' ? '<span style="color:#1F7A3A;font-size:10px;margin-left:4px;">企业微信同步</span>' : ''}${ext}</span>
       <input value="${esc(m.org_uid || '')}" placeholder="组织内UID" id="omu-${esc(m.user_id)}" style="width:110px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='setOrgMemUid(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.user_id)})'>存UID</button>
       <select id="omd-${esc(m.user_id)}" style="max-width:150px;padding:4px 7px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);">${_deptOpts(m.dept_id)}</select>
@@ -9484,6 +9518,7 @@ async function loadOrgMembers() {
       ${m.has_pw ? `<button class="btn" style="font-size:11px;padding:2px 7px;" onclick='clearOrgMemPw(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>清除</button>` : ''}
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='openOrgMemCreds(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>登录凭证</button>
       <button class="btn" style="font-size:11px;padding:2px 7px;" onclick='pushOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>同步</button>
+      ${acctBtns}
       <button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='delOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>移出</button>
     </div>`;
   }).join('') : '<div style="color:var(--txd);padding:8px 4px;">该组织还没有成员。</div>';
@@ -9636,6 +9671,20 @@ async function clearOrgMemPw(uidSeq, name) {
   if (!await uiConfirm(`清除「${name}」的组织密码？清除后若组织非「独立安全」，可用平台密码登录到组织；独立安全组织将无法登录直到重设。`)) return;
   const { ok, data } = await api('DELETE', '/admin/orgs/' + _orgMemSid + '/members/' + uidSeq + '/password');
   if (ok) { showToast('已清除组织密码'); loadOrgMembers(); } else showToast('清除失败：' + (data?.error || '未知错误'));
+}
+// 平台账号级操作（v3.5.79）：重置平台密码 / 停用启用。按 user_id(UUID) 调 /admin/users/*，后端限本组织成员。
+async function orgMemResetPw(userId, name) {
+  const pw = await uiPrompt(`为「${name}」重置平台登录密码（至少 6 位）：`, '', { password: true });
+  if (pw == null) return;
+  if (pw.length < 6) { showToast('密码至少 6 位'); return; }
+  const { ok, data } = await api('POST', '/admin/users/' + userId + '/reset-password', { password: pw });
+  if (ok) showToast('已重置密码'); else showToast('重置失败：' + (data?.error || '未知错误'));
+}
+async function orgMemSetStatus(userId, name, action) {
+  const dis = action === 'disable';
+  if (!await uiConfirm(`确定${dis ? '停用' : '启用'}「${name}」的账号？${dis ? '\n\n停用后该成员立即不能登录，已签发的登录态会作废。' : ''}`, { danger: dis })) return;
+  const { ok, data } = await api('POST', '/admin/users/' + userId + '/' + (dis ? 'disable' : 'enable'));
+  if (ok) { showToast(dis ? '已停用' : '已启用'); loadOrgMembers(); } else showToast('操作失败：' + (data?.error || '未知错误'));
 }
 async function delOrgMember(uidSeq, name) {
   if (!await uiConfirm(`把「${name}」移出该组织？\n\n移出后会在企业微信/飞书里删除其对应账号（若已同步过去）。`)) return;

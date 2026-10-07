@@ -4157,9 +4157,11 @@ router.post('/admin/users', requireAdmin(2), async (req, res) => {
   res.json({ success: true, id: user.id, uid_seq: user.uid_seq, uid_code: user.uid_code });
 });
 
-router.post('/admin/users/:id/disable', requireAdmin(2), (req, res) => {
+router.post('/admin/users/:id/disable', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const target = users.findById.get(req.params.id);
   if (!target) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, target);   // v3.5.79 组织管理员只能停用本组织成员
+  if (denied) return res.status(403).json({ error: denied });
   // 不能停用自己
   if (target.id === req.user.uid) return res.status(403).json({ error: '不能停用自己的账号' });
   // 管理员不能停用同级或更高级别管理员
@@ -4174,9 +4176,11 @@ router.post('/admin/users/:id/disable', requireAdmin(2), (req, res) => {
   audit('user.disabled', { subject: String(target.uid_seq), actor: actorOf(req) });
   res.json({ success: true });
 });
-router.post('/admin/users/:id/enable', requireAdmin(2), (req, res) => {
+router.post('/admin/users/:id/enable', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const target = users.findById.get(req.params.id);
   if (!target) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, target);   // v3.5.79 组织管理员只能启用本组织成员
+  if (denied) return res.status(403).json({ error: denied });
   if (target.deletion_state === 'deleted') return res.status(400).json({ error: '该账号已删除，请用「恢复账号」' });
   if (target.merged_into) return res.status(400).json({ error: '该账号已合并到别的账号，不能启用' });
   db.prepare("UPDATE users SET status='active',updated_at=datetime('now') WHERE id=?").run(req.params.id);
@@ -4801,10 +4805,15 @@ router.post('/admin/users/:id/purge', requireAdmin(1), (req, res) => {
   res.json({ success: true });
 });
 
-router.post('/admin/users/:id/reset-password', requireAdmin(2), async (req, res) => {
+router.post('/admin/users/:id/reset-password', requireAdmin(2, { orgAdmin: true }), async (req, res) => {
+  const target = users.findById.get(req.params.id);
+  if (!target) return res.status(404).json({ error: '用户不存在' });
+  const denied = orgAdminMemberDenied(req, target);   // v3.5.79 组织管理员只能重置本组织成员密码
+  if (denied) return res.status(403).json({ error: denied });
   const { password } = req.body;
   if (!password || password.length < 6) return res.status(400).json({ error: '密码至少6位' });
   users.updatePassword.run(await bcrypt.hash(password, 12), req.params.id);
+  audit('user.password_reset', { subject: String(target.uid_seq), actor: actorOf(req) });
   res.json({ success: true });
 });
 // 清除实名（v3.5.43 收紧）：只有超级管理员，或被授予「清除实名认证」且对象在授权范围内的人
@@ -5155,6 +5164,23 @@ function orgAdminCanOrg(req, org) {
   if (!req._orgAdmin) return true;
   if (!org) return false;
   return req._orgAdmin.some(o => o.id === org);
+}
+// 组织管理员对某目标用户的写权限（v3.5.79 停用/启用/重置密码）：仅当 target 是其管理组织的成员、且非管理员、非公共账号。
+// 返回 null=放行；返回字符串=拒绝原因。仅对组织管理员(req._orgAdmin)生效，系统管理员(req._orgAdmin 为空)不受限。
+function orgAdminMemberDenied(req, target) {
+  if (!req._orgAdmin) return null;
+  if (!target) return '用户不存在';
+  if (target.is_public) return '不能操作公共账号';
+  if (target.role === 'admin') return '组织管理员不能操作管理员账号';
+  if (!req._orgAdmin.some(o => orgMembers.get.get(o.id, target.id))) return '该用户不是你管理的组织的成员';
+  return null;
+}
+// 组织管理员对某扇门的写权限（v3.5.79 门禁）：门必须归属其管理的某组织（全局门 subject_id 为空 → 组织管理员不可碰）。
+function orgAdminDoorDenied(req, door) {
+  if (!req._orgAdmin) return null;
+  if (!door) return '门不存在';
+  if (!door.subject_id || !req._orgAdmin.some(o => o.id === door.subject_id)) return '该门不属于你管理的组织';
+  return null;
 }
 // 应用写权限：系统管理员(Lv.2) 直接过；限权管理员按应用范围拦（appId=null 表示新建，只有「不限应用」的能新建）
 function guardAppWrite(req, res, appId) {
@@ -7166,9 +7192,11 @@ function applyDoorPolicy(id, body, cur) {
     blackout: has('blackout') ? JSON.stringify(accessCore.normalizeWindows(body.blackout)) : (cur?.blackout || ''),
   });
 }
-router.post('/admin/access/doors', requireAdmin(2), (req, res) => {
+router.post('/admin/access/doors', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: '请填写门/通道名称' });
+  // v3.5.79 组织管理员只能在自己管理的组织下建门（不能建全局门）
+  if (req._orgAdmin && !orgAdminCanOrg(req, req.body?.subject_id)) return res.status(403).json({ error: '只能在你管理的组织下创建门' });
   const id = uuidv4();
   const status = ['enabled', 'disabled'].includes(req.body?.status) ? req.body.status : 'enabled';
   access.insertDoor.run({
@@ -7180,9 +7208,13 @@ router.post('/admin/access/doors', requireAdmin(2), (req, res) => {
   applyDoorPolicy(id, req.body, null);
   res.json({ success: true, door: access.doorById.get(id) });
 });
-router.patch('/admin/access/doors/:id', requireAdmin(2), (req, res) => {
+router.patch('/admin/access/doors/:id', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const d = access.doorById.get(req.params.id);
   if (!d) return res.status(404).json({ error: '门不存在' });
+  const denied = orgAdminDoorDenied(req, d);   // v3.5.79 组织管理员只能改本组织的门
+  if (denied) return res.status(403).json({ error: denied });
+  // 且不能把门移出自己的组织范围
+  if (req._orgAdmin && req.body?.subject_id !== undefined && !orgAdminCanOrg(req, req.body.subject_id)) return res.status(403).json({ error: '只能把门归到你管理的组织' });
   const name = req.body?.name != null ? String(req.body.name).trim().slice(0, 60) : d.name;
   if (!name) return res.status(400).json({ error: '名称不能为空' });
   access.updateDoor.run({
@@ -7195,21 +7227,28 @@ router.patch('/admin/access/doors/:id', requireAdmin(2), (req, res) => {
   applyDoorPolicy(d.id, req.body, d);
   res.json({ success: true, door: access.doorById.get(d.id) });
 });
-router.delete('/admin/access/doors/:id', requireAdmin(2), (req, res) => {
+router.delete('/admin/access/doors/:id', requireAdmin(2, { orgAdmin: true }), (req, res) => {
+  const denied = orgAdminDoorDenied(req, access.doorById.get(req.params.id));   // v3.5.79
+  if (denied) return res.status(403).json({ error: denied });
   access.removeRulesByDoor.run(req.params.id);
   access.removeDoor.run(req.params.id);
   res.json({ success: true });
 });
 
 // ── 管理端：授权规则 ──
-router.get('/admin/access/doors/:id/rules', requireAdmin(3), (req, res) => {
-  if (!access.doorById.get(req.params.id)) return res.status(404).json({ error: '门不存在' });
+router.get('/admin/access/doors/:id/rules', requireAdmin(3, { orgAdmin: true }), (req, res) => {
+  const door = access.doorById.get(req.params.id);
+  if (!door) return res.status(404).json({ error: '门不存在' });
+  const denied = orgAdminDoorDenied(req, door);   // v3.5.79 组织管理员只看本组织门的规则
+  if (denied) return res.status(403).json({ error: denied });
   const rules = access.rulesByDoor.all(req.params.id).map(r => ({ ...r, label: accessRuleLabel(r.grant_type, r.grant_value) }));
   res.json({ success: true, rules });
 });
-router.post('/admin/access/doors/:id/rules', requireAdmin(2), (req, res) => {
+router.post('/admin/access/doors/:id/rules', requireAdmin(2, { orgAdmin: true }), (req, res) => {
   const door = access.doorById.get(req.params.id);
   if (!door) return res.status(404).json({ error: '门不存在' });
+  const denied = orgAdminDoorDenied(req, door);   // v3.5.79
+  if (denied) return res.status(403).json({ error: denied });
   const grant_type = req.body?.grant_type;
   if (!ACCESS_GRANT_TYPES.includes(grant_type)) return res.status(400).json({ error: 'grant_type 不合法' });
   let grant_value = String(req.body?.grant_value || '').trim();
@@ -7233,7 +7272,9 @@ router.post('/admin/access/doors/:id/rules', requireAdmin(2), (req, res) => {
   });
   res.json({ success: true, rule: { ...access.rulesByDoor.all(door.id).find(r => r.id === id) } });
 });
-router.delete('/admin/access/doors/:id/rules/:rid', requireAdmin(2), (req, res) => {
+router.delete('/admin/access/doors/:id/rules/:rid', requireAdmin(2, { orgAdmin: true }), (req, res) => {
+  const denied = orgAdminDoorDenied(req, access.doorById.get(req.params.id));   // v3.5.79
+  if (denied) return res.status(403).json({ error: denied });
   access.removeRule.run(req.params.rid, req.params.id);
   res.json({ success: true });
 });
