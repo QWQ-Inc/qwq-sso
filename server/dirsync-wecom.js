@@ -210,6 +210,9 @@ async function fetchScopeTree(cfg) {
   return nodes;
 }
 
+/** 成员是否带回了任何联系方式（手机 / 个人邮箱 / 企业邮箱） */
+const hasContactFields = (m) => !!(m && (m.mobile || m.email || m.biz_mail));
+
 /** 从企业微信拉取：所选各部门（含子部门）的成员，合并去重。limited=true 表示只拿到了 ID（通讯录同步 Secret 受限） */
 async function fetchDirectory(cfg) {
   const access_token = await token(cfg);
@@ -224,11 +227,38 @@ async function fetchDirectory(cfg) {
     r.depts.forEach(d => { if (d.name) { deptName.set(d.id, d.name); deptTree.push({ id: d.id, name: d.name, parent: d.parentid, order: d.order }); } inScope.add(d.id); });
     inScope.add(root);
   }
+  // 逐个 user/get 拿成员完整详情（含手机 / 个人邮箱 / 企业邮箱）。
+  // user/get 是读取联系方式这类敏感字段的受支持接口；48009 → 只拿到 UserId 占位。
+  // startIdOnly=true：已知 Secret 受限（deptList 48009），直接出占位不再试 user/get。
+  async function detailByUserGet(userids, deptsOf, startIdOnly) {
+    const out = [];
+    let idOnly = !!startIdOnly;
+    for (let i = 0; i < userids.length; i += 5) {
+      const chunk = userids.slice(i, i + 5);
+      if (!idOnly) {
+        const batch = await Promise.all(chunk.map(uid => call('GET', '/cgi-bin/user/get', { access_token, userid: uid })
+          .catch(err => { if (err.errcode === FORBIDDEN) idOnly = true; return null; })));
+        if (!idOnly) { batch.forEach(u => { if (u) out.push(u); }); continue; }
+      }
+      // 只有 ID：姓名先用 UserId 占位（只用于新建账号；已有账号不改名），视为在职
+      chunk.forEach(uid => out.push({ userid: uid, name: uid, department: (deptsOf && deptsOf.get(uid)) || [], status: 1, _idOnly: true }));
+    }
+    return { members: out, idOnly };
+  }
   let members = [];
   try {
     if (limited) throw Object.assign(new Error('limited'), { errcode: FORBIDDEN });
     for (const root of roots) {
       members.push(...((await call('GET', '/cgi-bin/user/list', { access_token, department_id: root, fetch_child: 1 })).userlist || []));
+    }
+    // ⚠️ user/list（获取部门成员详情）自 2022 通讯录接口调整起常被企业微信限制：能返回成员与姓名，
+    //    但把手机 / 邮箱 / 企业邮箱整列剥掉（不报错）。只要没有任何成员带联系方式，就逐个 user/get 补全
+    //    （user/get 对可见范围内、已授权敏感字段的自建应用会返回这些字段）。仍拿不到则确属企微权限天花板，
+    //    保留 user/list 的结果（至少有姓名 / 部门），不白白降级。
+    if (members.length && !members.some(hasContactFields)) {
+      const ids = members.map(m => m && m.userid).filter(Boolean);
+      const detail = await detailByUserGet(ids, null, false);
+      if (!detail.idOnly && detail.members.some(hasContactFields)) members = detail.members;
     }
   } catch (e) {
     // user/list 拿不到（新建自建应用受限 / 通讯录同步 Secret 受限）：退回 list_id 分页拿 userid + 所在部门
@@ -245,19 +275,9 @@ async function fetchDirectory(cfg) {
       cursor = j.next_cursor;
     }
     const uniq = [...deptsOf.keys()].slice(0, 5000);
-    members = [];
-    let idOnly = limited;
-    for (let i = 0; i < uniq.length; i += 5) {
-      const chunk = uniq.slice(i, i + 5);
-      if (!idOnly) {
-        const batch = await Promise.all(chunk.map(uid => call('GET', '/cgi-bin/user/get', { access_token, userid: uid })
-          .catch(err => { if (err.errcode === FORBIDDEN) idOnly = true; return null; })));
-        if (!idOnly) { batch.forEach(u => { if (u) members.push(u); }); continue; }
-      }
-      // 只有 ID：姓名先用 UserId 占位（只用于新建账号；已有账号不改名），视为在职
-      chunk.forEach(uid => members.push({ userid: uid, name: uid, department: deptsOf.get(uid), status: 1, _idOnly: true }));
-    }
-    if (idOnly) limited = true;
+    const detail = await detailByUserGet(uniq, deptsOf, limited);
+    members = detail.members;
+    if (detail.idOnly) limited = true;
   }
   // 同一个人在多个部门（或选了父子两个部门）会出现多次，按 userid 去重
   const byId = new Map();
@@ -463,8 +483,9 @@ async function syncWecom(source, subject, cfg, helpers, fetcher = fetchDirectory
     }
   }
   // 有人拿到姓名但没手机/邮箱 → 提示管理员去企微后台开放字段权限（不覆盖「受限只拿到 ID」那条更严重的提示）
+  // v3.5.80.1：已改为优先用 user/get（读敏感字段的受支持接口）取详情，仍为空即确属企微字段权限天花板。
   if (out.no_contact > 0 && !out.limited && !out.warning) {
-    out.warning = `有 ${out.no_contact} 名成员未取到手机/邮箱（姓名正常）。多半是企业微信「自建应用」或「通讯录同步」Secret 未开放手机号/邮箱字段的读取权限——请到企业微信后台对应应用的「可见范围 / 敏感信息」里开启后重新同步。`;
+    out.warning = `有 ${out.no_contact} 名成员未取到手机/邮箱（姓名正常）。本系统已用「获取成员详情(user/get)」接口尝试读取，仍为空——需到企业微信后台把该「自建应用」的「通讯录 → 可调整字段权限 / 成员详情」里勾选手机号、邮箱、企业邮箱，并确认成员在应用可见范围内，再重新同步。若仍不行，可改用「批量导入」补齐手机/邮箱。`;
   }
   return out;
 }

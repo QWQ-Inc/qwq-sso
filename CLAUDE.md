@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.80**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.80.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,24 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.80.1 修企业微信同步拿不到手机/邮箱/企业邮箱（user/list 剥字段→改用 user/get 补全）（用户反馈）
+
+四级补丁（修 bug）。用户：「企业微信给了这些权限了，应用的和通讯录的双密钥，但是不解决该问题。」——即已开放自建应用 + 通讯录同步双 Secret，手机/邮箱/企业邮箱仍传不回来。
+
+### 🐛 根因
+`dirsync-wecom.js` 的 `fetchDirectory` 优先走批量 `GET /cgi-bin/user/list`（获取部门成员详情）。企业微信自 2022 通讯录接口调整起**限制了这个批量接口**：它能返回成员与姓名，却把 `mobile`/`email`/`biz_mail` 整列剥掉、**且不报错**。而逐个 `GET /cgi-bin/user/get` 才是读这些敏感字段的受支持接口。原代码只在 user/list **抛错**时才回退到 user/get——但 user/list 不抛错、只是返回「没有联系方式的成员」，于是 user/get 永远不会被调用，`m.mobile/m.email/m.biz_mail` 恒空 → `importWecomContacts` 灌不进任何联系方式。（这也正是 v3.5.65/66 一直观察到的「手机邮箱为空」，当时判断为权限天花板、转去批量导入；现查明有一半是接口选择问题。）
+
+### 修（`fetchDirectory`）
+- 抽出 `detailByUserGet(userids, deptsOf, startIdOnly)`（逐个 user/get，分块 5 个，48009→占位 `_idOnly`），回退路径（list_id）与新补全路径共用。
+- user/list 成功后：若**没有任何成员带联系方式**（`!members.some(hasContactFields)`），就用 user/get 逐个补全详情；补回来的带联系方式就替换掉剥空的那批。
+- user/get 也拿不到（字段确实没授权 / 48009）：**保留 user/list 的结果**（至少有姓名/部门，不白降级成占位、不误标 limited）。
+- user/list 自带联系方式的情况（旧的、授权完整的应用）：原样保留，不额外调 user/get（省调用）。
+- `no_contact` 警告文案更新：说明已用 user/get 尝试，仍为空则确属企微字段权限天花板，指引到「自建应用 → 通讯录 → 可调整字段权限 / 成员详情」勾选手机/邮箱/企业邮箱 + 确认可见范围，或改用批量导入。
+
+### 测试
+- `scratchpad/wecom-contacts-fetch-test.js` 复刻 fetchDirectory 决策、可编程 fake `call`，8 项全过：① user/list 带联系方式原样保留（含企业邮箱）；② user/list 剥空→user/get 补回手机+企业邮箱且非占位；③ user/get 也拿不到→保留 user/list（有姓名、无联系方式、非占位）；③b user/get 48009→保留 user/list 不标 limited；④ user/list 抛错→list_id+user/get 回退；⑤ 通讯录同步 Secret 受限（部门 48009 + user/get 48009）→占位 UserId + limited。
+- ⚠️ 真实企业微信未联调（本机无企业微信企业）；修复是接口选择 + 兜底逻辑，靠决策单测覆盖。导入落库仍走既有 `importWecomContacts`（v3.5.63/64 已测）。
 
 ## v3.5.80 管理端直接改成员联系方式（手机/邮箱/企业邮箱）（用户反馈）
 
