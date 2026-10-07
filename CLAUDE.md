@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.81**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.81.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,21 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.81.1 修 guardOrgWrite 拒绝分支 ReferenceError（组织写权限守卫缺 res 参数）
+
+四级补丁（修 bug）。`server/api.js` 的模块级 helper `guardOrgWrite(req, sid, write=true)`（约 5211 行）在拒绝分支
+`res.status(403).json({ error: '无权管理该组织' })`，但 **`res` 不是它的参数、也不在作用域** → 每当守卫拒绝（无权管理该组织）
+就抛 `ReferenceError: res is not defined`，Express 把它当未捕获错误返回 **500**（async 处理器里还会变成未处理的 promise rejection），
+而不是干净的 403。
+
+- 修：签名改为 `guardOrgWrite(req, res, sid, write = true)`；**7 个调用点全部加 `res`**：
+  `GET/POST/PATCH/DELETE /admin/orgs/:sid/members`、`GET /admin/orgs/:sid/pending-members`、
+  `POST .../pending-members/:uid/assign`、`POST .../pending-members/:uid/suspend`——都是 `(req, res)` 路由处理器，`res` 本就在作用域。
+- ⚠️ **happy path 不受影响**：授权调用者在 `canManageOrg` 返回 true 时就 return，根本到不了 `res` 那行，所以这个 bug 只在**真实拒绝**时暴露；
+  但仍是真 bug（组织写权限守卫被授权拦截时 500 而非 403）。
+- 与 `guardAppWrite(req, res, appId)`（约 5204 行，本来就带 res）对齐——`guardOrgWrite` 当初漏抄了 res 参数。
+- 验证：`node --check server/api.js` 通过 + 逐调用点代码审查（全是 `(req, res)` 处理器）。本仓库无提交进主干的 HTTP 级 org-admin 拒绝测试（既往测试走 scratchpad），故靠审查 + 语法校验。
 
 ## v3.5.81 iOS 人员管理（按组织 + 第三方同步源部门树）（用户反馈）
 

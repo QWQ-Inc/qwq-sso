@@ -1766,7 +1766,7 @@ router.get('/admin/orgs', requireAdmin(3), (req, res) => {
 router.get('/admin/orgs/:sid/members', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id, false)) return;
+  if (!guardOrgWrite(req, res, s.id, false)) return;
   // 每个成员在本组织各同步源里对应的外部账号（企业微信 UserId 等）——一人多号时能看出来，好合并（v3.5.41）
   const ext = new Map();
   for (const l of db.prepare(`SELECT l.user_id, l.ext_id, d.label FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
@@ -1883,7 +1883,7 @@ async function removeMemberFromSources(subject, user) {
 router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   let r;
   if (req.body?.create) {
     // 按组织建成员（v3.5.67）：直接建一个平台账号并加入本组织
@@ -1935,7 +1935,7 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
 router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
   if (req.body?.org_uid !== undefined) {
@@ -1958,7 +1958,7 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
 router.delete('/admin/orgs/:sid/members/:uid', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   if (!target) return res.status(404).json({ error: '成员不存在' });
   // v3.5.69 出站删号（前端强确认后带 push 才删外部账号）
@@ -1986,14 +1986,14 @@ router.post('/admin/orgs/:sid/members/:uid/push', requireAuth, async (req, res) 
 router.get('/admin/orgs/:sid/pending-members', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id, false)) return;
+  if (!guardOrgWrite(req, res, s.id, false)) return;
   res.json({ success: true, members: orgMembers.pendingMembers.all(s.id) });
 });
 // 分配部门：给待分配成员指定实际部门（dept_id + pending=0），并出站把成员从「待分配部门」移到目标部门
 router.post('/admin/orgs/:sid/pending-members/:uid/assign', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   const mem = target && orgMembers.get.get(s.id, target.id);
   if (!target || !mem) return res.status(404).json({ error: '成员不存在' });
@@ -2026,7 +2026,7 @@ router.post('/admin/orgs/:sid/pending-members/:uid/assign', requireAuth, async (
 router.post('/admin/orgs/:sid/pending-members/:uid/suspend', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   const mem = target && orgMembers.get.get(s.id, target.id);
   if (!target || !mem) return res.status(404).json({ error: '成员不存在' });
@@ -5208,7 +5208,7 @@ function guardAppWrite(req, res, appId) {
   return true;
 }
 // 组织写权限（成员等）：系统管理员 或 该组织管理员 或 限权管理员（范围匹配）
-function guardOrgWrite(req, sid, write = true) {
+function guardOrgWrite(req, res, sid, write = true) {
   if (canManageOrg(req, sid, write)) return true;
   if (limitedAdminActive(req) && limitedCanScope(req, sid)) return true;
   res.status(403).json({ error: '无权管理该组织' });

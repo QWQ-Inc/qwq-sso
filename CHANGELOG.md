@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.81.1 — 修 guardOrgWrite 拒绝分支 ReferenceError（组织写权限守卫缺 res 参数）
+
+- 🐛 `server/api.js` 的 `guardOrgWrite(req, sid, write)` 在拒绝分支调 `res.status(403)...`，但 `res` 不是它的参数、不在作用域 → 每当守卫拒绝（无权管理该组织）就抛 `ReferenceError`，Express 返回 500（async 处理器里还会是未处理的 rejection），而不是干净的 403。
+- 修：`guardOrgWrite` 改签名为 `(req, res, sid, write = true)`，7 个调用点全部改为 `guardOrgWrite(req, res, s.id[, false])`（都是 `(req, res)` 路由处理器，res 本就在作用域）。
+- ⚠️ happy path 不受影响：授权调用者在 `canManageOrg` 返回 true 时就 return，根本不到 res 那行——只有真实拒绝才触发。`node --check server/api.js` 通过。
+
 ## v3.5.81 — iOS 人员管理（按组织 + 第三方同步源部门树）
 
 - 手机端应用中心「管理工具」新增「人员管理」磁贴：系统管理员看全部组织、组织管理员看自己管理的组织。
