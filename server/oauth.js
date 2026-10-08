@@ -410,6 +410,10 @@ async function wecomApi(path, params) {
   const r = await axios.get(dirsyncWecom.apiBase() + path, { params, timeout: 15000 });
   return r.data || {};
 }
+async function wecomApiPost(path, params, body) {
+  const r = await axios.post(dirsyncWecom.apiBase() + path, body || {}, { params, timeout: 15000 });
+  return r.data || {};
+}
 
 router.get('/wecom', (req, res) => {
   const c = getCred('wecom', req.query.inst);
@@ -420,8 +424,10 @@ router.get('/wecom', (req, res) => {
   const p = new URLSearchParams({
     appid: c.WECOM_CORP_ID, agentid: c.WECOM_AGENT_ID || '',
     redirect_uri,
-    // snsapi_base：企业微信内静默授权，不弹确认页（回调只用 userid，不需要敏感信息的 user_ticket）
-    response_type: 'code', scope: 'snsapi_base', state,
+    // snsapi_privateinfo（v3.5.83）：企业微信内授权，成员同意后回调带 user_ticket，可换敏感信息（手机/邮箱/企业邮箱）。
+    // 自 2022-06-20 起新建自建应用的 user/get 不再返回这些字段，走 user_ticket + auth/getuserdetail 才是唯一还能拿到的 API 路。
+    // 成员不在应用可见范围时拿不到 user_ticket，自动降级为只拿 userid（照常登录，只是没有联系方式）。
+    response_type: 'code', scope: 'snsapi_privateinfo', state,
   });
   // 不在企业微信里（电脑 / 手机浏览器，比如在控制台点「绑定企业微信」）：网页授权链接只能在企业微信里打开，
   // 在浏览器里授权会跑到企业微信自己的浏览器、session 不在同一处 → 绑不上、反而新建账号（v3.5.42.1 修）。
@@ -458,6 +464,21 @@ router.get('/wecom/callback', async (req, res) => {
       const d = await wecomApi('/cgi-bin/user/get', { access_token, userid: userId });
       if (!d.errcode) { name = d.name || userId; avatar = d.avatar || null; detail = d; }
     } catch (_) {}
+    // v3.5.83：snsapi_privateinfo 且成员在可见范围内会回带 user_ticket——用它调 auth/getuserdetail 拿敏感字段
+    //   （手机 / 邮箱 / 企业邮箱）。新建自建应用的 user/get 已不返回这些，这是唯一还能拿到的 API 路；成员同意后生效。
+    //   拿不到 ticket（扫码网页登录 / 不在可见范围 / 成员拒绝）就跳过，不影响登录。
+    if (ui.user_ticket) {
+      try {
+        const dd = await wecomApiPost('/cgi-bin/auth/getuserdetail', { access_token }, { user_ticket: ui.user_ticket });
+        if (!dd.errcode) {
+          detail = Object.assign(detail || { userid: userId }, {
+            mobile: dd.mobile || (detail && detail.mobile),
+            email: dd.email || (detail && detail.email),
+            biz_mail: dd.biz_mail || (detail && detail.biz_mail),
+          });
+        }
+      } catch (e) { console.warn('[wecom] getuserdetail 跳过:', e.message); }
+    }
     const resolved = findOrCreate({ provider: c._providerKey, openId: userId, name, avatar });
     // 企业微信通讯录字段（mobile/email/biz_mail）作成员联系方式灌入——静默，权限不足/字段空则跳过
     if (resolved && detail) {

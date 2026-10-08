@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.82.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.83**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,29 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.83 企业微信登录抓取手机/邮箱（snsapi_privateinfo）+ 空字段提示改准（用户反馈）
+
+三级版本。用户：「企业微信给了邮箱和手机号权限，但还是回调不回来，系统显示没相应权限。」查实后发现**不是配置问题也不是代码 bug，是企业微信 2022 的平台限制**，并按用户确认做了两件事（改准提示 + 登录时抓取）。
+
+### 🔎 根因（查证，非猜）
+企业微信自 **2022-06-20** 起安全升级：此后【新创建】的自建应用 / 新开的通讯录同步助手，通过 `user/get` 读通讯录**一律不再返回 `mobile`/`email`/`biz_mail` 等敏感字段**，后台「可调整字段权限」里勾选对**新应用**的 user/get **也不生效**；只有升级前的老应用不受影响（所以网上有人能拿、有人拿不到）。
+- `errcode=0` 但字段为空 = **敏感信息被平台屏蔽**，不是可信 IP 问题（IP 不对会直接 `60020`，不会是空字段）。
+- 我们的**同步路径**和**登录回调**原来都只走 `user/get` → 对新应用这条路**永远拿不到**手机/邮箱，无论怎么配。
+- 服务端**批量通讯录同步**没有用户参与、拿不到 `user_ticket`，所以新应用**无法**靠通讯录同步 API 自动拿手机/邮箱——这是硬限制。可行办法只有：① 成员用企业微信登录一次（抓他本人的）；② 批量导入；③ 手动改。
+
+### ① 登录时抓取（唯一还有效的 API 路，`oauth.js`）
+- `/auth/wecom` 的授权 scope 从 `snsapi_base`（静默只拿 userid）改为 **`snsapi_privateinfo`**：成员在应用可见范围内、同意后，回调 `auth/getuserinfo` 会多回 `user_ticket`。
+- `/auth/wecom/callback`：拿到 `user_ticket` 就 `POST /cgi-bin/auth/getuserdetail`（新增 `wecomApiPost` 辅助）读 `mobile`/`email`/`biz_mail`，合并进 `detail` 再 `importWecomContacts` 灌进 `user_contacts`。
+- **优雅降级**：扫码网页登录（`login.work.weixin.qq.com` 那条）/ 成员不在可见范围 / 成员拒绝 → 没有 `user_ticket`，跳过敏感信息、照常用 userid 登录，不影响登录本身。
+- ⚠️ snsapi_privateinfo 比 snsapi_base 多一步授权（企业内应用通常较轻），这是拿手机号的必要代价，用户已确认接受。
+
+### ② 把误导的提示改准（`dirsync-wecom.js`）
+- `diagnose()` 字段全空时的结论、`syncWecom` 的 `no_contact` 警告：原来写「去企业微信后台勾字段权限」——对新应用勾了也没用，误导。改为准确说明 2022 平台限制 + 三条可行办法（成员登录一次抓取 / 批量导入 / 手动改）。
+
+### 测试
+- 语法校验 `oauth.js` / `dirsync-wecom.js` 通过。`auth/getuserinfo`（snsapi_privateinfo 回 user_ticket）+ `auth/getuserdetail`（user_ticket 换敏感字段）按企业微信官方文档 path/96443 实现；`importWecomContacts` 读 `d.mobile/d.email/d.biz_mail`，合并对象字段对得上。
+- ⚠️ 真实企业微信未联调（本机无企业微信企业，同既有约束）。线上让一个成员用企业微信登录一次，看其联系方式是否灌进 user_contacts 即可验证。
 
 ## v3.5.82.1 MDM 参考设备代理（tools/mdm-agent）（用户反馈）
 

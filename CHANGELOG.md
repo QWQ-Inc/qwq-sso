@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.83 — 企业微信登录抓取手机/邮箱（snsapi_privateinfo）+ 空字段提示改准
+
+- 根因查实（非猜）：企业微信 2022-06-20 起，**新建**的自建应用 / 通讯录同步助手用 `user/get` 读通讯录不再返回手机/邮箱等敏感字段，后台勾「字段权限」对新应用的 user/get 也不生效（只有升级前的老应用能拿）。errcode=0 但字段空 = 平台限制，不是 IP 问题（IP 不对会 60020）。
+- 唯一还能通过 API 拿到的路：登录时 `scope=snsapi_privateinfo` → 回调拿 `user_ticket` → `auth/getuserdetail` 读手机/邮箱/企业邮箱，成员同意即抓到灌进 user_contacts。`oauth.js`：企业微信登录 scope 由 `snsapi_base` 改 `snsapi_privateinfo`；回调拿到 `user_ticket` 就 POST `auth/getuserdetail` 合并敏感字段再 `importWecomContacts`；拿不到 ticket（扫码网页登录 / 不在可见范围 / 成员拒绝）自动降级为只拿 userid，不影响登录。
+- 把 `dirsync-wecom.js` 的 `diagnose` 结论与 `no_contact` 警告从误导的「去后台勾字段权限」改为准确说明（新应用平台限制 + 三条可行办法：成员登录一次抓取 / 批量导入 / 手动改）。
+- ⚠️ 真实企业微信未联调（本机无企业微信企业）；snsapi_privateinfo + getuserdetail 按官方文档（path/96443）实现，靠语法校验 + 逻辑审查。
+
 ## v3.5.82.1 — MDM 参考设备代理（tools/mdm-agent）
 
 - 给拉取式纳管配可直接运行的参考 agent：`tools/mdm-agent/agent.js`（零依赖 Node，跨平台）+ README + config.example.json。
