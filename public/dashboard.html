@@ -2589,6 +2589,7 @@ async function loadMe() {
               <select id="dev-filter-kind" onchange="renderDevices('adm')" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"><option value="">全部类型</option></select>
               <input id="dev-search" oninput="renderDevices('adm')" placeholder="搜索名称/序列号" style="font-size:12px;padding:4px 8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">
               <button class="btn primary" style="font-size:11px;" onclick="openDeviceModal(null,'adm')">+ 登记设备</button>
+              <button class="btn" style="font-size:11px;" onclick="openMdmProfiles()">配置描述文件</button>
               <button class="btn" style="font-size:11px;" onclick="loadDevices('adm')">刷新</button>
             </div>
           </div>
@@ -3221,6 +3222,8 @@ async function loadMe() {
 
 <!-- 设备登记/编辑弹窗（v3.5.21，动态填充） -->
 <div class="modal-mask" id="device-modal"></div>
+<div class="modal-mask" id="mdm-modal"></div>
+<div class="modal-mask" id="mdmprof-modal"></div>
 
 <!-- 登录凭证弹窗 -->
 <div class="modal-mask" id="oauth-modal">
@@ -7897,6 +7900,7 @@ function renderDevices(ctx) {
         <br><span style="color:var(--txd);font-size:11px;">${d.serial?('SN:'+esc(d.serial)+' '):''}${owner} ${org} ${door} ${seen}</span>
         ${d.tags?`<br><span style="color:var(--txd);font-size:10px;">🏷 ${esc(d.tags)}</span>`:''}
       </span>
+      ${['apple','google','microsoft'].includes(d.kind) ? `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openMdmPanel(${JSON.stringify(d).replace(/'/g,"&#39;")},${JSON.stringify(ctx)})'>MDM${d.enroll_status==='enrolled'?' ✅':(d.enroll_status==='pending'?' …':'')}${d.lock_state==='locked'?' 🔒':''}</button>` : ''}
       <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openDeviceModal(${JSON.stringify(d).replace(/'/g,"&#39;")},${JSON.stringify(ctx)})'>编辑</button>
       <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delDevice(${JSON.stringify(d.id)},${JSON.stringify(d.name||"")},${JSON.stringify(ctx)})'>删除</button>
     </div>`;
@@ -7962,6 +7966,187 @@ async function delDevice(id, name, ctx) {
   if (!await uiConfirm(`删除设备「${name||id}」？`)) return;
   const { ok, data } = await api('DELETE', '/admin/devices/' + id);
   if (ok) { showToast('已删除'); loadDevices(_devCtx); } else showToast('删除失败：' + (data?.error || '未知错误'));
+}
+
+// ── MDM 设备纳管（v3.5.82）──
+const MDM_CMD = {
+  lock:{label:'锁定',icon:'🔒'}, unlock:{label:'解锁',icon:'🔓'}, restart:{label:'重启',icon:'🔁'},
+  clear_passcode:{label:'清除密码',icon:'🔑'}, locate:{label:'定位',icon:'📍'},
+  push_profile:{label:'推送描述文件',icon:'📄',profile:true}, remove_profile:{label:'移除描述文件',icon:'🗑',profile:true},
+  wipe:{label:'远程擦除',icon:'💥',danger:'擦除设备'}, retire:{label:'退役解除纳管',icon:'⏏️',danger:'退役设备'},
+};
+const _mdmEnrollLabel = { unenrolled:'未纳管', pending:'待纳管（已发 token，等设备 check-in）', enrolled:'已纳管', retired:'已退役' };
+let _mdmDev = null;
+async function openMdmPanel(dev, ctx) {
+  if (ctx) _devCtx = ctx;
+  _mdmDev = dev;
+  const m = document.getElementById('mdm-modal');
+  m.innerHTML = `<div class="modal" style="min-width:460px;max-width:600px;text-align:left;">
+    <h3 style="margin-bottom:4px;">MDM · ${esc(dev.name||'(未命名)')}</h3>
+    <div style="font-size:11px;color:var(--txd);margin-bottom:12px;">${esc(DEVICE_KIND_LABEL[dev.kind]||dev.kind)}${dev.serial?' · SN '+esc(dev.serial):''}${dev.os_version?' · '+esc(dev.os_version):''}${dev.model?' · '+esc(dev.model):''}</div>
+    <div id="mdm-body" style="font-size:13px;color:var(--txd);">加载中…</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+      <button class="btn" onclick="document.getElementById('mdm-modal').classList.remove('show')">关闭</button>
+    </div></div>`;
+  m.classList.add('show');
+  await refreshMdmPanel();
+}
+async function refreshMdmPanel() {
+  const dev = _mdmDev; if (!dev) return;
+  const body = document.getElementById('mdm-body'); if (!body) return;
+  const [cj, pj] = await Promise.all([
+    api('GET', '/admin/devices/' + dev.id + '/commands'),
+    api('GET', '/admin/mdm/profiles'),
+  ]);
+  const cmds = cj.ok ? (cj.data.commands || []) : [];
+  const installed = cj.ok ? (cj.data.profiles || []) : [];
+  const profiles = pj.ok ? (pj.data.profiles || []) : [];
+  const transport = _devCache.mdm_transport;
+  const btn = 'font-size:11px;padding:3px 9px;margin:2px;';
+  const cmdBtns = Object.entries(MDM_CMD).map(([t,c]) =>
+    `<button class="btn" style="${btn}${c.danger?'color:var(--err);border-color:var(--err);':''}" onclick="mdmCmd('${t}')">${c.icon} ${c.label}</button>`).join('');
+  const stText = _mdmEnrollLabel[dev.enroll_status] || dev.enroll_status || '未纳管';
+  const cmdRows = cmds.length ? cmds.map(c => {
+    const stc = c.status==='acked'?'#1a7f37':(c.status==='failed'?'var(--err)':(c.status==='canceled'?'var(--txd)':'var(--ac)'));
+    const STAT = {pending:'待下发',sent:'已下发',acked:'已执行',failed:'失败',canceled:'已取消'};
+    return `<div style="padding:4px 0;border-bottom:1px solid var(--bd);display:flex;gap:8px;align-items:center;">
+      <span style="flex:1;">${esc(c.label||c.type)} <span style="color:var(--txd);font-size:10px;">${esc(c.created_at||'')}</span>${c.result?`<br><span style="color:var(--txd);font-size:10px;">↳ ${esc(c.result).slice(0,120)}</span>`:''}</span>
+      <span style="color:${stc};font-size:11px;">${STAT[c.status]||c.status}</span>
+      ${c.status==='pending'?`<button class="btn" style="font-size:10px;padding:1px 6px;" onclick="mdmCancel('${c.id}')">取消</button>`:''}
+    </div>`; }).join('') : '<div style="color:var(--txd);padding:6px 0;">暂无命令</div>';
+  body.innerHTML = `
+    <div style="background:var(--bg);border-radius:6px;padding:10px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <span>纳管状态：<b style="color:var(--txt);">${esc(stText)}</b>${dev.lock_state==='locked'?' · <span style="color:var(--err);">🔒 已锁定</span>':''}</span>
+        <span>
+          <button class="btn" style="${btn}" onclick="mdmEnroll()">${dev.enroll_status==='unenrolled'?'生成纳管 token':'重置 token'}</button>
+          ${dev.enroll_status!=='unenrolled'?`<button class="btn" style="${btn}" onclick="mdmUnenroll()">解除纳管</button>`:''}
+        </span>
+      </div>
+      <div style="font-size:10px;color:var(--txd);margin-top:6px;">
+        ${transport?'已配置厂商推送通道，下发后尝试唤醒设备。':'⚠️ 未配厂商推送（APNs 等）——命令进队列，靠设备 agent 轮询 check-in 拉取执行（实时性取决于轮询间隔）。真实 Apple/Android/Windows 协议纳管需厂商证书。'}
+      </div>
+      <div id="mdm-enroll-out"></div>
+    </div>
+    <div style="margin-bottom:6px;color:var(--txt);">下发命令</div>
+    <div style="margin-bottom:6px;">${cmdBtns}</div>
+    <div id="mdm-profile-pick"></div>
+    ${installed.length?`<div style="margin:10px 0 4px;color:var(--txt);">已装描述文件</div>${installed.map(p=>`<span style="display:inline-block;font-size:11px;background:var(--bg);padding:2px 8px;border-radius:3px;margin:2px;">📄 ${esc(p.profile_name||p.profile_id)} <span style="color:var(--txd);">(${esc(p.state)})</span></span>`).join('')}`:''}
+    <div style="margin:12px 0 4px;color:var(--txt);">命令历史</div>
+    <div style="max-height:200px;overflow:auto;">${cmdRows}</div>`;
+  window._mdmProfiles = profiles;
+}
+async function mdmCmd(type) {
+  const dev = _mdmDev; if (!dev) return;
+  const meta = MDM_CMD[type];
+  const body = { type, payload: {} };
+  if (meta.profile) {
+    const profs = window._mdmProfiles || [];
+    if (!profs.length) { await uiAlert('还没有配置描述文件。先在「配置描述文件」里创建。'); return; }
+    const pick = await uiPrompt('输入要' + (type==='push_profile'?'推送':'移除') + '的描述文件序号：\n' + profs.map((p,i)=>`${i+1}. ${p.name}（${p.kind}）`).join('\n'), '1');
+    if (pick === null) return;
+    const idx = parseInt(pick,10)-1;
+    if (!(idx>=0 && idx<profs.length)) { showToast('序号无效'); return; }
+    body.payload.profile_id = profs[idx].id;
+  }
+  if (type==='lock') { const msg = await uiPrompt('锁屏留言（可空）：', ''); if (msg===null) return; if (msg) body.payload.message = msg; }
+  if (meta.danger) {
+    const v = await uiPrompt(`【${meta.label}】不可恢复。确认请输入：${meta.danger}`, '', { danger:true });
+    if (v === null) return;
+    if (v.trim() !== meta.danger) { showToast('确认口令不正确，已取消'); return; }
+    body.confirm = v.trim();
+  }
+  const { ok, data } = await api('POST', '/admin/devices/' + dev.id + '/commands', body);
+  if (!ok) { showToast('下发失败：' + (data?.error||'')); return; }
+  showToast(data.pushed ? '已下发并唤醒设备' : '已加入命令队列，等设备拉取');
+  await refreshMdmPanel();
+}
+async function mdmCancel(cid) {
+  const { ok } = await api('POST', '/admin/devices/' + _mdmDev.id + '/commands/' + cid + '/cancel', {});
+  if (ok) { showToast('已取消'); refreshMdmPanel(); }
+}
+async function mdmEnroll() {
+  const { ok, data } = await api('POST', '/admin/devices/' + _mdmDev.id + '/enroll', {});
+  if (!ok) { showToast(data?.error||'失败'); return; }
+  _mdmDev.enroll_status = 'pending';
+  const out = document.getElementById('mdm-enroll-out');
+  if (out) out.innerHTML = `<div style="margin-top:8px;background:var(--sf);border:1px solid var(--ac);border-radius:4px;padding:8px;font-size:11px;word-break:break-all;">
+    <b style="color:var(--err);">仅显示一次，请复制给设备 agent：</b><br>
+    device_id：<code>${esc(data.device_id)}</code><br>
+    secret：<code>${esc(data.secret)}</code><br>
+    check-in URL：<code>${esc(data.checkin_url)}</code></div>`;
+  loadDevices(_devCtx);
+}
+async function mdmUnenroll() {
+  if (!await uiConfirm('解除纳管？设备将不再受管，已装描述文件记录清除（台账保留）。')) return;
+  const { ok } = await api('POST', '/admin/devices/' + _mdmDev.id + '/unenroll', {});
+  if (ok) { showToast('已解除纳管'); _mdmDev.enroll_status='unenrolled'; _mdmDev.lock_state=null; refreshMdmPanel(); loadDevices(_devCtx); }
+}
+
+// 配置描述文件管理
+async function openMdmProfiles() {
+  const m = document.getElementById('mdmprof-modal');
+  m.innerHTML = `<div class="modal" style="min-width:460px;max-width:620px;text-align:left;">
+    <h3 style="margin-bottom:4px;">MDM 配置描述文件</h3>
+    <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">配置载荷（WiFi/限制/证书…）以 JSON 描述，经「推送描述文件」命令下发给设备。</div>
+    <div id="mdmprof-body" style="font-size:13px;">加载中…</div>
+    <div style="display:flex;justify-content:space-between;margin-top:14px;">
+      <button class="btn primary" onclick="editMdmProfile(null)">+ 新建描述文件</button>
+      <button class="btn" onclick="document.getElementById('mdmprof-modal').classList.remove('show')">关闭</button>
+    </div></div>`;
+  m.classList.add('show');
+  await refreshMdmProfiles();
+}
+async function refreshMdmProfiles() {
+  const box = document.getElementById('mdmprof-body'); if (!box) return;
+  const { ok, data } = await api('GET', '/admin/mdm/profiles');
+  if (!ok) { box.innerHTML = '<span style="color:var(--err);">'+esc(data?.error||'加载失败')+'</span>'; return; }
+  window._mdmProfKinds = data.kinds || ['apple','google','microsoft','generic'];
+  const list = data.profiles || [];
+  box.innerHTML = list.length ? list.map(p => `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--bd);">
+    <span style="flex:1;"><b style="color:var(--txt);">${esc(p.name)}</b> <span style="font-size:10px;background:var(--bg);padding:1px 6px;border-radius:3px;">${esc(p.kind)}</span>${p.in_use?` <span style="color:var(--txd);font-size:10px;">· 已装 ${p.in_use}</span>`:''}${p.note?`<br><span style="color:var(--txd);font-size:11px;">${esc(p.note)}</span>`:''}</span>
+    <button class="btn" style="font-size:10px;padding:1px 7px;" onclick='editMdmProfile(${JSON.stringify(p).replace(/'/g,"&#39;")})'>编辑</button>
+    <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick="delMdmProfile('${p.id}','${esc(p.name)}')">删除</button>
+  </div>`).join('') : '<div style="color:var(--txd);padding:6px 0;">暂无描述文件</div>';
+}
+async function editMdmProfile(p) {
+  const kinds = window._mdmProfKinds || ['apple','google','microsoft','generic'];
+  const inp = 'box-sizing:border-box;width:100%;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);';
+  let payloadStr = '{\n  \n}';
+  if (p && p.payload) { try { payloadStr = JSON.stringify(JSON.parse(p.payload), null, 2); } catch(_) { payloadStr = p.payload; } }
+  const orgOpts = `<option value="">全局（不归属组织）</option>` + (_devCache.orgs||[]).map(o=>`<option value="${esc(o.id)}" ${p&&p.subject_id===o.id?'selected':''}>${esc(o.name)}</option>`).join('');
+  const m = document.getElementById('mdmprof-modal');
+  m.innerHTML = `<div class="modal" style="min-width:460px;max-width:600px;text-align:left;">
+    <h3 style="margin-bottom:12px;">${p?'编辑':'新建'}描述文件</h3>
+    <input type="hidden" id="mp-id" value="${p?esc(p.id):''}">
+    <div class="settings-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <label style="font-size:12px;color:var(--txd);">名称<input id="mp-name" style="${inp}" value="${p?esc(p.name):''}"></label>
+      <label style="font-size:12px;color:var(--txd);">类型<select id="mp-kind" style="${inp}">${kinds.map(k=>`<option value="${k}" ${p&&p.kind===k?'selected':''}>${k}</option>`).join('')}</select></label>
+    </div>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-top:10px;">所属组织<select id="mp-subject" style="${inp}">${orgOpts}</select></label>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-top:10px;">配置载荷（JSON）<textarea id="mp-payload" rows="8" style="${inp}resize:vertical;font-family:monospace;">${esc(payloadStr)}</textarea></label>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-top:10px;">备注<input id="mp-note" style="${inp}" value="${p?esc(p.note||''):''}"></label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="btn" onclick="openMdmProfiles()">返回</button>
+      <button class="btn primary" onclick="saveMdmProfile()">保存</button>
+    </div></div>`;
+}
+async function saveMdmProfile() {
+  const id = document.getElementById('mp-id').value;
+  const body = {
+    name: document.getElementById('mp-name').value.trim(),
+    kind: document.getElementById('mp-kind').value,
+    subject_id: document.getElementById('mp-subject').value || null,
+    payload: document.getElementById('mp-payload').value,
+    note: document.getElementById('mp-note').value,
+  };
+  const { ok, data } = id ? await api('PATCH', '/admin/mdm/profiles/' + id, body) : await api('POST', '/admin/mdm/profiles', body);
+  if (ok) { showToast('已保存'); openMdmProfiles(); } else showToast('保存失败：' + (data?.error||''));
+}
+async function delMdmProfile(id, name) {
+  if (!await uiConfirm(`删除描述文件「${name}」？`)) return;
+  const { ok, data } = await api('DELETE', '/admin/mdm/profiles/' + id);
+  if (ok) { showToast('已删除'); refreshMdmProfiles(); } else showToast('删除失败：' + (data?.error||''));
 }
 
 // ── 管理端：门禁管理 ──

@@ -5,7 +5,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const mdm = require('./mdm');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const contactUtil = require('./contacts');
@@ -4936,7 +4937,7 @@ router.get('/admin/devices', requireAuth, (req, res) => {
   const orgs = sys ? oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name }))
                    : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
   const doors = access.allDoors.all().map(d => ({ id: d.id, name: d.name }));
-  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys });
+  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured() });
 });
 router.post('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 2);
@@ -4961,7 +4962,183 @@ router.delete('/admin/devices/:id', requireAuth, (req, res) => {
   const dev = devices.get.get(req.params.id);
   if (!dev) return res.status(404).json({ error: '设备不存在' });
   if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  deviceCommands.removeByDevice.run(dev.id);
+  deviceProfiles.removeByDevice.run(dev.id);
   devices.remove.run(dev.id);
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════
+// MDM 设备纳管（v3.5.82）：命令下发 / 纳管 / 配置描述文件 / 设备代理 check-in
+// 权限沿用设备：系统管理员 或 该设备所属组织的组织管理员（canManageDevice）
+// ══════════════════════════════════════════
+const mdmProfileExists = id => !!mdmProfiles.get.get(id);
+// 命令回报的副作用（要动多张表）：锁定态 / 已装描述文件 / 退役
+function onCommandAcked(cmd, status) {
+  if (status !== 'acked') return;
+  if (cmd.type === 'lock')   devices.setLock.run('locked', cmd.device_id);
+  if (cmd.type === 'unlock' || cmd.type === 'clear_passcode') devices.setLock.run(null, cmd.device_id);
+  if (cmd.type === 'retire') { devices.setEnroll.run('retired', null, cmd.device_id); deviceProfiles.removeByDevice.run(cmd.device_id); }
+  if (cmd.type === 'wipe')   { deviceProfiles.removeByDevice.run(cmd.device_id); devices.setLock.run(null, cmd.device_id); }
+  let pl = {}; try { pl = JSON.parse(cmd.payload || '{}'); } catch (_) {}
+  if (cmd.type === 'push_profile' && pl.profile_id)   deviceProfiles.put.run(cmd.device_id, pl.profile_id, 'installed');
+  if (cmd.type === 'remove_profile' && pl.profile_id) deviceProfiles.remove.run(cmd.device_id, pl.profile_id);
+}
+
+// 下发命令
+router.post('/admin/devices/:id/commands', requireAuth, async (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  const type = String(req.body?.type || '');
+  const meta = mdm.COMMAND_TYPES[type];
+  if (!meta) return res.status(400).json({ error: '未知的命令类型' });
+  // 危险操作（擦除/退役）强确认
+  if (meta.danger) {
+    const phrase = mdm.DANGER_CONFIRM[type];
+    if (String(req.body?.confirm || '').trim() !== phrase)
+      return res.status(400).json({ error: `危险操作需输入确认口令「${phrase}」`, confirm_text: phrase });
+  }
+  const v = mdm.validateCommand(type, req.body?.payload, { profileExists: mdmProfileExists });
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const id = uuidv4();
+  deviceCommands.insert.run(id, dev.id, type, JSON.stringify(v.payload), 'pending', req.user.uid);
+  devices.markPushed.run(dev.id);
+  audit('device.command_issued', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, name: dev.name, type } });
+  let wake = { pushed: false };
+  try { wake = await mdm.pushWake(dev); } catch (_) {}
+  res.json({ success: true, id, pushed: wake.pushed, transport: mdm.transportConfigured() });
+});
+// 命令历史
+router.get('/admin/devices/:id/commands', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev, false)) return res.status(403).json({ error: '无权查看' });
+  const cmds = deviceCommands.byDevice.all(dev.id).map(c => ({ ...c, label: (mdm.COMMAND_TYPES[c.type] || {}).label || c.type }));
+  res.json({ success: true, commands: cmds, types: mdm.COMMAND_TYPES, profiles: deviceProfiles.byDevice.all(dev.id) });
+});
+// 取消未执行命令
+router.post('/admin/devices/:id/commands/:cid/cancel', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  const cmd = deviceCommands.get.get(req.params.cid);
+  if (!cmd || cmd.device_id !== dev.id) return res.status(404).json({ error: '命令不存在' });
+  deviceCommands.cancel.run(cmd.id);
+  res.json({ success: true });
+});
+// 生成 / 重置纳管 enroll secret（明文只返回一次；设备 agent 用它 check-in）
+router.post('/admin/devices/:id/enroll', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  const { secret, hash } = mdm.genEnrollSecret();
+  devices.setEnroll.run('pending', hash, dev.id);
+  audit('device.enroll_reset', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id } });
+  const base = (process.env.BASE_URL || '').replace(/\/$/, '');
+  res.json({ success: true, device_id: dev.id, secret, checkin_url: base + '/api/mdm/checkin' });
+});
+// 解除纳管（清 enroll + 已装描述文件；不删设备台账）
+router.post('/admin/devices/:id/unenroll', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  devices.setEnroll.run('unenrolled', null, dev.id);
+  devices.setLock.run(null, dev.id);
+  deviceProfiles.removeByDevice.run(dev.id);
+  audit('device.unenrolled', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id } });
+  res.json({ success: true });
+});
+
+// 配置描述文件 CRUD（读 Lv.3 / 写 Lv.2；组织管理员限本组织）
+function canManageProfile(req, p, write = true) {
+  if (isSysAdmin(req, write ? 2 : 3)) return true;
+  return !!(p && p.subject_id && oauthSubjects.isAdmin.get(p.subject_id, req.user.uid));
+}
+const MDM_PROFILE_KINDS = ['apple', 'google', 'microsoft', 'generic'];
+router.get('/admin/mdm/profiles', requireAuth, (req, res) => {
+  const sys = isSysAdmin(req, 3);
+  if (!sys && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权' });
+  let list = mdmProfiles.all.all();
+  if (!sys) { const mine = new Set(myManagedOrgs(req).map(o => o.id)); list = list.filter(p => p.subject_id && mine.has(p.subject_id)); }
+  res.json({ success: true, profiles: list.map(p => ({ ...p, in_use: deviceProfiles.usingProfile.get(p.id).n })), kinds: MDM_PROFILE_KINDS });
+});
+function profileFromBody(req, body) {
+  const kind = MDM_PROFILE_KINDS.includes(body.kind) ? body.kind : 'apple';
+  const name = String(body.name || '').trim().slice(0, 80);
+  if (!name) return { error: '请填写描述文件名称' };
+  let payload = '{}';
+  if (body.payload != null) {
+    if (typeof body.payload === 'string') { try { JSON.parse(body.payload || '{}'); payload = body.payload; } catch (_) { return { error: '配置载荷不是合法 JSON' }; } }
+    else { try { payload = JSON.stringify(body.payload); } catch (_) { return { error: '配置载荷无法序列化' }; } }
+  }
+  let subject_id = body.subject_id ? String(body.subject_id) : null;
+  if (subject_id && !oauthSubjects.get.get(subject_id)) return { error: '所属组织不存在' };
+  if (!isSysAdmin(req, 2)) { if (!subject_id || !canManageOrg(req, subject_id)) return { error: '只能归到你管理的组织' }; }
+  return { val: { name, kind, payload, subject_id, note: String(body.note || '').slice(0, 300) } };
+}
+router.post('/admin/mdm/profiles', requireAuth, (req, res) => {
+  if (!isSysAdmin(req, 2) && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权' });
+  const r = profileFromBody(req, req.body || {});
+  if (r.error) return res.status(400).json({ error: r.error });
+  const id = uuidv4();
+  mdmProfiles.insert.run(id, r.val.name, r.val.kind, r.val.payload, r.val.subject_id, r.val.note);
+  res.json({ success: true, id });
+});
+router.patch('/admin/mdm/profiles/:id', requireAuth, (req, res) => {
+  const p = mdmProfiles.get.get(req.params.id);
+  if (!p) return res.status(404).json({ error: '描述文件不存在' });
+  if (!canManageProfile(req, p)) return res.status(403).json({ error: '无权' });
+  const r = profileFromBody(req, { ...p, ...req.body });
+  if (r.error) return res.status(400).json({ error: r.error });
+  mdmProfiles.update.run(r.val.name, r.val.kind, r.val.payload, r.val.subject_id, r.val.note, p.id);
+  res.json({ success: true });
+});
+router.delete('/admin/mdm/profiles/:id', requireAuth, (req, res) => {
+  const p = mdmProfiles.get.get(req.params.id);
+  if (!p) return res.status(404).json({ error: '描述文件不存在' });
+  if (!canManageProfile(req, p)) return res.status(403).json({ error: '无权' });
+  mdmProfiles.remove.run(p.id);
+  db.prepare('DELETE FROM device_profiles WHERE profile_id=?').run(p.id);
+  res.json({ success: true });
+});
+
+// ── 设备代理协议（公开路由，用 enroll secret 鉴权，不走 API Key）──
+// agent 轮询 check-in 拉取待执行命令；执行后回报结果。
+function agentDevice(req) {
+  const id = String(req.body?.device_id || '');
+  const secret = String(req.body?.secret || '');
+  const dev = id ? devices.get.get(id) : null;
+  if (!dev || !dev.enroll_hash || !mdm.verifySecret(secret, dev.enroll_hash)) return null;
+  return dev;
+}
+function cmdForAgent(c) {
+  let payload = {}; try { payload = JSON.parse(c.payload || '{}'); } catch (_) {}
+  // push_profile：把描述文件载荷一并带给设备
+  if ((c.type === 'push_profile') && payload.profile_id) {
+    const p = mdmProfiles.get.get(payload.profile_id);
+    if (p) { try { payload.profile = JSON.parse(p.payload || '{}'); } catch (_) {} payload.profile_name = p.name; }
+  }
+  return { id: c.id, type: c.type, payload };
+}
+router.post('/mdm/checkin', (req, res) => {
+  const dev = agentDevice(req);
+  if (!dev) return res.status(401).json({ error: 'enrollment invalid' });
+  if (dev.status === 'disabled' || dev.enroll_status === 'retired') return res.status(403).json({ error: 'device not managed' });
+  devices.checkin.run(req.body?.os_version ? String(req.body.os_version).slice(0, 40) : null,
+                      req.body?.model ? String(req.body.model).slice(0, 80) : null, dev.id);
+  const pending = deviceCommands.pending.all(dev.id);
+  pending.forEach(c => deviceCommands.markSent.run(c.id));
+  res.json({ success: true, commands: pending.map(cmdForAgent) });
+});
+router.post('/mdm/result', (req, res) => {
+  const dev = agentDevice(req);
+  if (!dev) return res.status(401).json({ error: 'enrollment invalid' });
+  const cmd = deviceCommands.get.get(String(req.body?.command_id || ''));
+  if (!cmd || cmd.device_id !== dev.id) return res.status(404).json({ error: 'command not found' });
+  const status = req.body?.status === 'acked' ? 'acked' : 'failed';
+  deviceCommands.ack.run(status, String(req.body?.result || '').slice(0, 2000), cmd.id);
+  onCommandAcked(cmd, status);
   res.json({ success: true });
 });
 

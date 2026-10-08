@@ -219,6 +219,14 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS twofa_recovery_codes (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, code_hash TEXT NOT NULL,
   used INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// MDM 纳管（v3.5.82）：设备补列——纳管状态 / agent 鉴权密钥哈希 / 系统版本 / 型号 / 锁定态 / 下发时间
+try { db.exec("ALTER TABLE devices ADD COLUMN enroll_status TEXT NOT NULL DEFAULT 'unenrolled'"); } catch(_) {}  // unenrolled|pending|enrolled|retired
+try { db.exec('ALTER TABLE devices ADD COLUMN enroll_hash TEXT'); } catch(_) {}       // agent check-in 用的 enroll secret 的 sha256
+try { db.exec('ALTER TABLE devices ADD COLUMN os_version TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN model TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN supervised INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN lock_state TEXT'); } catch(_) {}          // null|locked（agent 回报）
+try { db.exec('ALTER TABLE devices ADD COLUMN last_command_at TEXT'); } catch(_) {}
 // Passkey（WebAuthn 凭据）
 try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_id TEXT NOT NULL UNIQUE,
@@ -913,6 +921,43 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS devices (
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_devices_subject ON devices(subject_id)'); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(owner_user_id)'); } catch(_) {}
+
+// ── MDM 设备管理纳管（v3.5.82）──
+// 真实厂商协议（Apple MDM over APNs / Android Management API / Windows MDM）需要厂商证书，本机无法联调、
+// 作为「传输适配器」gated（见 server/mdm.js）。核心是「拉取式设备代理」：设备 agent 用 enroll secret 轮询
+// check-in 拉取待执行命令、回报结果——传输无关、可单测。device_commands 是命令队列，mdm_profiles 是配置描述文件。
+try { db.exec(`CREATE TABLE IF NOT EXISTS device_commands (
+  id          TEXT PRIMARY KEY,
+  device_id   TEXT NOT NULL,
+  type        TEXT NOT NULL,                      -- lock|unlock|restart|clear_passcode|locate|wipe|retire|push_profile|remove_profile|custom
+  payload     TEXT NOT NULL DEFAULT '{}',         -- JSON：锁屏留言/PIN、push_profile 的 profile_id 等
+  status      TEXT NOT NULL DEFAULT 'pending',    -- pending|sent|acked|failed|canceled
+  result      TEXT NOT NULL DEFAULT '',           -- agent 回报（JSON/文本）
+  issued_by   TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  sent_at     TEXT,
+  acked_at    TEXT
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_devcmd_device ON device_commands(device_id, status)'); } catch(_) {}
+// 配置描述文件（WiFi/限制/证书…以 JSON payload 描述）；push_profile 命令引用它
+try { db.exec(`CREATE TABLE IF NOT EXISTS mdm_profiles (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL DEFAULT '',
+  kind        TEXT NOT NULL DEFAULT 'apple',      -- apple|google|microsoft|generic
+  payload     TEXT NOT NULL DEFAULT '{}',         -- JSON 配置载荷
+  subject_id  TEXT,                               -- 归属组织（空=全局）
+  note        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+// 设备已装描述文件（push_profile acked 后写入；remove_profile 后删）
+try { db.exec(`CREATE TABLE IF NOT EXISTS device_profiles (
+  device_id    TEXT NOT NULL,
+  profile_id   TEXT NOT NULL,
+  state        TEXT NOT NULL DEFAULT 'installed', -- installed|pending|failed
+  installed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (device_id, profile_id)
+)`); } catch(_) {}
 
 // 成员多联系方式（v3.5.63）：一个成员可挂多个手机/邮箱（上限按组织/全局可配）。
 // 企业微信登录把成员的 mobile/email/biz_mail 作初始数据灌进来（source=wecom*），之后管理端/用户端可增删。
@@ -1620,6 +1665,41 @@ const deviceStmts = {
   setStatus: db.prepare("UPDATE devices SET status=?, updated_at=datetime('now') WHERE id=?"),
   touch: db.prepare("UPDATE devices SET last_seen=datetime('now') WHERE id=?"),
   remove: db.prepare('DELETE FROM devices WHERE id=?'),
+  // MDM（v3.5.82）
+  setEnroll:   db.prepare("UPDATE devices SET enroll_status=?, enroll_hash=?, updated_at=datetime('now') WHERE id=?"),
+  setEnrollStatus: db.prepare("UPDATE devices SET enroll_status=?, updated_at=datetime('now') WHERE id=?"),
+  byEnrollHash: db.prepare('SELECT * FROM devices WHERE enroll_hash=?'),
+  checkin:     db.prepare("UPDATE devices SET last_seen=datetime('now'), enroll_status='enrolled', os_version=COALESCE(?,os_version), model=COALESCE(?,model) WHERE id=?"),
+  setLock:     db.prepare("UPDATE devices SET lock_state=?, updated_at=datetime('now') WHERE id=?"),
+  markPushed:  db.prepare("UPDATE devices SET last_command_at=datetime('now') WHERE id=?"),
+};
+
+// MDM：设备命令队列 + 配置描述文件（v3.5.82）
+const deviceCmdStmts = {
+  insert:   db.prepare('INSERT INTO device_commands (id,device_id,type,payload,status,issued_by) VALUES (?,?,?,?,?,?)'),
+  get:      db.prepare('SELECT * FROM device_commands WHERE id=?'),
+  byDevice: db.prepare('SELECT * FROM device_commands WHERE device_id=? ORDER BY created_at DESC LIMIT 200'),
+  pending:  db.prepare("SELECT * FROM device_commands WHERE device_id=? AND status='pending' ORDER BY created_at"),
+  pendingCount: db.prepare("SELECT COUNT(*) n FROM device_commands WHERE device_id=? AND status='pending'"),
+  markSent: db.prepare("UPDATE device_commands SET status='sent', sent_at=datetime('now') WHERE id=?"),
+  ack:      db.prepare("UPDATE device_commands SET status=?, result=?, acked_at=datetime('now') WHERE id=?"),
+  cancel:   db.prepare("UPDATE device_commands SET status='canceled' WHERE id=? AND status='pending'"),
+  removeByDevice: db.prepare('DELETE FROM device_commands WHERE device_id=?'),
+};
+const mdmProfileStmts = {
+  all:    db.prepare('SELECT * FROM mdm_profiles ORDER BY created_at DESC'),
+  get:    db.prepare('SELECT * FROM mdm_profiles WHERE id=?'),
+  insert: db.prepare('INSERT INTO mdm_profiles (id,name,kind,payload,subject_id,note) VALUES (?,?,?,?,?,?)'),
+  update: db.prepare("UPDATE mdm_profiles SET name=?,kind=?,payload=?,subject_id=?,note=?,updated_at=datetime('now') WHERE id=?"),
+  remove: db.prepare('DELETE FROM mdm_profiles WHERE id=?'),
+};
+const deviceProfileStmts = {
+  byDevice: db.prepare(`SELECT dp.*, p.name AS profile_name, p.kind AS profile_kind FROM device_profiles dp
+                        LEFT JOIN mdm_profiles p ON p.id=dp.profile_id WHERE dp.device_id=? ORDER BY dp.installed_at DESC`),
+  put:      db.prepare("INSERT INTO device_profiles (device_id,profile_id,state,installed_at) VALUES (?,?,?,datetime('now')) ON CONFLICT(device_id,profile_id) DO UPDATE SET state=excluded.state, installed_at=datetime('now')"),
+  remove:   db.prepare('DELETE FROM device_profiles WHERE device_id=? AND profile_id=?'),
+  removeByDevice: db.prepare('DELETE FROM device_profiles WHERE device_id=?'),
+  usingProfile: db.prepare('SELECT COUNT(*) n FROM device_profiles WHERE profile_id=?'),
 };
 
 // 成员多联系方式（v3.5.63）
@@ -1742,6 +1822,9 @@ module.exports = {
   memoAtt: memoAttStmts,
   access: accessStmts,
   devices: deviceStmts,
+  deviceCommands: deviceCmdStmts,
+  mdmProfiles: mdmProfileStmts,
+  deviceProfiles: deviceProfileStmts,
   contacts: contactStmts,
   departments: deptStmts,
   smsChannels: smsChannelStmts,

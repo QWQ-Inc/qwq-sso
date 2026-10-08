@@ -4,6 +4,15 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.82 — MDM 设备纳管（命令下发 + 拉取式代理 + 配置描述文件）
+
+- 承接 v3.5.21（设备管理当时只做登记台账）。真实厂商协议（Apple MDM/APNs、Android、Windows）需厂商证书，本机无法联调 → 作为「传输适配器」gated；落地核心是**拉取式设备代理**：设备 agent 用 enroll secret 轮询 check-in 拉取命令、回报结果，传输无关、可单测。
+- 命令：锁定/解锁/重启/清除密码/定位/远程擦除/退役/推送·移除配置描述文件/自定义（擦除·退役强确认口令）。
+- 新 `server/mdm.js`（命令校验 / enroll secret / 传输门控）+ `device_commands`/`mdm_profiles`/`device_profiles` 表 + devices 补纳管列。
+- 管理端：设备行「MDM」面板（生成纳管 token + check-in URL、命令按钮、历史、已装描述文件）+「配置描述文件」CRUD。权限沿用设备（系统管理员 / 本组织的组织管理员）。设备代理公开协议 `POST /api/mdm/checkin` + `/api/mdm/result`（enroll secret 鉴权）。
+- 配 `MDM_APNS_TOPIC/KEY/KEY_ID/TEAM_ID` 才会主动推送唤醒设备，否则靠轮询。
+- 测试：mdm-test.js 24 项全过（命令校验、enroll secret、队列 check-in/ack 副作用）。真实厂商证书纳管未联调。
+
 ## v3.5.81.1 — 企业微信联系方式：读取 Secret 填反自动纠正 + 诊断按钮
 
 - 承接 v3.5.80.1（用户反馈「仍没有解决」）。若**读取用 Secret 本身无权读通讯录详情**（48009），user/get 补全那条路根本到不了——本版从两头解决：

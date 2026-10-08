@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.81.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.82**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,37 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.82 MDM 设备纳管（命令下发 + 拉取式代理 + 配置描述文件）（用户反馈）
+
+三级版本。用户：「把 mdm 的模块做了吧」——v3.5.21 设备管理只做了登记台账，当时把「真实 MDM / 协议纳管（下发配置 / 锁定 / 擦除）」按确认推迟；本版做纳管命令层。
+
+### ⚠️ 落地形态：拉取式设备代理（传输无关、可单测）
+真实厂商协议（Apple MDM over APNs / Android Management API / Windows MDM）需要**厂商证书 + 推送通道**，本机无证书无法联调——与 pkpass / KYC 同样 gated。所以 MDM 落地为**拉取式 agent 协议**：设备 agent 用 enroll secret 轮询 check-in 拉取待执行命令、回报结果。命令下发 / 队列 / 回报副作用全可单测；真实 APNs 唤醒作为「传输适配器」gated（`MDM_APNS_*` 配了才主动推送唤醒，否则纯靠轮询，不影响命令送达）。
+
+### 数据（db.js）
+- `devices` 补列：`enroll_status`（unenrolled|pending|enrolled|retired）、`enroll_hash`（agent 鉴权 secret 的 sha256）、`os_version`/`model`/`supervised`/`lock_state`/`last_command_at`。
+- 新表 `device_commands`（命令队列：type/payload/status[pending|sent|acked|failed|canceled]/result/issued_by）、`mdm_profiles`（配置描述文件：name/kind/payload JSON/subject_id/note）、`device_profiles`（设备已装描述文件）。`deviceStmts` 加 MDM 语句 + `deviceCommands`/`mdmProfiles`/`deviceProfiles` 三套语句集并导出。
+
+### 核心（server/mdm.js 新文件）
+- `COMMAND_TYPES`（lock/unlock/restart/clear_passcode/locate/wipe/retire/push_profile/remove_profile/custom，带 label/danger/needsProfile）、`DANGER_CONFIRM`（wipe=擦除设备 / retire=退役设备）。
+- `validateCommand(type,payload,{profileExists})`：归一化（lock 留言 + PIN 只取数字、push/remove_profile 校验 profile 存在、custom 非空）。
+- `genEnrollSecret`（明文 + sha256）/ `hashSecret` / `verifySecret`（timingSafeEqual）；`transportConfigured`（`MDM_APNS_TOPIC/KEY/KEY_ID/TEAM_ID` 齐全）/ `pushWake`（gated no-op）。
+
+### 接口（api.js，权限沿用 `canManageDevice`：系统管理员或该设备所属组织的组织管理员）
+- `POST /admin/devices/:id/commands`（下发；wipe/retire 强确认口令）、`GET .../commands`（历史 + 已装描述文件）、`POST .../commands/:cid/cancel`、`POST .../enroll`（生成/重置 enroll secret，明文只回一次 + check-in URL）、`POST .../unenroll`（解除纳管清描述文件，台账保留）。
+- `onCommandAcked(cmd,status)`：回报副作用——lock→`lock_state=locked`、unlock/clear_passcode→清锁、retire→退役清 enroll+描述文件、wipe→清描述文件、push/remove_profile→改 `device_profiles`。
+- 配置描述文件 CRUD `/admin/mdm/profiles`（读 Lv.3 / 写 Lv.2；组织管理员限本组织；payload 校验合法 JSON）。
+- **设备代理公开协议**（不走 API Key，用 enroll secret 鉴权）：`POST /api/mdm/checkin`（验 secret → 置 enrolled + 回填 os/model → 返回 pending 命令并标 sent；push_profile 带上描述文件载荷）、`POST /api/mdm/result`（回报 acked/failed → onCommandAcked）。删设备连带清命令 + 描述文件。
+- init.js ENV_KEYS 加 `MDM_APNS_TOPIC/KEY/KEY_ID/TEAM_ID`。
+
+### 前端（dashboard.html）
+- 设备行（apple/google/microsoft 才有）加「MDM」按钮（带 ✅ 已纳管 / … 待纳管 / 🔒 已锁徽章）→ `openMdmPanel`：纳管状态 + 生成/重置 token（明文一次性展示 + check-in URL）+ 解除纳管、命令按钮网格（危险操作走 uiPrompt 强确认口令、lock 可填留言、push/remove_profile 选描述文件）、命令历史（可取消 pending）、已装描述文件；未配推送时提示靠轮询。
+- 设备页头「配置描述文件」按钮 → `openMdmProfiles`：描述文件 CRUD（名称/类型/所属组织/JSON 载荷/备注）。
+
+### 测试
+- `scratchpad/mdm-test.js` 24 项全过：① mdm.js（命令校验各分支、lock PIN 只取数字、danger 标记、enroll secret 生成/验证/空值、transportConfigured 门控）；② node:sqlite 真表复刻队列——check-in 按 secret 哈希认设备、错 secret 拒、入队→拉取标 sent + 置 enrolled 回填系统版本、onCommandAcked 副作用（lock 锁定 / push_profile 记已装 / retire 退役清 enroll+描述文件 / failed 无副作用）。dashboard 内联 JS 解析通过。
+- ⚠️ 真实厂商协议纳管（Apple/Android/Windows 的证书 + 推送）未联调（本机无证书）；拉取式 agent 协议是工作路径，真实 APNs 唤醒 gated 待配证书。HTTP 层因无 node_modules 未端到端跑，逻辑靠 mdm 单测 + 队列复刻覆盖。
 
 ## v3.5.81.1 企业微信联系方式：读取 Secret 填反自动纠正 + 诊断按钮（用户反馈）
 
