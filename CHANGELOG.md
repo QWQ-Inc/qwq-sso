@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.83.1 — MDM 参考 agent 填入各 OS 真实动作
+
+- `tools/mdm-agent/agent.js` 的 handlers 从演练占位换成 Windows / macOS / Linux 的真实动作：
+  - **lock** Win `LockWorkStation` / mac `CGSession -suspend` / Linux 依次试 `loginctl lock-session`、`xdg-screensaver`、`gnome-screensaver-command`、`dm-tool`、`xflock4`。
+  - **restart** 真重启（延迟几秒先回报）；**locate** 回主机名+内网IP+平台；**push_profile/remove_profile** 真落盘/删除，mac 带 `.mobileconfig` 时 `profiles install/remove`。
+- 安全门禁：**wipe** 需 `--allow-wipe` + 环境变量 `MDM_WIPE_CMD`（自备真实擦除命令）两者齐备才跑（桌面无干净的用户态出厂擦除，不内置危险命令）；**custom** 需 `MDM_ALLOW_CUSTOM=yes`。
+- 测试：mock check-in 服务端跑 agent 一轮，locate/unlock/push_profile/remove_profile 四条安全命令 8 项断言全过（真写/真删描述文件、回报 acked）。lock/restart/wipe 破坏性未触发，靠逻辑+语法覆盖。
+
 ## v3.5.83 — 企业微信登录抓取手机/邮箱（snsapi_privateinfo）+ 空字段提示改准
 
 - 根因查实（非猜）：企业微信 2022-06-20 起，**新建**的自建应用 / 通讯录同步助手用 `user/get` 读通讯录不再返回手机/邮箱等敏感字段，后台勾「字段权限」对新应用的 user/get 也不生效（只有升级前的老应用能拿）。errcode=0 但字段空 = 平台限制，不是 IP 问题（IP 不对会 60020）。

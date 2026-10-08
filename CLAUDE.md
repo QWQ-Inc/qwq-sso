@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.83**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.83.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,21 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.83.1 MDM 参考 agent 填入各 OS 真实动作（用户反馈·阶段A）
+
+四级补丁（辅助工具，不改 SSO 应用行为）。承接 MDM「四类设备」的阶段划分，用户选「先做阶段 A = Windows/Mac/Linux 电脑的真实命令」。把 `tools/mdm-agent/agent.js` 的 handlers 从占位换成各 OS 真实动作。
+
+- **lock**：Win `rundll32 user32.dll,LockWorkStation`；mac `CGSession -suspend`（切登录窗=锁屏）；Linux `runFirst` 依次试 `loginctl lock-session` / `xdg-screensaver lock` / `gnome-screensaver-command -l` / `dm-tool lock` / `xflock4`（桌面环境五花八门，试到第一个成功的）。
+- **restart**：真重启，但 `spawnDetached` 延迟几秒（Win `shutdown /r /t 8`；mac/Linux `sh -c 'sleep 6; shutdown -r now'`）——先让本轮 result 回报出去，agent 再倒下。mac/Linux 需足够权限。
+- **locate**：主机名 + 内网 IPv4 + 平台。**unlock/clear_passcode**：桌面系统无安全的远程等价动作，回报已记录。
+- **push_profile/remove_profile**：真落盘 / 删除 `~/.qwq-mdm/profiles/<id>.json`；macOS 若 payload 带 `mobileconfig`（plist 文本）额外写 `.mobileconfig` 并 `profiles install/remove`（需 root，新版 macOS 对 profiles 有限制，失败如实回报）。
+- **安全门禁（关键）**：
+  - **wipe** 双门——`--allow-wipe` 开 **且** 环境变量 `MDM_WIPE_CMD`（操作者自备的真实出厂擦除命令）才真跑，`spawnDetached` 执行。**故意不内置** `rm -rf`/格式化：桌面系统没有干净的用户态出厂擦除，远程队列自动跑它=给整批机器埋雷。服务端下发 wipe 本就要强确认口令「擦除设备」=共三道门。
+  - **custom** 默认拒绝，需 `MDM_ALLOW_CUSTOM=yes` 才执行 `payload.command`（远程 RCE 风险自担）。
+- 新增执行辅助 `runFirst`（依次试命令）、`spawnDetached`（后台脱离执行）；`require` 加 `spawn`；启动横幅打印平台。
+- 测试：`scratchpad/mdm-agent-real-test.js` 起 mock check-in 服务端跑真 agent 一轮，发 locate/unlock/push_profile/remove_profile 四条**不破坏系统**的命令，8 项全过（locate 回主机名/IP/平台、push_profile 真写文件、remove_profile 真删、都回报 acked）。lock/restart/wipe 破坏性未触发（直白的各 OS 命令，靠语法+逻辑覆盖）。
+- ⚠️ 阶段 B/C/D（iPhone=Apple MDM+APNs 证书、Chromebook=Google 管理控制台、Android=Android Management API/Device Owner APK）都卡在用户须先拿厂商凭据，未动；待用户拿到凭据再接对应适配。
 
 ## v3.5.83 企业微信登录抓取手机/邮箱（snsapi_privateinfo）+ 空字段提示改准（用户反馈）
 
