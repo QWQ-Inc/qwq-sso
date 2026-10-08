@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.82.1 — MDM 参考设备代理（tools/mdm-agent）
+
+- 给拉取式纳管配可直接运行的参考 agent：`tools/mdm-agent/agent.js`（零依赖 Node，跨平台）+ README + config.example.json。
+- 定时 check-in 拉命令 → 本机执行 → 回报。handlers 默认安全占位（Windows 真锁屏，wipe 默认只演练需 --allow-wipe，custom 不执行）；真机真实动作按 OS 自行填。
+- 测试：起 mock 服务端到端跑通（check-in → 执行 locate+push_profile → 两条 acked → 本地写描述文件），协议契约与服务端一致。
+
 ## v3.5.82 — MDM 设备纳管（命令下发 + 拉取式代理 + 配置描述文件）
 
 - 承接 v3.5.21（设备管理当时只做登记台账）。真实厂商协议（Apple MDM/APNs、Android、Windows）需厂商证书，本机无法联调 → 作为「传输适配器」gated；落地核心是**拉取式设备代理**：设备 agent 用 enroll secret 轮询 check-in 拉取命令、回报结果，传输无关、可单测。

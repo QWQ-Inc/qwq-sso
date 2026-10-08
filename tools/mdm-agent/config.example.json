@@ -1,0 +1,7 @@
+{
+  "base": "https://qwqsso.zeabur.app",
+  "device": "在管理端生成纳管 token 后填这里的 device_id",
+  "secret": "在管理端生成纳管 token 后填这里的 secret（只显示一次）",
+  "interval": 30,
+  "allowWipe": false
+}

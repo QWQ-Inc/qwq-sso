@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.82**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.82.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,13 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.82.1 MDM 参考设备代理（tools/mdm-agent）（用户反馈）
+
+四级补丁（附带工具，不改 SSO 应用行为）。用户问「（做法）1 怎么做」——给拉取式纳管配一个可直接运行的参考 agent。
+- 新 `tools/mdm-agent/agent.js`（零依赖 Node，跨平台）+ `README.md` + `config.example.json`：定时 `POST /api/mdm/checkin` 拉命令 → 本机 handlers 执行 → `POST /api/mdm/result` 回报。配置走 `--base/--device/--secret` 或 env 或 `--config`。
+- handlers 默认**安全占位**：lock 在 Windows 真锁屏（`LockWorkStation`）、其余演练；restart 真命令注释掉；**wipe 默认只演练**（需 `--allow-wipe` + 自行填真实擦除）；custom 默认不执行（RCE 风险）；push/remove_profile 落到 `~/.qwq-mdm/profiles/`。retire 清本地缓存并停止 agent。401→token 失效退出，403→已停用/退役退出。
+- ⚠️ 测试：`node --check` 通过；起 mock check-in server 跑一轮端到端——agent check-in 执行 locate + push_profile、两条都回报 acked、本地写出描述文件，协议契约与服务端一致。真机 OS 真实动作（锁定/擦除/装 .mobileconfig）需按本机 OS 自行填 handlers（README 有指引）。
 
 ## v3.5.82 MDM 设备纳管（命令下发 + 拉取式代理 + 配置描述文件）（用户反馈）
 
