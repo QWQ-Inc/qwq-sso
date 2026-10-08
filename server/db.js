@@ -227,6 +227,9 @@ try { db.exec('ALTER TABLE devices ADD COLUMN model TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE devices ADD COLUMN supervised INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 try { db.exec('ALTER TABLE devices ADD COLUMN lock_state TEXT'); } catch(_) {}          // null|locked（agent 回报）
 try { db.exec('ALTER TABLE devices ADD COLUMN last_command_at TEXT'); } catch(_) {}
+// MDM 多传输（v3.5.84）：pull_agent（电脑跑 agent.js）/ apple_mdm / google_chrome / android_mgmt
+try { db.exec("ALTER TABLE devices ADD COLUMN transport TEXT NOT NULL DEFAULT 'pull_agent'"); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN ext_device_id TEXT'); } catch(_) {}   // 厂商侧设备 id（Android resourceName / Chrome deviceId / Apple UDID）
 // Passkey（WebAuthn 凭据）
 try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_id TEXT NOT NULL UNIQUE,
@@ -1672,6 +1675,7 @@ const deviceStmts = {
   checkin:     db.prepare("UPDATE devices SET last_seen=datetime('now'), enroll_status='enrolled', os_version=COALESCE(?,os_version), model=COALESCE(?,model) WHERE id=?"),
   setLock:     db.prepare("UPDATE devices SET lock_state=?, updated_at=datetime('now') WHERE id=?"),
   markPushed:  db.prepare("UPDATE devices SET last_command_at=datetime('now') WHERE id=?"),
+  setTransport: db.prepare("UPDATE devices SET transport=?, ext_device_id=?, updated_at=datetime('now') WHERE id=?"),   // v3.5.84
 };
 
 // MDM：设备命令队列 + 配置描述文件（v3.5.82）

@@ -78,20 +78,187 @@ function verifySecret(secret, hash) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// ── 唤醒传输适配器（gated）──
-// 真实厂商推送需证书：Apple 需 APNs（MDM_APNS_*）、Android 需 Google 服务账号、Windows 需 Intune。
-// 未配置时 pushWake 是 no-op，命令仍进队列等 agent 轮询拉取。
-function transportConfigured() {
-  return !!(process.env.MDM_APNS_TOPIC && process.env.MDM_APNS_KEY && process.env.MDM_APNS_KEY_ID && process.env.MDM_APNS_TEAM_ID);
+// ══════════════════════════════════════════
+// 多传输适配层（v3.5.84）
+//   一台设备走哪条下发通道由 device.transport 决定：
+//     pull_agent    电脑跑 agent.js，被动拉取（现成、已跑通；阶段 A）
+//     apple_mdm     iPhone/iPad/Mac，Apple MDM over APNs（需 Apple MDM 推送证书；阶段 B）
+//     google_chrome Chromebook，Google Admin SDK / Chrome Management API（需 Google 服务账号；阶段 C）
+//     android_mgmt  Android，Android Management API（需 Google Cloud 项目 + enterprise；阶段 D）
+//   厂商通道未配凭据时 gated：命令照样进队列，deliver 返回 pending + transport_not_configured，
+//   管理端标「传输未配置」。配齐凭据后把对应 adapter 的 send() 填成真实调用即可，别处不用改。
+// ⚠️ 厂商 send() 的 API 请求结构按官方文档写好，但本机无凭据无法联调——gated、try/catch、如实回报，
+//    真正投产前需用真实凭据验证一遍。
+// ══════════════════════════════════════════
+const env = (k) => String(process.env[k] || '').trim();
+
+// 本系统命令 → 各厂商命令名（不支持的为 undefined，管理端标「该通道不支持此命令」）
+const VENDOR_CMD = {
+  apple_mdm:     { lock: 'DeviceLock', clear_passcode: 'ClearPasscode', restart: 'RestartDevice', wipe: 'EraseDevice', push_profile: 'InstallProfile', remove_profile: 'RemoveProfile' },
+  google_chrome: { restart: 'REBOOT', wipe: 'REMOTE_POWERWASH' },
+  android_mgmt:  { lock: 'LOCK', clear_passcode: 'RESET_PASSWORD', restart: 'REBOOT', wipe: 'WIPE', retire: 'RELINQUISH_OWNERSHIP' },
+};
+function mapVendorCommand(transport, type) {
+  const m = VENDOR_CMD[transport];
+  return m ? m[type] : undefined;   // pull_agent 不在表里 → undefined（它不做命令名映射，直接排队）
 }
-/** 下发命令后尝试推送唤醒设备立刻 check-in；未配推送则返回 {pushed:false}（靠轮询） */
-async function pushWake(/* device */) {
-  if (!transportConfigured()) return { pushed: false, reason: 'no_transport' };
-  // 真实 APNs 推送在此实现（需 MDM vendor 证书）；本机无证书，保持 gated。
-  return { pushed: false, reason: 'not_implemented' };
+
+// ── Google 服务账号 → access_token（Chrome / Android 共用；RS256 JWT 换 token）──
+// 需环境变量 GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY（PEM，\n 可用字面写）。
+// Chrome(Admin SDK) 还需域级委派管理员邮箱 GOOGLE_ADMIN_SUBJECT。
+function b64url(buf) { return Buffer.from(buf).toString('base64url'); }
+function googleSAConfigured() { return !!(env('GOOGLE_SA_CLIENT_EMAIL') && env('GOOGLE_SA_PRIVATE_KEY')); }
+function buildGoogleAssertion(scope, subject) {
+  const key = env('GOOGLE_SA_PRIVATE_KEY').replace(/\\n/g, '\n');
+  const now = Math.floor(Date.now() / 1000);
+  const claim = { iss: env('GOOGLE_SA_CLIENT_EMAIL'), scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 };
+  if (subject) claim.sub = subject;
+  const signingInput = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' })) + '.' + b64url(JSON.stringify(claim));
+  const sig = crypto.createSign('RSA-SHA256').update(signingInput).sign(key);
+  return signingInput + '.' + b64url(sig);
+}
+async function googleAccessToken(scope, subject) {
+  const assertion = buildGoogleAssertion(scope, subject);
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new Error('Google token 失败：' + (j.error_description || j.error || r.status));
+  return j.access_token;
+}
+
+// ── Apple APNs（MDM 唤醒推送；ES256 JWT provider token）──
+// 需 MDM_APNS_TEAM_ID + MDM_APNS_KEY_ID + MDM_APNS_KEY(.p8 内容) + MDM_APNS_TOPIC（MDM 推送主题）。
+function buildApnsJwt() {
+  const key = env('MDM_APNS_KEY').replace(/\\n/g, '\n');
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64url(JSON.stringify({ alg: 'ES256', kid: env('MDM_APNS_KEY_ID'), typ: 'JWT' }));
+  const body = b64url(JSON.stringify({ iss: env('MDM_APNS_TEAM_ID'), iat: now }));
+  const sig = crypto.createSign('SHA256').update(head + '.' + body).sign({ key, dsaEncoding: 'ieee-p1363' });
+  return head + '.' + body + '.' + b64url(sig);
+}
+
+const TRANSPORTS = {
+  pull_agent: {
+    key: 'pull_agent', label: '设备代理（拉取式·电脑）', kinds: ['apple', 'google', 'microsoft', 'access_controller', 'card_reader'],
+    configured: () => true,
+    // 被动：命令进队列，agent 下次 check-in 拉取执行
+    async deliver() { return { delivered: false, pending: true, reason: 'await_agent' }; },
+  },
+  apple_mdm: {
+    key: 'apple_mdm', label: 'Apple MDM（iPhone/iPad/Mac·APNs）', kinds: ['apple'],
+    envKeys: ['MDM_APNS_TOPIC', 'MDM_APNS_KEY', 'MDM_APNS_KEY_ID', 'MDM_APNS_TEAM_ID'],
+    configured: () => !!(env('MDM_APNS_TOPIC') && env('MDM_APNS_KEY') && env('MDM_APNS_KEY_ID') && env('MDM_APNS_TEAM_ID')),
+    async deliver(device, command) {
+      if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+      const vc = mapVendorCommand('apple_mdm', command.type);
+      if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
+      if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_push_token' };   // 纳管时记下的 APNs device token / PushMagic
+      try {
+        // Apple MDM：APNs 只负责「唤醒」，真正的命令（plist）在设备回连 MDM 端点时取走。
+        // 这里发唤醒推送；MDM 端点（设备→服务端 plist 协议 + .mobileconfig 纳管）需单独实现，拿到 MDM 推送证书后补。
+        const jwt = buildApnsJwt();
+        const http2 = require('http2');
+        await apnsPush(http2, jwt, device.ext_device_id, env('MDM_APNS_TOPIC'));
+        return { delivered: true, pending: true, reason: 'apns_woke_awaiting_mdm_endpoint', vendor: vc };
+      } catch (e) { return { delivered: false, pending: false, reason: 'apns_failed', detail: e.message }; }
+    },
+  },
+  google_chrome: {
+    key: 'google_chrome', label: 'Chromebook（Chrome Management API）', kinds: ['google'],
+    envKeys: ['GOOGLE_SA_CLIENT_EMAIL', 'GOOGLE_SA_PRIVATE_KEY', 'GOOGLE_ADMIN_SUBJECT', 'GOOGLE_CUSTOMER_ID'],
+    configured: () => !!(googleSAConfigured() && env('GOOGLE_ADMIN_SUBJECT')),
+    async deliver(device, command) {
+      if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+      const vc = mapVendorCommand('google_chrome', command.type);
+      if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
+      if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_ext_device_id' };
+      try {
+        const token = await googleAccessToken('https://www.googleapis.com/auth/admin.directory.device.chromeos', env('GOOGLE_ADMIN_SUBJECT'));
+        const customer = env('GOOGLE_CUSTOMER_ID') || 'my_customer';
+        const r = await fetch(`https://admin.googleapis.com/admin/directory/v1/customer/${customer}/devices/chromeos/${encodeURIComponent(device.ext_device_id)}/commands`, {
+          method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ commandType: vc }), signal: AbortSignal.timeout(15000),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return { delivered: false, pending: false, reason: 'chrome_api_error', detail: (j.error && j.error.message) || r.status };
+        return { delivered: true, pending: false, reason: 'issued', vendor: vc, ext_command_id: j.commandId };
+      } catch (e) { return { delivered: false, pending: false, reason: 'chrome_failed', detail: e.message }; }
+    },
+  },
+  android_mgmt: {
+    key: 'android_mgmt', label: 'Android（Android Management API）', kinds: ['google'],
+    envKeys: ['GOOGLE_SA_CLIENT_EMAIL', 'GOOGLE_SA_PRIVATE_KEY', 'ANDROID_ENTERPRISE_NAME'],
+    configured: () => !!(googleSAConfigured() && env('ANDROID_ENTERPRISE_NAME')),
+    async deliver(device, command) {
+      if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+      const vc = mapVendorCommand('android_mgmt', command.type);
+      if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
+      if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_ext_device_id' };
+      try {
+        const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+        // ext_device_id 存完整资源名 enterprises/LC.../devices/xxx
+        const r = await fetch(`https://androidmanagement.googleapis.com/v1/${device.ext_device_id}:issueCommand`, {
+          method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: vc }), signal: AbortSignal.timeout(15000),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return { delivered: false, pending: false, reason: 'android_api_error', detail: (j.error && j.error.message) || r.status };
+        return { delivered: true, pending: false, reason: 'issued', vendor: vc, ext_command_name: j.name };
+      } catch (e) { return { delivered: false, pending: false, reason: 'android_failed', detail: e.message }; }
+    },
+  },
+};
+
+// APNs HTTP/2 推送（MDM 唤醒；payload 对 MDM 是 {"mdm":"<PushMagic>"}，这里用 device.ext_device_id 作 device token）
+function apnsPush(http2, jwt, deviceToken, topic) {
+  return new Promise((resolve, reject) => {
+    const host = env('MDM_APNS_HOST') || 'https://api.push.apple.com';
+    const client = http2.connect(host);
+    client.on('error', reject);
+    const req = client.request({
+      ':method': 'POST', ':path': '/3/device/' + deviceToken,
+      authorization: 'bearer ' + jwt, 'apns-topic': topic, 'apns-push-type': 'mdm',
+    });
+    let status = 0, data = '';
+    req.on('response', (h) => { status = h[':status']; });
+    req.on('data', (d) => data += d);
+    req.on('end', () => { client.close(); status === 200 ? resolve(true) : reject(new Error('APNs ' + status + ' ' + data)); });
+    req.on('error', reject);
+    req.setTimeout(15000, () => req.destroy(new Error('APNs timeout')));
+    req.end(JSON.stringify({ mdm: deviceToken }));
+  });
+}
+
+function transportByKey(k) { return TRANSPORTS[k] || TRANSPORTS.pull_agent; }
+function transportForDevice(device) { return transportByKey((device && device.transport) || 'pull_agent'); }
+function transportKeys() { return Object.keys(TRANSPORTS); }
+/** 给管理端 UI：各传输的 key/label/是否已配凭据/适用设备类型/所需 env */
+function transportsMeta() {
+  return Object.values(TRANSPORTS).map(t => ({ key: t.key, label: t.label, configured: t.configured(), kinds: t.kinds, envKeys: t.envKeys || [] }));
+}
+/** 下发：把命令送到设备的传输通道。pull_agent 返回 await_agent（排队等拉取），厂商通道已配则尝试真实下发 */
+async function deliverCommand(device, command) {
+  const t = transportForDevice(device);
+  try { return Object.assign({ transport: t.key }, await t.deliver(device, command)); }
+  catch (e) { return { transport: t.key, delivered: false, pending: false, reason: 'deliver_error', detail: e.message }; }
+}
+
+// 兼容旧调用：transportConfigured() 现表示「Apple APNs 是否已配」（设备列表徽章仍用）
+function transportConfigured() { return TRANSPORTS.apple_mdm.configured(); }
+/** 旧 pushWake 名保留：pull_agent 设备的唤醒仍是 no-op（靠轮询），厂商设备走 deliverCommand */
+async function pushWake(device, command) {
+  if (!device || (device.transport || 'pull_agent') === 'pull_agent') return { pushed: false, reason: 'await_agent' };
+  const r = await deliverCommand(device, command || { type: 'noop' });
+  return { pushed: !!r.delivered, reason: r.reason, detail: r.detail };
 }
 
 module.exports = {
   COMMAND_TYPES, DANGER_CONFIRM, isCommandType, validateCommand,
   genEnrollSecret, hashSecret, verifySecret, transportConfigured, pushWake,
+  // v3.5.84 多传输
+  TRANSPORTS, mapVendorCommand, transportByKey, transportForDevice, transportKeys, transportsMeta, deliverCommand,
+  buildGoogleAssertion, buildApnsJwt, googleSAConfigured,
 };

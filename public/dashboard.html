@@ -7857,7 +7857,7 @@ async function loadDevices(ctx) {
   const org = _curAdminOrg();
   const { ok, data } = await api('GET', '/admin/devices' + (org ? '?org=' + encodeURIComponent(org) : ''));
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
-  _devCache = { devices: data.devices || [], orgs: data.orgs || [], doors: data.doors || [], kinds: data.kinds || [] };
+  _devCache = { devices: data.devices || [], orgs: data.orgs || [], doors: data.doors || [], kinds: data.kinds || [], transports: data.transports || [], mdm_transport: data.mdm_transport };
   // 类型筛选下拉
   const fk = document.getElementById(_devId(ctx, 'filter-kind'));
   if (fk && fk.options.length <= 1) _devCache.kinds.forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = DEVICE_KIND_LABEL[k] || k; fk.appendChild(o); });
@@ -8001,7 +8001,10 @@ async function refreshMdmPanel() {
   const cmds = cj.ok ? (cj.data.commands || []) : [];
   const installed = cj.ok ? (cj.data.profiles || []) : [];
   const profiles = pj.ok ? (pj.data.profiles || []) : [];
-  const transport = _devCache.mdm_transport;
+  const tKey = cj.ok ? (cj.data.transport || 'pull_agent') : 'pull_agent';
+  const tLabel = cj.ok ? (cj.data.transport_label || tKey) : tKey;
+  const tConf = cj.ok ? !!cj.data.transport_configured : false;
+  const extId = cj.ok ? cj.data.ext_device_id : null;
   const btn = 'font-size:11px;padding:3px 9px;margin:2px;';
   const cmdBtns = Object.entries(MDM_CMD).map(([t,c]) =>
     `<button class="btn" style="${btn}${c.danger?'color:var(--err);border-color:var(--err);':''}" onclick="mdmCmd('${t}')">${c.icon} ${c.label}</button>`).join('');
@@ -8023,8 +8026,15 @@ async function refreshMdmPanel() {
           ${dev.enroll_status!=='unenrolled'?`<button class="btn" style="${btn}" onclick="mdmUnenroll()">解除纳管</button>`:''}
         </span>
       </div>
-      <div style="font-size:10px;color:var(--txd);margin-top:6px;">
-        ${transport?'已配置厂商推送通道，下发后尝试唤醒设备。':'⚠️ 未配厂商推送（APNs 等）——命令进队列，靠设备 agent 轮询 check-in 拉取执行（实时性取决于轮询间隔）。真实 Apple/Android/Windows 协议纳管需厂商证书。'}
+      <div style="font-size:11px;margin-top:6px;">
+        传输通道：<b style="color:var(--txt);">${esc(tLabel)}</b>
+        ${tKey==='pull_agent'?'<span style="color:var(--txd);">（电脑跑 agent.js 拉取）</span>'
+          :(tConf?'<span style="color:#1a7f37;">· 凭据已配置 ✅</span>':'<span style="color:var(--err);">· 凭据未配置（命令会先入队）</span>')}
+        ${extId?`<br><span style="color:var(--txd);font-size:10px;">厂商设备 id：${esc(extId)}</span>`:''}
+      </div>
+      <div style="font-size:10px;color:var(--txd);margin-top:4px;">
+        ${tKey==='pull_agent'?'命令进队列，靠设备 agent 轮询 check-in 拉取执行（实时性取决于轮询间隔）。'
+          :'厂商通道：已配凭据则下发时直接经厂商 API 执行；未配则入队待配置。iPhone 需 Apple MDM 推送证书，Chromebook/Android 需 Google 服务账号。'}
       </div>
       <div id="mdm-enroll-out"></div>
     </div>
@@ -8058,7 +8068,10 @@ async function mdmCmd(type) {
   }
   const { ok, data } = await api('POST', '/admin/devices/' + dev.id + '/commands', body);
   if (!ok) { showToast('下发失败：' + (data?.error||'')); return; }
-  showToast(data.pushed ? '已下发并唤醒设备' : '已加入命令队列，等设备拉取');
+  const REASON = { await_agent:'已入队，等设备 agent 拉取', issued:'已经厂商 API 下发', apns_woke_awaiting_mdm_endpoint:'已 APNs 唤醒设备',
+    transport_not_configured:'该通道凭据未配置，已先入队', unsupported_command:'该通道不支持此命令（已入队，不会执行）',
+    no_ext_device_id:'缺厂商设备 id，已入队', no_push_token:'缺 APNs 设备 token，已入队' };
+  showToast(REASON[data.reason] || (data.delivered ? '已下发' : '已入队') );
   await refreshMdmPanel();
 }
 async function mdmCancel(cid) {
@@ -8066,16 +8079,35 @@ async function mdmCancel(cid) {
   if (ok) { showToast('已取消'); refreshMdmPanel(); }
 }
 async function mdmEnroll() {
-  const { ok, data } = await api('POST', '/admin/devices/' + _mdmDev.id + '/enroll', {});
+  // 选传输通道：按设备类型给出可选项（电脑=拉取式 agent；iPhone=Apple MDM；Chromebook/Android=Google 通道）
+  const metas = (_devCache.transports || []).filter(t => !t.kinds || t.kinds.includes(_mdmDev.kind) || t.key==='pull_agent');
+  let transport = 'pull_agent', ext_device_id = '';
+  if (metas.length > 1) {
+    const pick = await uiPrompt('选择纳管 / 下发通道序号：\n' + metas.map((t,i)=>`${i+1}. ${t.label}${t.configured?'（已配凭据）':t.key==='pull_agent'?'':'（未配凭据，命令先入队）'}`).join('\n'), '1');
+    if (pick === null) return;
+    const idx = parseInt(pick,10)-1;
+    if (!(idx>=0 && idx<metas.length)) { showToast('序号无效'); return; }
+    transport = metas[idx].key;
+    if (transport !== 'pull_agent') {
+      const e = await uiPrompt('填该设备在厂商侧的标识（ext_device_id）：\n· Android：完整资源名 enterprises/LC.../devices/xxx\n· Chromebook：Chrome 设备 deviceId\n· Apple：APNs 设备 token / UDID\n可留空，之后再补。', '');
+      if (e === null) return;
+      ext_device_id = (e||'').trim();
+    }
+  }
+  const { ok, data } = await api('POST', '/admin/devices/' + _mdmDev.id + '/enroll', { transport, ext_device_id });
   if (!ok) { showToast(data?.error||'失败'); return; }
-  _mdmDev.enroll_status = 'pending';
+  _mdmDev.enroll_status = 'pending'; _mdmDev.transport = data.transport; _mdmDev.ext_device_id = data.ext_device_id;
   const out = document.getElementById('mdm-enroll-out');
   if (out) out.innerHTML = `<div style="margin-top:8px;background:var(--sf);border:1px solid var(--ac);border-radius:4px;padding:8px;font-size:11px;word-break:break-all;">
-    <b style="color:var(--err);">仅显示一次，请复制给设备 agent：</b><br>
-    device_id：<code>${esc(data.device_id)}</code><br>
-    secret：<code>${esc(data.secret)}</code><br>
-    check-in URL：<code>${esc(data.checkin_url)}</code></div>`;
+    ${data.transport==='pull_agent'?`<b style="color:var(--err);">仅显示一次，请复制给设备 agent：</b><br>
+      device_id：<code>${esc(data.device_id)}</code><br>
+      secret：<code>${esc(data.secret)}</code><br>
+      check-in URL：<code>${esc(data.checkin_url)}</code>`
+      :`<b>通道：${esc(data.transport_label||data.transport)}</b> ${data.transport_configured?'<span style="color:#1a7f37;">凭据已配置</span>':'<span style="color:var(--err);">凭据未配置</span>'}<br>
+      <span style="color:var(--txd);">${esc(data.transport_hint||'')}</span>`}
+  </div>`;
   loadDevices(_devCtx);
+  refreshMdmPanel();
 }
 async function mdmUnenroll() {
   if (!await uiConfirm('解除纳管？设备将不再受管，已装描述文件记录清除（台账保留）。')) return;
@@ -11476,6 +11508,21 @@ const ENV_GROUPS = [
       { key: 'ACCESS_QR_TTL', label: '主码有效期（秒）', desc: '用户「主码」（能开有权限的所有门）的有效秒数，默认 60，范围 15~600。各门的子码有效期在门禁管理里单独设，留空则跟随本值', required: false, placeholder: '60', value: '' },
       { key: 'ACCESS_QR_SECRET', label: '开门码签名密钥', desc: '用于给动态二维码签名的独立密钥；留空则回退用 JWT_SECRET。更换后，已出示但未使用的旧码立即失效（建议设一个独立的长随机串）', required: false, secret: true, placeholder: '一串长随机字符', value: '' },
       { key: 'FED_ALLOWED_DOMAINS', label: '联邦可用域（白名单）', desc: '逗号分隔的域名/后缀（子域自动匹配），如 sso.xubainet.cn,qwq.us。只有白名单内的伙伴域能「直接推送」联邦配对到本系统；留空=不接受任何推送（粘贴跨域码不受此限）', required: false, secret: false, placeholder: 'sso.xubainet.cn,qwq.us', value: '' },
+    ]
+  },
+  {
+    key: 'mdm', category: 'system', label: 'MDM 设备纳管', icon: '📱', color: '#2563EB',
+    desc: '电脑（Windows/Mac/Linux）走拉取式 agent，无需在此配置。iPhone/iPad 走 Apple MDM（APNs）、Chromebook/Android 走 Google 通道——配齐对应凭据后，管理端下发命令会直接经厂商 API 执行；未配则命令先入队。',
+    vars: [
+      { key: 'MDM_APNS_TEAM_ID', label: 'Apple · Team ID', desc: 'iPhone/iPad：Apple Developer 账号 Team ID（10 位）', required: false, secret: false, placeholder: 'ABCDE12345', value: '' },
+      { key: 'MDM_APNS_KEY_ID', label: 'Apple · APNs Key ID', desc: 'APNs 鉴权密钥(.p8) 的 Key ID', required: false, secret: false, placeholder: '', value: '' },
+      { key: 'MDM_APNS_KEY', label: 'Apple · APNs 密钥(.p8)', desc: '.p8 密钥文件内容（-----BEGIN PRIVATE KEY-----…）', required: false, secret: true, placeholder: '-----BEGIN PRIVATE KEY-----', value: '' },
+      { key: 'MDM_APNS_TOPIC', label: 'Apple · MDM 推送主题', desc: 'MDM 推送证书的主题（通常是证书 UID）；用于唤醒设备回连 MDM 端点', required: false, secret: false, placeholder: 'com.apple.mgmt.External.xxxx', value: '' },
+      { key: 'GOOGLE_SA_CLIENT_EMAIL', label: 'Google · 服务账号邮箱', desc: 'Chromebook/Android 共用。GCP 服务账号的 client_email', required: false, secret: false, placeholder: 'xxx@yyy.iam.gserviceaccount.com', value: '' },
+      { key: 'GOOGLE_SA_PRIVATE_KEY', label: 'Google · 服务账号私钥', desc: '服务账号 JSON 里的 private_key（含 BEGIN PRIVATE KEY；\\n 原样粘贴即可）', required: false, secret: true, placeholder: '-----BEGIN PRIVATE KEY-----', value: '' },
+      { key: 'GOOGLE_ADMIN_SUBJECT', label: 'Chrome · 域级委派管理员', desc: 'Chromebook 用：被委派的 Workspace 管理员邮箱（域级委派 subject）', required: false, secret: false, placeholder: 'admin@yourdomain.com', value: '' },
+      { key: 'GOOGLE_CUSTOMER_ID', label: 'Chrome · Customer ID', desc: 'Chromebook 用：客户 ID，留空用 my_customer', required: false, secret: false, placeholder: 'my_customer', value: '' },
+      { key: 'ANDROID_ENTERPRISE_NAME', label: 'Android · Enterprise 名', desc: 'Android 用：Android Management API 的 enterprises/LC... 资源名', required: false, secret: false, placeholder: 'enterprises/LC0xxxxxxx', value: '' },
     ]
   },
   {

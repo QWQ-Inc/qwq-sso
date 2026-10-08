@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.83.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.84**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,36 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.84 MDM 多传输适配层（iPhone / Chromebook / Android 厂商通道，gated）（用户反馈·阶段B/C/D 骨架）
+
+三级版本。用户：「其他方向的继续做。」——把 MDM 的 iPhone(B) / Chromebook(C) / Android(D) 也往前推。按本项目一贯的 gated 做法（同 pkpass/APNs/KYC）：把下发做成**多传输适配层**，厂商通道的适配位先到位、env 预留好，凭据一到手填 send() 即生效，且不碰已跑通的电脑拉取式那套。
+
+### 传输注册表（`server/mdm.js` `TRANSPORTS`）
+一台设备走哪条下发通道由 `devices.transport`（新列，默认 `pull_agent`）决定：
+- `pull_agent` — 电脑跑 agent.js，被动拉取（阶段 A，已跑通）。`deliver` 返回 `await_agent`（命令留队列等 agent）。
+- `apple_mdm` — iPhone/iPad/Mac，Apple MDM over APNs。`configured` = `MDM_APNS_*` 齐。`deliver` 发 APNs 唤醒（ES256 JWT + HTTP/2），真正命令要设备回连 MDM 端点取 plist（端点待实现，拿到 MDM 推送证书后补）。
+- `google_chrome` — Chromebook，Chrome Management API（Admin SDK directory `.../devices/chromeos/{id}/commands`）。`configured` = Google 服务账号 + 域级委派管理员。
+- `android_mgmt` — Android，Android Management API（`{device}:issueCommand`）。`configured` = Google 服务账号 + enterprise 名。
+- 命令→厂商命令名映射 `VENDOR_CMD`（如 apple lock→DeviceLock、android wipe→WIPE、chrome restart→REBOOT）；不支持的回 `unsupported_command`。
+
+### gating（关键，沿用项目惯例）
+厂商通道**未配凭据**时：命令照样进队列，`deliverCommand` 回 `{pending:true, reason:'transport_not_configured'}`，管理端标「传输未配置」。配齐后 `deliver` 走真实厂商 API（Google RS256 服务账号 JWT 换 access_token → REST 调用；Apple ES256 JWT APNs 推送），全部 try/catch 如实回报。⚠️ **真实厂商 API 本机无凭据未联调**——API 请求结构按官方文档写，投产前需用真实凭据验证一遍。`deliver` 里 ext_device_id 缺失 / 命令不支持会在打 API 前就拦下。
+
+### 数据 / 接口（db.js + api.js）
+- `devices` 加 `transport` / `ext_device_id`（厂商侧设备标识：Android 资源名 / Chrome deviceId / Apple token·UDID）；`deviceStmts.setTransport`。
+- 下发 `POST /admin/devices/:id/commands`：改走 `mdm.deliverCommand(dev, cmd)`，厂商已配且 `delivered && !pending` 时 `markSent`（无 agent 回报通道），响应带 `transport/delivered/pending/reason/detail`。
+- 纳管 `POST .../enroll`：可选 `transport` + `ext_device_id`（`setTransport`），响应带 `transport_label/transport_configured/transport_hint`。
+- 设备列表回 `transports: mdm.transportsMeta()`（各通道 key/label/configured/kinds/envKeys）；命令历史回设备 transport。
+- init.js ENV_KEYS 加 `MDM_APNS_HOST` + `GOOGLE_SA_CLIENT_EMAIL/GOOGLE_SA_PRIVATE_KEY/GOOGLE_ADMIN_SUBJECT/GOOGLE_CUSTOMER_ID/ANDROID_ENTERPRISE_NAME`。
+
+### 前端（dashboard.html）
+- MDM 面板显示设备传输通道 + 是否已配凭据 + 厂商设备 id；`mdmEnroll` 多设备类型时弹通道选择（按 kind 过滤）+ 填 ext_device_id，返回 hint；`mdmCmd` 下发结果按 `reason` 给中文提示（已入队/已厂商下发/传输未配置/该通道不支持此命令…）。`_devCache` 缓存 `transports`。
+- 系统配置新增「MDM 设备纳管」组（📱）：Apple APNs（Team/KeyID/.p8/Topic）+ Google 服务账号（client_email/private_key）+ Chrome（域级委派管理员/Customer ID）+ Android（enterprise 名）。
+
+### 测试
+- `scratchpad/mdm-transport-test.js` 23 项全过（命令映射各通道、transportForDevice 默认/按 key/未知回退、未配 configured 全 false、deliverCommand 路由：pull_agent→await_agent / android 未配→transport_not_configured / 配齐后缺 ext_id→no_ext_device_id / 不支持命令→unsupported_command、Google RS256 JWT 三段且可验签、APNs ES256 JWT header alg/kid）。server 四文件 + dashboard 内联 JS（10598 行）语法通过。
+- ⚠️ 真实 Apple/Google 厂商 API 无凭据未端到端（同 pkpass/KYC 约束）。Apple MDM 还差「设备回连的 MDM plist 端点 + .mobileconfig 纳管描述文件签发」——APNs 唤醒已就位，端点属后续（拿到 MDM 推送证书再做）。
 
 ## v3.5.83.1 MDM 参考 agent 填入各 OS 真实动作（用户反馈·阶段A）
 

@@ -4,6 +4,16 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.84 — MDM 多传输适配层（iPhone / Chromebook / Android 通道，gated）
+
+- 把 MDM 下发做成**多传输适配层**（`server/mdm.js` `TRANSPORTS` 注册表）：一台设备走哪条通道由 `devices.transport` 决定——
+  `pull_agent`（电脑跑 agent.js，已跑通）/ `apple_mdm`（iPhone/iPad·APNs）/ `google_chrome`（Chromebook·Chrome Management API）/ `android_mgmt`（Android·Android Management API）。
+- 厂商通道 gated：未配凭据时命令照样进队列、`deliverCommand` 回 `transport_not_configured`，管理端标「传输未配置」；配齐凭据后下发直接经厂商 API 执行。命令→厂商命令名映射 `VENDOR_CMD`；不支持的命令标 `unsupported_command`。
+- 新增 Google 服务账号 access_token 助手（RS256 JWT）、Android Management `issueCommand` / Chrome Directory `commands` 调用、Apple APNs（ES256 JWT + HTTP/2 唤醒推送）——API 请求结构按官方文档写好，gated + try/catch。
+- 数据：`devices` 加 `transport` / `ext_device_id`；纳管端点可选通道 + 填厂商设备 id；设备列表回 `transports` 元数据；命令下发走 `deliverCommand` 并回报下发结果与原因。
+- 前端：MDM 面板显示设备传输通道 + 是否已配凭据，纳管时可选通道并填 ext_device_id，下发结果提示原因；系统配置新增「MDM 设备纳管」组（APNs + Google 服务账号 + Chrome 域级委派 + Android enterprise）。init.js ENV_KEYS 同步。
+- 测试：`scratchpad/mdm-transport-test.js` 23 项全过（命令映射、通道路由、未配 gating、配齐后缺 ext_id / 不支持命令判定、Google RS256 JWT 可验签、APNs ES256 JWT 结构）。⚠️ 真实厂商 API 无凭据未联调，拿到各厂商证书/服务账号后需验证一遍。
+
 ## v3.5.83.1 — MDM 参考 agent 填入各 OS 真实动作
 
 - `tools/mdm-agent/agent.js` 的 handlers 从演练占位换成 Windows / macOS / Linux 的真实动作：

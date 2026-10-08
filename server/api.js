@@ -4937,7 +4937,7 @@ router.get('/admin/devices', requireAuth, (req, res) => {
   const orgs = sys ? oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name }))
                    : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
   const doors = access.allDoors.all().map(d => ({ id: d.id, name: d.name }));
-  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured() });
+  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured(), transports: mdm.transportsMeta() });
 });
 router.post('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 2);
@@ -5004,10 +5004,12 @@ router.post('/admin/devices/:id/commands', requireAuth, async (req, res) => {
   const id = uuidv4();
   deviceCommands.insert.run(id, dev.id, type, JSON.stringify(v.payload), 'pending', req.user.uid);
   devices.markPushed.run(dev.id);
-  audit('device.command_issued', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, name: dev.name, type } });
-  let wake = { pushed: false };
-  try { wake = await mdm.pushWake(dev); } catch (_) {}
-  res.json({ success: true, id, pushed: wake.pushed, transport: mdm.transportConfigured() });
+  audit('device.command_issued', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, name: dev.name, type, transport: dev.transport || 'pull_agent' } });
+  // v3.5.84：按设备传输通道下发。pull_agent → 等 agent 拉取；厂商通道已配凭据则尝试真实下发并标 sent
+  let d = { transport: dev.transport || 'pull_agent', delivered: false, pending: true, reason: 'await_agent' };
+  try { d = await mdm.deliverCommand({ ...dev, transport: dev.transport || 'pull_agent' }, { id, type, payload: v.payload }); } catch (_) {}
+  if (d.delivered && !d.pending) deviceCommands.markSent.run(id);   // 厂商已接单，无 agent 回报通道
+  res.json({ success: true, id, transport: d.transport, delivered: !!d.delivered, pending: d.pending !== false ? true : false, reason: d.reason, detail: d.detail, transport_configured: mdm.transportByKey(d.transport).configured() });
 });
 // 命令历史
 router.get('/admin/devices/:id/commands', requireAuth, (req, res) => {
@@ -5015,7 +5017,9 @@ router.get('/admin/devices/:id/commands', requireAuth, (req, res) => {
   if (!dev) return res.status(404).json({ error: '设备不存在' });
   if (!canManageDevice(req, dev, false)) return res.status(403).json({ error: '无权查看' });
   const cmds = deviceCommands.byDevice.all(dev.id).map(c => ({ ...c, label: (mdm.COMMAND_TYPES[c.type] || {}).label || c.type }));
-  res.json({ success: true, commands: cmds, types: mdm.COMMAND_TYPES, profiles: deviceProfiles.byDevice.all(dev.id) });
+  const tp = mdm.transportByKey(dev.transport || 'pull_agent');
+  res.json({ success: true, commands: cmds, types: mdm.COMMAND_TYPES, profiles: deviceProfiles.byDevice.all(dev.id),
+    transport: tp.key, transport_label: tp.label, transport_configured: tp.configured(), ext_device_id: dev.ext_device_id || null });
 });
 // 取消未执行命令
 router.post('/admin/devices/:id/commands/:cid/cancel', requireAuth, (req, res) => {
@@ -5032,11 +5036,20 @@ router.post('/admin/devices/:id/enroll', requireAuth, (req, res) => {
   const dev = devices.get.get(req.params.id);
   if (!dev) return res.status(404).json({ error: '设备不存在' });
   if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  // v3.5.84：可选择传输通道。pull_agent（默认）发 enroll secret 给 agent；厂商通道记下 ext_device_id（厂商侧设备标识）
+  const transport = mdm.transportKeys().includes(String(req.body?.transport)) ? req.body.transport : 'pull_agent';
+  const extId = String(req.body?.ext_device_id || '').trim() || null;
+  devices.setTransport.run(transport, extId, dev.id);
   const { secret, hash } = mdm.genEnrollSecret();
   devices.setEnroll.run('pending', hash, dev.id);
-  audit('device.enroll_reset', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id } });
+  audit('device.enroll_reset', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, transport } });
   const base = (process.env.BASE_URL || '').replace(/\/$/, '');
-  res.json({ success: true, device_id: dev.id, secret, checkin_url: base + '/api/mdm/checkin' });
+  const t = mdm.transportByKey(transport);
+  res.json({ success: true, device_id: dev.id, secret, checkin_url: base + '/api/mdm/checkin',
+    transport, transport_label: t.label, transport_configured: t.configured(), ext_device_id: extId,
+    transport_hint: transport === 'pull_agent' ? '在该电脑上跑 agent.js，用上面的 device_id/secret' :
+      (t.configured() ? '厂商通道已配置，命令将直接经厂商 API 下发（需在厂商侧已纳管该设备、并填对 ext_device_id）' :
+        '厂商通道尚未配置凭据：命令会先入队，配齐环境变量后生效。所需变量：' + (t.envKeys || []).join('、')) });
 });
 // 解除纳管（清 enroll + 已装描述文件；不删设备台账）
 router.post('/admin/devices/:id/unenroll', requireAuth, (req, res) => {
