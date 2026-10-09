@@ -4940,14 +4940,40 @@ router.get('/admin/devices', requireAuth, (req, res) => {
   res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured(), transports: mdm.transportsMeta() });
 });
 // 用户端「我的设备」（v3.5.85）：只读，列出归属到本人的设备。不下发 enroll_hash / 厂商设备 id 等敏感字段。
+// 自助命令：设备 owner 本人只能对自己的设备下发【非破坏性】命令（锁定 / 定位）。擦除/退役/重启等仍只管理员。
+const SELF_SERVICE_CMDS = ['lock', 'locate'];
 router.get('/user/devices', requireAuth, noPublic, (req, res) => {
-  const list = devices.byOwner.all(req.user.uid).map(d => ({
-    id: d.id, name: d.name, kind: d.kind, serial: d.serial, status: d.status,
-    enroll_status: d.enroll_status, lock_state: d.lock_state, transport: d.transport,
-    os_version: d.os_version, model: d.model, last_seen: d.last_seen,
-    subject_name: d.subject_name || null, note: d.note, created_at: d.created_at,
-  }));
-  res.json({ success: true, devices: list, kinds: DEVICE_KINDS });
+  const list = devices.byOwner.all(req.user.uid).map(d => {
+    const loc = (d.enroll_status === 'enrolled' || d.enroll_status === 'pending') ? deviceCommands.lastAckedByType.get(d.id, 'locate') : null;
+    return {
+      id: d.id, name: d.name, kind: d.kind, serial: d.serial, status: d.status,
+      enroll_status: d.enroll_status, lock_state: d.lock_state, transport: d.transport,
+      os_version: d.os_version, model: d.model, last_seen: d.last_seen,
+      subject_name: d.subject_name || null, note: d.note, created_at: d.created_at,
+      // 自助操作仅对已纳管/待纳管、非退役设备开放
+      can_self_manage: (d.enroll_status === 'enrolled' || d.enroll_status === 'pending') && d.status !== 'disabled',
+      last_locate: loc ? { result: loc.result, at: loc.acked_at } : null,
+    };
+  });
+  res.json({ success: true, devices: list, kinds: DEVICE_KINDS, self_commands: SELF_SERVICE_CMDS });
+});
+router.post('/user/devices/:id/commands', requireAuth, noPublic, async (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev || dev.owner_user_id !== req.user.uid) return res.status(404).json({ error: '设备不存在或不属于你' });
+  const type = String(req.body?.type || '');
+  if (!SELF_SERVICE_CMDS.includes(type)) return res.status(403).json({ error: '该命令仅管理员可下发；你只能锁定或定位自己的设备' });
+  if (dev.enroll_status !== 'enrolled' && dev.enroll_status !== 'pending') return res.status(400).json({ error: '设备未纳管，无法下发命令' });
+  if (dev.status === 'disabled') return res.status(400).json({ error: '设备已停用' });
+  const v = mdm.validateCommand(type, req.body?.payload, { profileExists: mdmProfileExists });
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const id = uuidv4();
+  deviceCommands.insert.run(id, dev.id, type, JSON.stringify(v.payload), 'pending', req.user.uid);
+  devices.markPushed.run(dev.id);
+  audit('device.self_command', { subject: dev.serial || dev.id, actor: 'user:' + req.user.uid, detail: { device: dev.id, name: dev.name, type } });
+  let d = { transport: dev.transport || 'pull_agent', delivered: false, pending: true, reason: 'await_agent' };
+  try { d = await mdm.deliverCommand({ ...dev, transport: dev.transport || 'pull_agent' }, { id, type, payload: v.payload }); } catch (_) {}
+  if (d.delivered && !d.pending) deviceCommands.markSent.run(id);
+  res.json({ success: true, id, delivered: !!d.delivered, pending: d.pending !== false, reason: d.reason, detail: d.detail });
 });
 router.post('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 2);

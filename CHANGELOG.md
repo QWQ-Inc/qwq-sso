@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.86 — 我的设备·自助锁定 / 定位（丢失设备自救）
+
+- 「我的设备」从只读升级：设备 owner 本人可对**自己的、已纳管的**设备下发**非破坏性**命令——锁定（可带锁屏留言）、定位。擦除/退役/重启等仍只管理员（避免账号被盗就能擦掉名下所有设备）。
+- 接口 `POST /user/devices/:id/commands`（requireAuth + noPublic）：owner-only（非本人 404）+ 命令白名单 `SELF_SERVICE_CMDS=[lock,locate]`（其余 403）+ 纳管/停用门；复用同一命令队列 + `deliverCommand` 路由，审计 `device.self_command`。
+- 定位结果回看：`GET /user/devices` 加 `last_locate`（该设备最近一次 acked 的 locate 结果），前端显示「📍 最近定位：主机名 · IP」。db.js `deviceCommands.lastAckedByType`。
+- 测试：自助命令鉴权门 node:sqlite 9 项全过（owner+enrolled 放行 lock/locate、owner 下 wipe/retire 挡 403、非 owner/别人设备 404、未纳管/已停用 400、不存在 404）；server + dashboard 内联 JS 语法通过。
+
 ## v3.5.85 — 用户端「我的设备」（归属到本人的设备，只读）
 
 - 设备既然可归属到人，用户端就应能看到自己的设备。新增用户端「我的设备」页：列出 `owner_user_id` = 本人的设备（名称/类型/状态/纳管状态/机型/系统/序列号/所属组织/最近在线/备注）。

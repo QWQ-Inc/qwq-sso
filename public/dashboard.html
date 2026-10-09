@@ -9100,6 +9100,17 @@ async function loadMyDevices() {
     const online = d.last_seen ? d.last_seen : '从未';
     const locked = d.lock_state === 'locked';
     const stColor = d.status === 'active' ? '#1a7f37' : 'var(--err)';
+    let locHtml = '';
+    if (d.last_locate && d.last_locate.result) {
+      let txt = d.last_locate.result;
+      try { const j = JSON.parse(d.last_locate.result); txt = [j.host, (j.ips||[]).join('/')].filter(Boolean).join(' · '); } catch(_) {}
+      locHtml = `<br><span style="color:var(--ac);">📍 最近定位：${esc(txt)} <span style="color:var(--txd);font-size:10px;">(${esc(d.last_locate.at||'')})</span></span>`;
+    }
+    const actions = d.can_self_manage ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','lock')">🔒 锁定</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','locate')">📍 定位</button>
+        <span style="font-size:10px;color:var(--txd);align-self:center;">丢失时可远程锁定/定位；擦除等需联系管理员</span>
+      </div>` : (d.enroll_status==='unenrolled' || !d.enroll_status ? '<div style="margin-top:6px;font-size:10px;color:var(--txd);">未纳管，暂不能远程操作</div>' : '');
     return `<div style="border:1px solid var(--bd);border-radius:8px;padding:12px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <b style="color:var(--txt);">${esc(d.name)}</b>
@@ -9110,11 +9121,26 @@ async function loadMyDevices() {
         ${d.model?`<br>机型：${esc(d.model)}`:''}${d.os_version?`　系统：${esc(d.os_version)}`:''}
         ${d.serial?`<br>序列号：${esc(d.serial)}`:''}
         ${d.subject_name?`<br>所属组织：${esc(d.subject_name)}`:''}
-        <br>最近在线：${esc(online)}
+        <br>最近在线：${esc(online)}${locHtml}
         ${d.note?`<br><span style="color:var(--txd);">备注：${esc(d.note)}</span>`:''}
       </div>
+      ${actions}
     </div>`;
   }).join('');
+}
+async function myDevCmd(id, type) {
+  let payload = {};
+  if (type === 'lock') {
+    const msg = await uiPrompt('锁屏留言（可空，会显示在锁屏上）：', '');
+    if (msg === null) return;
+    if (msg) payload.message = msg;
+  }
+  const { ok, data } = await api('POST', '/user/devices/' + id + '/commands', { type, payload });
+  if (!ok) { showToast(data?.error || '下发失败'); return; }
+  const R = { await_agent:'已下发，设备上线后执行', issued:'已下发到设备', apns_woke_awaiting_mdm_endpoint:'已唤醒设备',
+    transport_not_configured:'已排队（该设备通道待管理员配置）', unsupported_command:'该设备不支持此命令' };
+  showToast(type==='locate' ? '已请求定位，设备回报后在此显示' : (R[data.reason] || '已下发'));
+  setTimeout(loadMyDevices, 1200);
 }
 // ── 管理端 ──
 async function loadVerifyAdmin() { loadVerifyFields(); loadVerifiers(); }

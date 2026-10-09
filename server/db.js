@@ -1692,6 +1692,7 @@ const deviceCmdStmts = {
   ack:      db.prepare("UPDATE device_commands SET status=?, result=?, acked_at=datetime('now') WHERE id=?"),
   cancel:   db.prepare("UPDATE device_commands SET status='canceled' WHERE id=? AND status='pending'"),
   removeByDevice: db.prepare('DELETE FROM device_commands WHERE device_id=?'),
+  lastAckedByType: db.prepare("SELECT result, acked_at FROM device_commands WHERE device_id=? AND type=? AND status='acked' ORDER BY acked_at DESC LIMIT 1"),   // v3.5.86 我的设备·最近定位
 };
 const mdmProfileStmts = {
   all:    db.prepare('SELECT * FROM mdm_profiles ORDER BY created_at DESC'),

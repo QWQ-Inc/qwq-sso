@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.85**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.86**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.86 我的设备·自助锁定 / 定位（丢失设备自救）（用户反馈）
+
+三级版本。承接 v3.5.85，用户：「那就也做了吧」——给「我的设备」加自助操作。范围刻意收窄：**只开非破坏性的锁定 / 定位**，擦除/退役/重启等仍只管理员（账号被盗时才不至于一键擦掉名下所有设备）。
+
+- 后端 `POST /user/devices/:id/commands`（requireAuth + noPublic）：三道门——① owner-only（`dev.owner_user_id !== req.user.uid` → 404，连"设备存在"都不泄露）；② 命令白名单 `SELF_SERVICE_CMDS = ['lock','locate']`（其余 403「仅管理员可下发」）；③ 纳管门（`enroll_status` 非 enrolled/pending → 400「未纳管」）+ 停用门（disabled → 400）。通过后复用与管理端**同一套** `deviceCommands.insert` + `mdm.deliverCommand` 路由，审计 `device.self_command`（actor `user:<uid>`）。
+- 定位回看：`GET /user/devices` 每台设备加 `last_locate`（`deviceCommands.lastAckedByType` 取最近一次 acked 的 locate 结果）+ `can_self_manage`（enrolled/pending 且未停用）。前端解析 locate 的 JSON（host/ips）显示「📍 最近定位：主机名 · IP」。
+- 前端「我的设备」卡片：`can_self_manage` 时出「🔒 锁定 / 📍 定位」按钮（`myDevCmd`，锁定可 uiPrompt 留言），下发后按 reason 提示（已下发/设备上线后执行/该设备通道待管理员配置…），1.2s 后刷新看回报；未纳管设备提示「暂不能远程操作」。
+- 测试：鉴权门 node:sqlite 9 项全过（owner+enrolled 放行 lock/locate、owner 下 wipe/retire → 403、非 owner / 别人设备 → 404、未纳管 / 已停用 → 400、不存在 → 404）。server(api/db) + dashboard 内联 JS 语法通过。
+- ⚠️ 擦除自助**刻意不开**——丢失设备要擦除仍走管理员（管理端有强确认口令）。真实整站需 better-sqlite3 未端到端跑，逻辑靠鉴权门复刻 + 复用既有命令队列（v3.5.82 已测）覆盖。
 
 ## v3.5.85 用户端「我的设备」（归属到本人的设备，只读）（用户反馈）
 
