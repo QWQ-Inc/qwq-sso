@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.90**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.91**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,29 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.91 Google Wallet 访客码 + Wallet（Apple+Google）按组织（用户反馈）
+
+三级版本。用户问「google wallet 没做吗」（之前只有 Apple Wallet）+ 要 Wallet 按组织。本版把两件一起做，并收尾「四项按组织」。
+
+### Google Wallet（新）
+- `server/google-wallet.js`（零依赖）：`isConfigured(E)` = GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY + GOOGLE_WALLET_ISSUER_ID（**复用 MDM 的 Google 服务账号**，只多一个 Issuer ID）。`buildSaveLink(p, doorNames, {orgName,bgColor}, E)`：RS256 签 JWT（iss=服务账号、aud=google、typ=savetowallet、payload 内联 genericClasses+genericObjects：cardTitle=组织名、header=访客名、barcode QR=访客码、textModulesData 门/有效期、validTimeInterval），返回 `https://pay.google.com/gp/v/save/<jwt>`（无需预建 class）。
+- 接口 `GET /api/public/pass/:code/google-wallet`（302 跳保存链接）；`public/pass.html` 加「添加到 Google 钱包」按钮（`d.google_wallet` 时显示）。
+
+### Wallet 按组织（Apple + Google）
+- `server/pkpass.js`：`envCfg/isConfigured/buildVisitorPass` 加 `E = env` getter（默认全局）。
+- api.js：`passOrgId(p)`（第一扇门的 subject_id）+ `passDoorNames(p)`；`/public/pass/:code`、`/pkpass`、`/google-wallet` 都用 `orgEnvGetter(passOrgId(p))`——各组织用自己的 Apple Pass 证书 / Google Issuer / 品牌，回退全局。
+- `WALLET_ORG_KEYS`（v3.5.90 已纳入 FEATURE_ORG_KEYS）：APPLE_PASS_TYPE_ID/TEAM_ID/CERT/KEY/KEY_PASSWORD/WWDR_CERT/PKPASS_ORG_NAME/PKPASS_BG_COLOR/GOOGLE_WALLET_ISSUER_ID；证书类进 FEATURE_SECRET_KEYS（打码）。
+
+### 前端 / 配置
+- 组织弹窗加「Wallet 卡片（本组织）」折叠区（9 字段，证书 textarea + 打码）；load/save 的 sm-feat 键表扩展含 Wallet 键。全局「Apple Wallet」env 组改名「Wallet（Apple/Google）」+ 加 `GOOGLE_WALLET_ISSUER_ID`；init.js ENV_KEYS 同步。
+
+### 收尾
+- 至此用户反馈的**四项（MDM/水印/门禁/Wallet）按组织覆盖 + Google Wallet 全部完成**（v3.5.89 MDM → v3.5.90 水印+门禁 → v3.5.91 Wallet+Google Wallet）。
+
+### 测试
+- Google Wallet + pkpass 按组织 16 项全过（未配/配齐 isConfigured、保存链接前缀、JWT 三段+iss/typ/aud、object id 前缀/条码/header/标题/门列表/classId 引用、RS256 验签、pkpass 按 E isConfigured）。server 全量 + dashboard 内联 JS 语法通过。
+- ⚠️ 真实 Google/Apple Wallet 无凭据未联调；Google Wallet 用内联 JWT（Save link 标准做法），按官方 Generic pass 结构写。Apple Wallet 仍需 passkit-generator（线上安装）+ Apple 证书。
 
 ## v3.5.90 水印 + 门禁主码有效期按组织覆盖（用户反馈·接 v3.5.89）
 

@@ -3175,6 +3175,22 @@ async function loadMe() {
       </div>
     </details>
 
+    <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
+      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">Wallet 卡片（本组织）· 可选</summary>
+      <div style="font-size:11px;color:var(--txd);margin:8px 0;">本组织的访客通行码用自己的 Apple/Google 钱包证书与品牌。Google Wallet 复用上面 MDM 的 Google 服务账号 + 下面的 Issuer ID。留空=回退全局。证书显示 •••• 表示已配、留空不改。</div>
+      <div style="display:grid;gap:8px;">
+        <input id="sm-feat-APPLE_PASS_TYPE_ID" placeholder="APPLE_PASS_TYPE_ID（pass.xxx）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-APPLE_TEAM_ID" placeholder="APPLE_TEAM_ID" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <textarea id="sm-feat-APPLE_PASS_CERT" placeholder="APPLE_PASS_CERT（Pass 证书 PEM）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
+        <textarea id="sm-feat-APPLE_PASS_KEY" placeholder="APPLE_PASS_KEY（Pass 私钥 PEM）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
+        <input id="sm-feat-APPLE_PASS_KEY_PASSWORD" placeholder="APPLE_PASS_KEY_PASSWORD（私钥密码，可空）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <textarea id="sm-feat-APPLE_WWDR_CERT" placeholder="APPLE_WWDR_CERT（WWDR 中间证书 PEM）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
+        <input id="sm-feat-PKPASS_ORG_NAME" placeholder="PKPASS_ORG_NAME（卡片组织名）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-PKPASS_BG_COLOR" placeholder="PKPASS_BG_COLOR（rgb(r,g,b)）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-GOOGLE_WALLET_ISSUER_ID" placeholder="GOOGLE_WALLET_ISSUER_ID（Google 钱包 Issuer ID）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+      </div>
+    </details>
+
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
       <input type="checkbox" id="sm-members-open"> 成员开放：允许其他组织的管理员查看并复用本组织成员（v3.5.18）
     </label>
@@ -9708,7 +9724,7 @@ function openSubjectModal(subj) {
   document.getElementById('sm-kyc-alipay-priv').value   = kc.ALIPAY_PRIVATE_KEY || '';
   // MDM 厂商凭据（本组织，v3.5.89）：密钥已配回填为 ••••••••
   const fc = (editing && subj.feature_config) || {};
-  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL']
+  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL','APPLE_PASS_TYPE_ID','APPLE_TEAM_ID','APPLE_PASS_CERT','APPLE_PASS_KEY','APPLE_PASS_KEY_PASSWORD','APPLE_WWDR_CERT','PKPASS_ORG_NAME','PKPASS_BG_COLOR','GOOGLE_WALLET_ISSUER_ID']
     .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) el.value = fc[k] || ''; });
   document.getElementById('sm-direct').checked   = editing ? !!subj.allow_direct_login : false;
   document.getElementById('sm-members-open').checked = editing ? !!subj.members_open : false;
@@ -9745,7 +9761,7 @@ async function saveSubject() {
   putK('ALIPAY_APP_ID','sm-kyc-alipay-appid'); putK('ALIPAY_PRIVATE_KEY','sm-kyc-alipay-priv');
   // MDM 厂商凭据（本组织，v3.5.89）：提交非空字段（•••• 打码串由后端识别为「不改」，空=清除覆盖）
   const feature_config = {};
-  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL']
+  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL','APPLE_PASS_TYPE_ID','APPLE_TEAM_ID','APPLE_PASS_CERT','APPLE_PASS_KEY','APPLE_PASS_KEY_PASSWORD','APPLE_WWDR_CERT','PKPASS_ORG_NAME','PKPASS_BG_COLOR','GOOGLE_WALLET_ISSUER_ID']
     .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) { const v = (el.value||'').trim(); feature_config[k] = v; } });
   const allow_direct_login = document.getElementById('sm-direct').checked;
   const members_open = document.getElementById('sm-members-open').checked;
@@ -11722,8 +11738,8 @@ const ENV_GROUPS = [
     ]
   },
   {
-    key: 'wallet', category: 'system', label: 'Apple Wallet', icon: '🎟️', color: '#111827',
-    desc: '把访客通行码做成 Apple Wallet 卡片（访客可添加到钱包，秒出码）。需 Apple Developer 的 Pass Type ID 证书；配齐后访客页自动出现「添加到 Apple Wallet」按钮。',
+    key: 'wallet', category: 'system', label: 'Wallet（Apple / Google）', icon: '🎟️', color: '#111827',
+    desc: '把访客通行码做成手机钱包卡片【全局默认】。Apple 需 Pass Type ID 证书；Google 需 Wallet Issuer ID + 复用 MDM 的 Google 服务账号（GOOGLE_SA_*）。配齐后访客页自动出现「添加到 Apple/Google 钱包」按钮。💡 可【按组织覆盖】：组织管理 → 编辑组织 → Wallet（本组织）。',
     vars: [
       { key: 'APPLE_PASS_TYPE_ID', label: 'Pass Type ID', desc: '形如 pass.cn.xubainet.qwqsso（在 Apple Developer 后台创建 Pass Type ID）', required: false, secret: false, placeholder: 'pass.cn.xubainet.qwqsso', value: '' },
       { key: 'APPLE_TEAM_ID', label: 'Team ID', desc: 'Apple Developer 账号的 Team ID（10 位）', required: false, secret: false, placeholder: 'ABCDE12345', value: '' },
@@ -11733,6 +11749,7 @@ const ENV_GROUPS = [
       { key: 'APPLE_WWDR_CERT', label: 'WWDR 中间证书 (PEM)', desc: 'Apple WWDR 中间证书 PEM（Apple 官网下载 AppleWWDRCAG…）', required: false, secret: false, placeholder: '-----BEGIN CERTIFICATE-----', value: '' },
       { key: 'PKPASS_ORG_NAME', label: '卡片组织名', desc: 'Wallet 卡片上显示的组织名，默认取页脚分发人或 QWQ SSO', required: false, secret: false, placeholder: 'QWQ SSO', value: '' },
       { key: 'PKPASS_BG_COLOR', label: '卡片背景色', desc: 'rgb(r,g,b)，默认 rgb(26,127,55)（绿）', required: false, secret: false, placeholder: 'rgb(26,127,55)', value: '' },
+      { key: 'GOOGLE_WALLET_ISSUER_ID', label: 'Google Wallet Issuer ID', desc: 'Google Pay & Wallet Console 申请的 Issuer ID（纯数字）；配它 + GOOGLE_SA_*（MDM 那套服务账号）即可生成「添加到 Google 钱包」', required: false, secret: false, placeholder: '3388000000022xxxxxx', value: '' },
     ]
   },
   {

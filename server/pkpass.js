@@ -4,21 +4,22 @@
 // 签名/打包交给成熟库 passkit-generator（懒加载，未装不影响服务启动）。
 const zlib = require('zlib');
 
-function envCfg() {
-  const e = process.env;
+// E = env getter（默认全局；v3.5.91 起按组织覆盖时传该组织的 orgEnvGetter）
+const env = (k) => String(process.env[k] || '').trim();
+function envCfg(E = env) {
   return {
-    passTypeId: (e.APPLE_PASS_TYPE_ID || '').trim(),
-    teamId: (e.APPLE_TEAM_ID || '').trim(),
-    cert: (e.APPLE_PASS_CERT || '').trim(),
-    key: (e.APPLE_PASS_KEY || '').trim(),
-    keyPass: (e.APPLE_PASS_KEY_PASSWORD || '').trim(),
-    wwdr: (e.APPLE_WWDR_CERT || '').trim(),
-    org: (e.PKPASS_ORG_NAME || e.FOOTER_DISTRIBUTOR || 'QWQ SSO').trim(),
-    bg: (e.PKPASS_BG_COLOR || 'rgb(26,127,55)').trim(),
+    passTypeId: E('APPLE_PASS_TYPE_ID'),
+    teamId: E('APPLE_TEAM_ID'),
+    cert: E('APPLE_PASS_CERT'),
+    key: E('APPLE_PASS_KEY'),
+    keyPass: E('APPLE_PASS_KEY_PASSWORD'),
+    wwdr: E('APPLE_WWDR_CERT'),
+    org: E('PKPASS_ORG_NAME') || E('FOOTER_DISTRIBUTOR') || 'QWQ SSO',
+    bg: E('PKPASS_BG_COLOR') || 'rgb(26,127,55)',
   };
 }
-function isConfigured() {
-  const c = envCfg();
+function isConfigured(E = env) {
+  const c = envCfg(E);
   return !!(c.passTypeId && c.teamId && c.cert && c.key && c.wwdr);
 }
 
@@ -54,9 +55,9 @@ function parseRgb(s) {
 }
 
 // 生成一张访客码 Wallet pass，返回 Buffer（.pkpass）。p = visitor_passes 行；doorNames = 门名数组。
-async function buildVisitorPass(p, doorNames, baseUrl) {
-  if (!isConfigured()) throw new Error('未配置 Apple Wallet 证书');
-  const c = envCfg();
+async function buildVisitorPass(p, doorNames, baseUrl, E = env) {
+  if (!isConfigured(E)) throw new Error('未配置 Apple Wallet 证书');
+  const c = envCfg(E);
   let PKPass;
   try { ({ PKPass } = require('passkit-generator')); }
   catch (_) { throw new Error('服务端缺少 passkit-generator 依赖（请部署安装）'); }

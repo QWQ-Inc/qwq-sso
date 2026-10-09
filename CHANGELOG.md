@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.91 — Google Wallet 访客码 + Wallet（Apple+Google）按组织
+
+- **Google Wallet 新通道**：访客通行码可「添加到 Google 钱包」。新 `server/google-wallet.js`（零依赖）——复用 MDM 的 Google 服务账号（GOOGLE_SA_*）+ `GOOGLE_WALLET_ISSUER_ID`，RS256 签「Save to Wallet」JWT（内联 generic class+object，条码=访客码），`https://pay.google.com/gp/v/save/<jwt>`。接口 `GET /api/public/pass/:code/google-wallet`（302 跳保存链接）；pass.html 加「添加到 Google 钱包」按钮。
+- **Wallet 按组织**：`pkpass.js` isConfigured/buildVisitorPass + google-wallet 都加 E getter；访客码按【所属组织（第一扇门的 subject_id）】取 Wallet 覆盖凭据——各组织用自己的 Apple Pass 证书 / Google Issuer / 品牌。`/public/pass/:code` 回 `wallet`/`google_wallet` 按组织。
+- 组织弹窗加「Wallet 卡片（本组织）」折叠区（Apple 证书 + Google Issuer，证书打码）；全局 Wallet 组改名「Wallet（Apple/Google）」+ 加 GOOGLE_WALLET_ISSUER_ID。init.js 同步。
+- 至此用户要的**四项（MDM/水印/门禁/Wallet）按组织覆盖 + Google Wallet 全部完成**。
+- 测试：Google Wallet JWT 签名 + pkpass 按组织 16 项全过（未配/配齐、JWT 结构+验签、object 字段、条码、按组织 isConfigured）。⚠️ 真实 Google/Apple Wallet 无凭据未联调。
+
 ## v3.5.90 — 水印 + 门禁主码有效期按组织覆盖
 
 - 复用 v3.5.89 的 feature_config 机制，扩展可覆盖键：水印 `WATERMARK_*`（8 项，烧录/字体仍全局）+ 门禁 `ACCESS_QR_TTL`。⚠️ 门禁签名密钥 `ACCESS_QR_SECRET` 保持全局（跨门签名，不按组织拆）。

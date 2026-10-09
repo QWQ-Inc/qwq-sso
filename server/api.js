@@ -7929,8 +7929,10 @@ router.get('/public/pass/:code', (req, res) => {
   const doorNames = doorIds.map(id => access.doorById.get(id)?.name || id);
   // door_list（v3.5.29）：访客页点某扇门出该门子码
   const doorList = doorIds.map(id => { const d = access.doorById.get(id); return d ? { id: d.id, name: d.name, sub_only: d.code_mode === 'sub_only', escort: !!(d.escort_required || p.escort_user_id) } : null; }).filter(Boolean);
+  const E = orgEnvGetter(passOrgId(p));   // v3.5.91 按访客码所属组织的 Wallet 覆盖
   res.json({ ok: true, visitor_name: p.visitor_name, valid_from: p.valid_from, valid_to: p.valid_to,
-    doors: doorNames, door_list: doorList, status: p.status, code: p.code, wallet: pkpass.isConfigured() });
+    doors: doorNames, door_list: doorList, status: p.status, code: p.code,
+    wallet: pkpass.isConfigured(E), google_wallet: googleWallet.isConfigured(E) });
 });
 // 访客某扇门的子码（v3.5.29）：持有访客码即可取（访客码本身就是凭证），子码短时一次性
 router.post('/public/pass/:code/sub', (req, res) => {
@@ -7945,18 +7947,40 @@ router.post('/public/pass/:code/sub', (req, res) => {
 });
 // 访客码 → Apple Wallet（.pkpass）：iOS 打开此地址即可「添加到钱包」
 const pkpass = require('./pkpass');
+const googleWallet = require('./google-wallet');
+// 访客码所属组织（第一扇门的 subject_id）→ 用它的 Wallet 覆盖凭据（v3.5.91）
+function passOrgId(p) {
+  const ids = String(p.door_ids || '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const id of ids) { const d = access.doorById.get(id); if (d && d.subject_id) return d.subject_id; }
+  return null;
+}
+function passDoorNames(p) {
+  return String(p.door_ids || '').split(',').map(s => s.trim()).filter(Boolean).map(id => access.doorById.get(id)?.name || id);
+}
 router.get('/public/pass/:code/pkpass', async (req, res) => {
-  if (!pkpass.isConfigured()) return res.status(501).json({ error: '本系统未配置 Apple Wallet 证书' });
   const p = access.passByCode.get(String(req.params.code).trim());
   if (!p) return res.status(404).json({ error: '访客码不存在' });
+  const E = orgEnvGetter(passOrgId(p));
+  if (!pkpass.isConfigured(E)) return res.status(501).json({ error: '本系统未配置 Apple Wallet 证书' });
   if (p.status !== 'active') return res.status(410).json({ error: '访客码已失效' });
-  const doorNames = String(p.door_ids || '').split(',').map(s => s.trim()).filter(Boolean)
-    .map(id => access.doorById.get(id)?.name || id);
   try {
-    const buf = await pkpass.buildVisitorPass(p, doorNames);
+    const buf = await pkpass.buildVisitorPass(p, passDoorNames(p), undefined, E);
     res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
     res.setHeader('Content-Disposition', `attachment; filename="pass-${p.code}.pkpass"`);
     res.send(buf);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// 访客码 → Google Wallet：302 跳到「添加到 Google 钱包」保存链接（v3.5.91）
+router.get('/public/pass/:code/google-wallet', (req, res) => {
+  const p = access.passByCode.get(String(req.params.code).trim());
+  if (!p) return res.status(404).json({ error: '访客码不存在' });
+  const E = orgEnvGetter(passOrgId(p));
+  if (!googleWallet.isConfigured(E)) return res.status(501).json({ error: '本系统未配置 Google Wallet' });
+  if (p.status !== 'active') return res.status(410).json({ error: '访客码已失效' });
+  try {
+    const org = passOrgId(p) ? (oauthSubjects.get.get(passOrgId(p)) || {}).name : '';
+    const url = googleWallet.buildSaveLink(p, passDoorNames(p), { orgName: org || E('PKPASS_ORG_NAME') || 'QWQ SSO 访客通行' }, E);
+    res.redirect(url);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

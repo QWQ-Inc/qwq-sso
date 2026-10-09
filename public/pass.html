@@ -27,6 +27,9 @@
   .wallet-btn::before { content:"\\F8FF"; font-size:17px; }  /* Apple logo glyph on Apple devices */
   .wallet-btn::after { content:"添加到 Apple Wallet"; }
   @media (prefers-color-scheme: dark){ .wallet-btn { background:#fff; color:#000; } }
+  .gwallet-btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; margin-top:10px;
+    padding:11px 20px; border-radius:10px; background:#000; color:#fff; font-size:15px; font-weight:600; text-decoration:none; }
+  @media (prefers-color-scheme: dark){ .gwallet-btn { background:#fff; color:#000; } }
 </style>
 </head>
 <body>
@@ -61,6 +64,7 @@ function fmt(s){ return s ? String(s).replace('T',' ').slice(0,16) : ''; }
       <div id="sub-tip" class="meta"></div>` : '') +
     `<div class="code">${esc(d.code)}</div>` +
     ((active && d.wallet) ? `<a class="wallet-btn" href="/api/public/pass/${encodeURIComponent(code)}/pkpass"></a>` : '') +
+    ((active && d.google_wallet) ? `<a class="gwallet-btn" href="/api/public/pass/${encodeURIComponent(code)}/google-wallet">🔵 添加到 Google 钱包</a>` : '') +
     `<div class="tip">把这个二维码对准门口扫码机即可通行。请勿外传。</div>`;
   // 子码（v3.5.29）：短时一次性，到期自动刷新；点「通用访客码」切回静态码
   let subTimer = null, subTick = null;
