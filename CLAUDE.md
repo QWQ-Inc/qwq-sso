@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.88**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.89**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,31 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.89 MDM 厂商凭据按组织覆盖（多租户第一步 + 通用机制）（用户反馈）
+
+三级版本。用户（带系统配置截图）：「水印门禁 mdm 和 wallet 这些东西可能是按组织管理的，统一平台不正确。」确认四个都要做成按组织覆盖 + Google Wallet 也做。这些是多版本工程，本版打通用机制 + 先做 MDM（设备本就带 subject_id，最该做也最干净）。
+
+### 通用机制（后续 wallet/水印/门禁复用）
+- `oauth_subjects.feature_config`（JSON，新列）：按组织的 env 覆盖。`oauthSubjectStmts.setFeatureConfig`。
+- api.js：`orgFeatureCfg(sid)` 解析；`orgEnvGetter(sid)` → `E(k)` = feature_config[k]（非空）否则 `process.env[k]`（和 kyc.js envGetter 同思路，**参数透传、并发安全**，不用模块级覆盖）。`MDM_ORG_KEYS`（10 个）/`MDM_ORG_SECRET_KEYS`（MDM_APNS_KEY、GOOGLE_SA_PRIVATE_KEY）；`featureConfigView(sid)`（密钥打码 ••••）、`mergeFeatureConfig(sid, incoming)`（打码串=不改、空=清除该覆盖回退全局、否则覆盖）。
+- ⚠️ `MASK` 常量在 api.js 已被占用，这里用 `FEAT_MASK`。
+
+### mdm.js E 线程化
+- 所有读 env 的函数都加可选 `E = env`（默认全局 getter）：`googleSAConfigured(E)`、`buildGoogleAssertion(scope,subject,E)`、`googleAccessToken(scope,subject,E)`、`buildApnsJwt(E)`、`apnsPush(...,E)`、各 transport 的 `configured(E)` / `deliver(device,command,E)`、`listVendorDevices(transport,E)`、`createAndroidEnrollmentToken(opts,E)`、`transportsMeta(E)`、`transportConfigured(E)`、`deliverCommand(device,command,E)`。默认 E=全局 → 零行为变化。
+
+### api.js 按组织传入
+- 命令下发（admin + 自助）、命令历史 `transport_configured`、纳管 enroll、apple-profile 的 topic、设备列表 `transports`/`mdm_transport`、vendor-devices（加 `?org=`）、android enrollment-token（body `org`）全部用 `orgEnvGetter(dev.subject_id)`（设备列表用聚焦的 `?org=`）。
+- 组织视图加 `feature_config: featureConfigView(sid)`；PATCH oauth-subjects 处理 `feature_config`（`mergeFeatureConfig` → setFeatureConfig）。
+
+### 前端
+- 组织弹窗（openSubjectModal/saveSubject）加「MDM 厂商凭据（本组织）· 可选」折叠区（`sm-feat-<KEY>` 10 字段，Apple APNs + Google SA + Chrome + Android），回填 subj.feature_config（密钥显示 ••••）、提交进 `extra.feature_config`。与既有 msg/kyc 组织专属凭证同构。
+- `mdmPullVendorDevices`/`mdmAndroidToken` 带 `_mdmDev.subject_id` 作 org。系统配置 MDM 组 desc 标注「全局默认，可到组织管理按组织覆盖」。
+- ⚠️ UI 落在**组织管理的组织弹窗**（与现有 msg/kyc 组织凭证一致），不是把巨型「系统配置」页改成组织感知——后者风险大。系统配置仍是全局默认 + 指引。
+
+### 测试
+- 按组织覆盖逻辑 node:sqlite 16 项（o1 覆盖 enterprise/私钥、o2 回退全局、清全局后 o1 仍 configured·o2 不配、transportsMeta(E) 反映、视图密钥打码·非密钥明文·未设不出现、合并 mask 保留·空清除·新设·未动保留）；回归 mdm-transport 24 + mdm-apple 26 全过（默认 E 无行为变化）。server + dashboard 内联 JS 语法通过。
+- ⚠️ 真实厂商 API 无凭据未联调。下一步（分版本）：Wallet(Apple+Google)/水印/门禁 TTL 按组织覆盖、Google Wallet 新通道。门禁 ACCESS_QR_SECRET（签名密钥）与 JWT 等保持全局。
 
 ## v3.5.88 Apple MDM 协议端点（iPhone / iPad 真纳管）（用户反馈）
 

@@ -57,6 +57,42 @@ function smsOverrideFor(phone, orgId) {
   // 3. 组织默认（msg_config）或全局 env
   return orgId ? subjectMsgCfg(orgId) : undefined;
 }
+// ── 按组织覆盖的功能配置（v3.5.89）：feature_config JSON 覆盖 env ──
+// MDM 厂商凭据（Apple 证书 / Google 服务账号 / Android enterprise）可按组织配；空=回退全局 env。
+const MDM_ORG_KEYS = ['MDM_APNS_TOPIC','MDM_APNS_KEY','MDM_APNS_KEY_ID','MDM_APNS_TEAM_ID','MDM_APNS_HOST',
+  'GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME'];
+const MDM_ORG_SECRET_KEYS = ['MDM_APNS_KEY','GOOGLE_SA_PRIVATE_KEY'];
+const FEATURE_SECRET_KEYS = new Set(MDM_ORG_SECRET_KEYS);
+const FEAT_MASK = '••••••••';
+function orgFeatureCfg(sid) {
+  if (!sid) return {};
+  try { const s = oauthSubjects.get.get(sid); return s && s.feature_config ? (JSON.parse(s.feature_config) || {}) : {}; } catch (_) { return {}; }
+}
+/** 某组织的 env getter：组织 feature_config 里有（非空）就用，否则回退全局 process.env。用于 MDM 等按组织覆盖的功能 */
+function orgEnvGetter(sid) {
+  const fc = orgFeatureCfg(sid);
+  return (k) => { const v = fc[k]; return (v != null && String(v).trim() !== '') ? String(v).trim() : String(process.env[k] || '').trim(); };
+}
+/** 组织 feature_config 视图：密钥类打码（已设→MASK） */
+function featureConfigView(sid) {
+  const fc = orgFeatureCfg(sid); const out = {};
+  for (const k of MDM_ORG_KEYS) if (fc[k] != null && String(fc[k]).trim() !== '') out[k] = FEATURE_SECRET_KEYS.has(k) ? FEAT_MASK : fc[k];
+  return out;
+}
+/** 合并前端提交的 feature_config（打码串=不改、空=清除该覆盖、否则覆盖），返回新对象或 null（全空） */
+function mergeFeatureConfig(sid, incoming) {
+  const cur = orgFeatureCfg(sid); const out = { ...cur };
+  if (incoming && typeof incoming === 'object') {
+    for (const k of MDM_ORG_KEYS) {
+      if (!(k in incoming)) continue;
+      const v = incoming[k];
+      if (v === FEAT_MASK) continue;                                   // 打码未改
+      if (v == null || String(v).trim() === '') delete out[k];     // 清除覆盖 → 回退全局
+      else out[k] = String(v).trim();
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
 // 组织专属实名(KYC)凭证（v3.5.16）：某组织 kyc_config 覆盖（空=回退全局）
 function subjectKycCfg(sid) {
   if (!sid) return undefined;
@@ -1390,6 +1426,7 @@ router.get('/admin/oauth-subjects', requireAdmin(3), (req, res) => {
     msg_config: (() => { try { return s.msg_config ? JSON.parse(s.msg_config) : {}; } catch (_) { return {}; } })(),
     sms_channels: (() => { try { return s.sms_channels ? JSON.parse(s.sms_channels) : {}; } catch (_) { return {}; } })(),
     kyc_config: (() => { try { return s.kyc_config ? JSON.parse(s.kyc_config) : {}; } catch (_) { return {}; } })(),
+    feature_config: featureConfigView(s.id),   // 按组织覆盖的功能配置（MDM 等，密钥打码）v3.5.89
     allow_direct_login: !!s.allow_direct_login,
     members_open: !!s.members_open,
     independent_security: !!s.independent_security,
@@ -1594,6 +1631,11 @@ router.patch('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   if (req.body.kyc_config !== undefined) {
     const kc = req.body.kyc_config;
     oauthSubjects.setKycConfig.run(kc && typeof kc === 'object' && Object.keys(kc).length ? JSON.stringify(kc) : null, row.id);
+  }
+  // 按组织覆盖的功能配置（v3.5.89，目前含 MDM 厂商凭据；打码串不覆盖、空=清除该覆盖）
+  if (req.body.feature_config !== undefined) {
+    const merged = mergeFeatureConfig(row.id, req.body.feature_config);
+    oauthSubjects.setFeatureConfig.run(merged ? JSON.stringify(merged) : null, row.id);
   }
   if (req.body.allow_direct_login !== undefined) oauthSubjects.setDirectLogin.run(req.body.allow_direct_login ? 1 : 0, row.id);
   if (req.body.members_open !== undefined) oauthSubjects.setMembersOpen.run(req.body.members_open ? 1 : 0, row.id);   // v3.5.18 成员开放
@@ -4939,7 +4981,8 @@ router.get('/admin/devices', requireAuth, (req, res) => {
   const orgs = sys ? oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name }))
                    : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
   const doors = access.allDoors.all().map(d => ({ id: d.id, name: d.name }));
-  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured(), transports: mdm.transportsMeta() });
+  const envE = org ? orgEnvGetter(org) : undefined;   // v3.5.89 聚焦某组织时按该组织的覆盖显示凭据是否已配
+  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured(envE), transports: mdm.transportsMeta(envE), org_focus: org || null });
 });
 // 用户端「我的设备」（v3.5.85）：只读，列出归属到本人的设备。不下发 enroll_hash / 厂商设备 id 等敏感字段。
 // 自助命令：设备 owner 本人只能对自己的设备下发【非破坏性】命令（锁定 / 定位）。擦除/退役/重启等仍只管理员。
@@ -4973,7 +5016,7 @@ router.post('/user/devices/:id/commands', requireAuth, noPublic, async (req, res
   devices.markPushed.run(dev.id);
   audit('device.self_command', { subject: dev.serial || dev.id, actor: 'user:' + req.user.uid, detail: { device: dev.id, name: dev.name, type } });
   let d = { transport: dev.transport || 'pull_agent', delivered: false, pending: true, reason: 'await_agent' };
-  try { d = await mdm.deliverCommand({ ...dev, transport: dev.transport || 'pull_agent' }, { id, type, payload: v.payload }); } catch (_) {}
+  try { d = await mdm.deliverCommand({ ...dev, transport: dev.transport || 'pull_agent' }, { id, type, payload: v.payload }, orgEnvGetter(dev.subject_id)); } catch (_) {}
   if (d.delivered && !d.pending) deviceCommands.markSent.run(id);
   res.json({ success: true, id, delivered: !!d.delivered, pending: d.pending !== false, reason: d.reason, detail: d.detail });
 });
@@ -5044,10 +5087,11 @@ router.post('/admin/devices/:id/commands', requireAuth, async (req, res) => {
   devices.markPushed.run(dev.id);
   audit('device.command_issued', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, name: dev.name, type, transport: dev.transport || 'pull_agent' } });
   // v3.5.84：按设备传输通道下发。pull_agent → 等 agent 拉取；厂商通道已配凭据则尝试真实下发并标 sent
+  const E = orgEnvGetter(dev.subject_id);   // v3.5.89 按设备所属组织覆盖 MDM 凭据
   let d = { transport: dev.transport || 'pull_agent', delivered: false, pending: true, reason: 'await_agent' };
-  try { d = await mdm.deliverCommand({ ...dev, transport: dev.transport || 'pull_agent' }, { id, type, payload: v.payload }); } catch (_) {}
+  try { d = await mdm.deliverCommand({ ...dev, transport: dev.transport || 'pull_agent' }, { id, type, payload: v.payload }, E); } catch (_) {}
   if (d.delivered && !d.pending) deviceCommands.markSent.run(id);   // 厂商已接单，无 agent 回报通道
-  res.json({ success: true, id, transport: d.transport, delivered: !!d.delivered, pending: d.pending !== false ? true : false, reason: d.reason, detail: d.detail, transport_configured: mdm.transportByKey(d.transport).configured() });
+  res.json({ success: true, id, transport: d.transport, delivered: !!d.delivered, pending: d.pending !== false ? true : false, reason: d.reason, detail: d.detail, transport_configured: mdm.transportByKey(d.transport).configured(E) });
 });
 // 命令历史
 router.get('/admin/devices/:id/commands', requireAuth, (req, res) => {
@@ -5057,7 +5101,7 @@ router.get('/admin/devices/:id/commands', requireAuth, (req, res) => {
   const cmds = deviceCommands.byDevice.all(dev.id).map(c => ({ ...c, label: (mdm.COMMAND_TYPES[c.type] || {}).label || c.type }));
   const tp = mdm.transportByKey(dev.transport || 'pull_agent');
   res.json({ success: true, commands: cmds, types: mdm.COMMAND_TYPES, profiles: deviceProfiles.byDevice.all(dev.id),
-    transport: tp.key, transport_label: tp.label, transport_configured: tp.configured(), ext_device_id: dev.ext_device_id || null });
+    transport: tp.key, transport_label: tp.label, transport_configured: tp.configured(orgEnvGetter(dev.subject_id)), ext_device_id: dev.ext_device_id || null });
 });
 // 取消未执行命令
 router.post('/admin/devices/:id/commands/:cid/cancel', requireAuth, (req, res) => {
@@ -5084,7 +5128,7 @@ router.post('/admin/devices/:id/enroll', requireAuth, (req, res) => {
   const base = (process.env.BASE_URL || '').replace(/\/$/, '');
   const t = mdm.transportByKey(transport);
   res.json({ success: true, device_id: dev.id, secret, checkin_url: base + '/api/mdm/checkin',
-    transport, transport_label: t.label, transport_configured: t.configured(), ext_device_id: extId,
+    transport, transport_label: t.label, transport_configured: t.configured(orgEnvGetter(dev.subject_id)), ext_device_id: extId,
     transport_hint: transport === 'pull_agent' ? '在该电脑上跑 agent.js，用上面的 device_id/secret' :
       (t.configured() ? '厂商通道已配置，命令将直接经厂商 API 下发（需在厂商侧已纳管该设备、并填对 ext_device_id）' :
         '厂商通道尚未配置凭据：命令会先入队，配齐环境变量后生效。所需变量：' + (t.envKeys || []).join('、')) });
@@ -5115,7 +5159,8 @@ router.get('/admin/mdm/vendor-devices', requireAuth, async (req, res) => {
   if (!isSysAdmin(req, 3)) return res.status(403).json({ error: '仅系统管理员可从厂商拉取设备列表' });
   const transport = String(req.query?.transport || '');
   if (!['android_mgmt', 'google_chrome'].includes(transport)) return res.status(400).json({ error: '该通道不支持从厂商拉取（仅 Android / Chromebook）' });
-  let r; try { r = await mdm.listVendorDevices(transport); } catch (e) { return res.status(502).json({ error: '调用厂商 API 失败：' + e.message }); }
+  const org = String(req.query?.org || '').trim();   // v3.5.89 指定组织则用该组织的凭据覆盖
+  let r; try { r = await mdm.listVendorDevices(transport, org ? orgEnvGetter(org) : undefined); } catch (e) { return res.status(502).json({ error: '调用厂商 API 失败：' + e.message }); }
   if (!r.ok) {
     if (r.reason === 'transport_not_configured') return res.status(400).json({ error: '该通道凭据未配置，请先在系统配置 → MDM 设备纳管里填好' });
     return res.status(502).json({ error: '厂商返回错误：' + (r.detail || r.reason) });
@@ -5125,7 +5170,8 @@ router.get('/admin/mdm/vendor-devices', requireAuth, async (req, res) => {
 // v3.5.87：Android 建 enrollment token（设备 afw#setup / 扫码纳管进 Enterprise）
 router.post('/admin/mdm/android/enrollment-token', requireAuth, async (req, res) => {
   if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '无权' });
-  let r; try { r = await mdm.createAndroidEnrollmentToken({ policy: req.body?.policy, duration: req.body?.duration }); } catch (e) { return res.status(502).json({ error: '调用厂商 API 失败：' + e.message }); }
+  const org = String(req.body?.org || '').trim();   // v3.5.89 指定组织则用该组织的凭据
+  let r; try { r = await mdm.createAndroidEnrollmentToken({ policy: req.body?.policy, duration: req.body?.duration }, org ? orgEnvGetter(org) : undefined); } catch (e) { return res.status(502).json({ error: '调用厂商 API 失败：' + e.message }); }
   if (!r.ok) {
     if (r.reason === 'transport_not_configured') return res.status(400).json({ error: 'Android 通道凭据未配置（GOOGLE_SA_* + ANDROID_ENTERPRISE_NAME）' });
     return res.status(502).json({ error: '厂商返回错误：' + (r.detail || r.reason) });
@@ -5145,7 +5191,7 @@ router.post('/admin/devices/:id/apple-profile', requireAuth, (req, res) => {
   if (!dev) return res.status(404).json({ error: '设备不存在' });
   if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
   if (dev.kind !== 'apple') return res.status(400).json({ error: '仅 Apple 设备可用 Apple MDM 纳管' });
-  const topic = (process.env.MDM_APNS_TOPIC || '').trim();
+  const topic = orgEnvGetter(dev.subject_id)('MDM_APNS_TOPIC');   // v3.5.89 组织覆盖的推送主题
   const { secret, hash } = mdm.genEnrollSecret();          // secret 作 URL token（明文嵌进描述文件），hash 存库
   devices.setTransport.run('apple_mdm', dev.ext_device_id || null, dev.id);
   devices.setEnroll.run('pending', hash, dev.id);

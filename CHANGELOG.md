@@ -4,6 +4,16 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.89 — MDM 厂商凭据按组织覆盖（多租户第一步）
+
+- 用户反馈：MDM / Wallet / 水印 / 门禁这些可能该按组织管理、统一平台不对。先做 MDM（设备本就归属组织）+ 打通用机制，其余分版本跟进。
+- 通用机制：`oauth_subjects.feature_config`（JSON）存按组织的 env 覆盖；`orgEnvGetter(sid)` = 组织配了用组织的、空则回退全局 `process.env`（并发安全，随调用栈走，同 kyc.js envGetter）。
+- `mdm.js` 所有读 env 的函数（transports 的 configured/deliver、googleAccessToken、buildApnsJwt、apnsPush、listVendorDevices、createAndroidEnrollmentToken、transportsMeta、transportConfigured、deliverCommand）都加可选 `E` getter（默认全局，零行为变化）。
+- api.js：MDM 命令下发 / 自助命令 / 命令历史 / 纳管 / 描述文件 topic / 设备列表 transports / vendor 拉取 / Android token 全部按【设备所属组织】传入 `orgEnvGetter(dev.subject_id)`。
+- 组织弹窗（组织管理 → 编辑组织）加「MDM 厂商凭据（本组织）」折叠区（Apple APNs + Google 服务账号 + Chrome + Android，密钥打码 •••• 已配、留空不改、清空=回退全局），与既有「短信/实名」组织专属凭证一致。系统配置 MDM 组标注「全局默认，可按组织覆盖」。
+- 测试：按组织覆盖逻辑 16 项（覆盖/回退、configured 按组织、transportsMeta(E)、密钥掩码、合并 mask/空/新/未动）；回归 MDM 传输 24 + Apple 26 全过（默认 E 无行为变化）。
+- ⚠️ 下一步：Wallet（Apple+Google）/ 水印 / 门禁 TTL 按组织覆盖、Google Wallet 新通道，分版本做。
+
 ## v3.5.88 — Apple MDM 协议端点（iPhone / iPad 真纳管）
 
 - 补上 iPhone 那条的服务端 MDM 协议端点，设备装纳管描述文件后即可被远程锁定/擦除/下发配置。

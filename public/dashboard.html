@@ -3140,6 +3140,22 @@ async function loadMe() {
       </div>
     </details>
 
+    <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
+      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">MDM 厂商凭据（本组织）· 可选</summary>
+      <div style="font-size:11px;color:var(--txd);margin:8px 0;">本组织的设备（iPhone/Chromebook/Android）用这套凭据纳管，各组织用自己的 Apple Business Manager / Google 企业。留空则回退全局「系统配置 → MDM 设备纳管」。密钥显示为 •••• 表示已配置，留空=不改。</div>
+      <div style="display:grid;gap:8px;">
+        <input id="sm-feat-MDM_APNS_TEAM_ID" placeholder="MDM_APNS_TEAM_ID（Apple Team ID）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-MDM_APNS_KEY_ID" placeholder="MDM_APNS_KEY_ID（Apple APNs Key ID）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <textarea id="sm-feat-MDM_APNS_KEY" placeholder="MDM_APNS_KEY（.p8 内容）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
+        <input id="sm-feat-MDM_APNS_TOPIC" placeholder="MDM_APNS_TOPIC（MDM 推送主题）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-GOOGLE_SA_CLIENT_EMAIL" placeholder="GOOGLE_SA_CLIENT_EMAIL（Google 服务账号邮箱）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <textarea id="sm-feat-GOOGLE_SA_PRIVATE_KEY" placeholder="GOOGLE_SA_PRIVATE_KEY（服务账号私钥）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
+        <input id="sm-feat-GOOGLE_ADMIN_SUBJECT" placeholder="GOOGLE_ADMIN_SUBJECT（Chrome 域级委派管理员）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-GOOGLE_CUSTOMER_ID" placeholder="GOOGLE_CUSTOMER_ID（留空 my_customer）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-ANDROID_ENTERPRISE_NAME" placeholder="ANDROID_ENTERPRISE_NAME（enterprises/LC…）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+      </div>
+    </details>
+
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
       <input type="checkbox" id="sm-members-open"> 成员开放：允许其他组织的管理员查看并复用本组织成员（v3.5.18）
     </label>
@@ -8148,7 +8164,8 @@ async function mdmUnenroll() {
 // v3.5.87：从 Google 拉取设备列表，选一个回填 ext_device_id（省去手填）
 async function mdmPullVendorDevices(transport) {
   showToast('正在从 Google 拉取…');
-  const { ok, data } = await api('GET', '/admin/mdm/vendor-devices?transport=' + encodeURIComponent(transport));
+  const orgQ = _mdmDev.subject_id ? '&org=' + encodeURIComponent(_mdmDev.subject_id) : '';
+  const { ok, data } = await api('GET', '/admin/mdm/vendor-devices?transport=' + encodeURIComponent(transport) + orgQ);
   if (!ok) { await uiAlert('拉取失败：' + (data?.error || '')); return; }
   const list = data.devices || [];
   if (!list.length) { await uiAlert('厂商侧没有查到设备。确认设备已纳管进你的 ' + (transport==='android_mgmt'?'Android Enterprise':'Google 域') + '。'); return; }
@@ -8164,7 +8181,7 @@ async function mdmPullVendorDevices(transport) {
 // v3.5.87：Android 建纳管 token（设备 afw#setup / 扫码纳管）
 async function mdmAndroidToken() {
   showToast('正在生成纳管 token…');
-  const { ok, data } = await api('POST', '/admin/mdm/android/enrollment-token', {});
+  const { ok, data } = await api('POST', '/admin/mdm/android/enrollment-token', { org: _mdmDev.subject_id || '' });
   const out = document.getElementById('mdm-enroll-out'); if (!out) return;
   if (!ok) { await uiAlert('生成失败：' + (data?.error || '')); return; }
   let qrHtml = '';
@@ -9670,6 +9687,10 @@ function openSubjectModal(subj) {
   document.getElementById('sm-kyc-volc-secret').value   = kc.VOLC_KYC_ACCESS_KEY_SECRET || '';
   document.getElementById('sm-kyc-alipay-appid').value  = kc.ALIPAY_APP_ID || '';
   document.getElementById('sm-kyc-alipay-priv').value   = kc.ALIPAY_PRIVATE_KEY || '';
+  // MDM 厂商凭据（本组织，v3.5.89）：密钥已配回填为 ••••••••
+  const fc = (editing && subj.feature_config) || {};
+  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME']
+    .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) el.value = fc[k] || ''; });
   document.getElementById('sm-direct').checked   = editing ? !!subj.allow_direct_login : false;
   document.getElementById('sm-members-open').checked = editing ? !!subj.members_open : false;
   document.getElementById('sm-indsec').checked = editing ? !!subj.independent_security : false;
@@ -9703,6 +9724,10 @@ async function saveSubject() {
   putK('ALIYUN_KYC_ACCESS_KEY_ID','sm-kyc-aliyun-id'); putK('ALIYUN_KYC_ACCESS_KEY_SECRET','sm-kyc-aliyun-secret');
   putK('VOLC_KYC_ACCESS_KEY_ID','sm-kyc-volc-id'); putK('VOLC_KYC_ACCESS_KEY_SECRET','sm-kyc-volc-secret');
   putK('ALIPAY_APP_ID','sm-kyc-alipay-appid'); putK('ALIPAY_PRIVATE_KEY','sm-kyc-alipay-priv');
+  // MDM 厂商凭据（本组织，v3.5.89）：提交非空字段（•••• 打码串由后端识别为「不改」，空=清除覆盖）
+  const feature_config = {};
+  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME']
+    .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) { const v = (el.value||'').trim(); feature_config[k] = v; } });
   const allow_direct_login = document.getElementById('sm-direct').checked;
   const members_open = document.getElementById('sm-members-open').checked;
   const independent_security = document.getElementById('sm-indsec').checked;
@@ -9713,7 +9738,7 @@ async function saveSubject() {
   const max_phones = parseInt(document.getElementById('sm-maxphones').value, 10) || 0;
   const max_emails = parseInt(document.getElementById('sm-maxemails').value, 10) || 0;
   const domain = document.getElementById('sm-domain').value.trim().toLowerCase();
-  const extra = { msg_config, kyc_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id, max_phones, max_emails, domain };
+  const extra = { msg_config, kyc_config, feature_config, allow_direct_login, members_open, independent_security, direct_listed, require_org_password, deny_code_login, folder_id, max_phones, max_emails, domain };
   let res;
   if (id) {
     res = await api('PATCH', '/admin/oauth-subjects/' + id, { name, enabled, ...policy, ...extra });
@@ -11664,7 +11689,7 @@ const ENV_GROUPS = [
   },
   {
     key: 'mdm', category: 'system', label: 'MDM 设备纳管', icon: '📱', color: '#2563EB',
-    desc: '电脑（Windows/Mac/Linux）走拉取式 agent，无需在此配置。iPhone/iPad 走 Apple MDM（APNs）、Chromebook/Android 走 Google 通道——配齐对应凭据后，管理端下发命令会直接经厂商 API 执行；未配则命令先入队。',
+    desc: '这里是【全局默认】。电脑走拉取式 agent，无需配置。iPhone/iPad 走 Apple MDM（APNs）、Chromebook/Android 走 Google 通道——配齐凭据后下发命令直接经厂商 API 执行，未配则先入队。💡 可【按组织覆盖】：到「组织管理 → 编辑组织 → MDM 厂商凭据（本组织）」，让各组织用自己的 Apple/Google 企业；组织没配则回退这里的全局默认。',
     vars: [
       { key: 'MDM_APNS_TEAM_ID', label: 'Apple · Team ID', desc: 'iPhone/iPad：Apple Developer 账号 Team ID（10 位）', required: false, secret: false, placeholder: 'ABCDE12345', value: '' },
       { key: 'MDM_APNS_KEY_ID', label: 'Apple · APNs Key ID', desc: 'APNs 鉴权密钥(.p8) 的 Key ID', required: false, secret: false, placeholder: '', value: '' },

@@ -107,19 +107,21 @@ function mapVendorCommand(transport, type) {
 // ── Google 服务账号 → access_token（Chrome / Android 共用；RS256 JWT 换 token）──
 // 需环境变量 GOOGLE_SA_CLIENT_EMAIL + GOOGLE_SA_PRIVATE_KEY（PEM，\n 可用字面写）。
 // Chrome(Admin SDK) 还需域级委派管理员邮箱 GOOGLE_ADMIN_SUBJECT。
+// ⚠️ 所有读 env 的函数都收一个可选 `E`（env getter，默认全局 env）。按组织覆盖时（v3.5.89）由 api.js
+//    用该设备所属组织的 feature_config 构造 E 传入——组织配了用组织的，没配回退全局。并发安全（随调用栈走）。
 function b64url(buf) { return Buffer.from(buf).toString('base64url'); }
-function googleSAConfigured() { return !!(env('GOOGLE_SA_CLIENT_EMAIL') && env('GOOGLE_SA_PRIVATE_KEY')); }
-function buildGoogleAssertion(scope, subject) {
-  const key = env('GOOGLE_SA_PRIVATE_KEY').replace(/\\n/g, '\n');
+function googleSAConfigured(E = env) { return !!(E('GOOGLE_SA_CLIENT_EMAIL') && E('GOOGLE_SA_PRIVATE_KEY')); }
+function buildGoogleAssertion(scope, subject, E = env) {
+  const key = E('GOOGLE_SA_PRIVATE_KEY').replace(/\\n/g, '\n');
   const now = Math.floor(Date.now() / 1000);
-  const claim = { iss: env('GOOGLE_SA_CLIENT_EMAIL'), scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 };
+  const claim = { iss: E('GOOGLE_SA_CLIENT_EMAIL'), scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 };
   if (subject) claim.sub = subject;
   const signingInput = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' })) + '.' + b64url(JSON.stringify(claim));
   const sig = crypto.createSign('RSA-SHA256').update(signingInput).sign(key);
   return signingInput + '.' + b64url(sig);
 }
-async function googleAccessToken(scope, subject) {
-  const assertion = buildGoogleAssertion(scope, subject);
+async function googleAccessToken(scope, subject, E = env) {
+  const assertion = buildGoogleAssertion(scope, subject, E);
   const r = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
@@ -132,11 +134,11 @@ async function googleAccessToken(scope, subject) {
 
 // ── Apple APNs（MDM 唤醒推送；ES256 JWT provider token）──
 // 需 MDM_APNS_TEAM_ID + MDM_APNS_KEY_ID + MDM_APNS_KEY(.p8 内容) + MDM_APNS_TOPIC（MDM 推送主题）。
-function buildApnsJwt() {
-  const key = env('MDM_APNS_KEY').replace(/\\n/g, '\n');
+function buildApnsJwt(E = env) {
+  const key = E('MDM_APNS_KEY').replace(/\\n/g, '\n');
   const now = Math.floor(Date.now() / 1000);
-  const head = b64url(JSON.stringify({ alg: 'ES256', kid: env('MDM_APNS_KEY_ID'), typ: 'JWT' }));
-  const body = b64url(JSON.stringify({ iss: env('MDM_APNS_TEAM_ID'), iat: now }));
+  const head = b64url(JSON.stringify({ alg: 'ES256', kid: E('MDM_APNS_KEY_ID'), typ: 'JWT' }));
+  const body = b64url(JSON.stringify({ iss: E('MDM_APNS_TEAM_ID'), iat: now }));
   const sig = crypto.createSign('SHA256').update(head + '.' + body).sign({ key, dsaEncoding: 'ieee-p1363' });
   return head + '.' + body + '.' + b64url(sig);
 }
@@ -151,17 +153,17 @@ const TRANSPORTS = {
   apple_mdm: {
     key: 'apple_mdm', label: 'Apple MDM（iPhone/iPad/Mac·APNs）', kinds: ['apple'],
     envKeys: ['MDM_APNS_TOPIC', 'MDM_APNS_KEY', 'MDM_APNS_KEY_ID', 'MDM_APNS_TEAM_ID'],
-    configured: () => !!(env('MDM_APNS_TOPIC') && env('MDM_APNS_KEY') && env('MDM_APNS_KEY_ID') && env('MDM_APNS_TEAM_ID')),
-    async deliver(device, command) {
-      if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+    configured: (E = env) => !!(E('MDM_APNS_TOPIC') && E('MDM_APNS_KEY') && E('MDM_APNS_KEY_ID') && E('MDM_APNS_TEAM_ID')),
+    async deliver(device, command, E = env) {
+      if (!this.configured(E)) return { delivered: false, pending: true, reason: 'transport_not_configured' };
       const vc = mapVendorCommand('apple_mdm', command.type);
       if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
       // Apple MDM：命令已入队，APNs 只负责「唤醒」设备来 PUT ServerURL 取命令（见 mdm-apple.js + /api/mdm/apple）。
       if (!device.mdm_push_token || !device.mdm_push_magic) return { delivered: false, pending: true, reason: 'not_enrolled' };   // 设备还没 check-in 上报 APNs 凭据
       try {
-        const jwt = buildApnsJwt();
+        const jwt = buildApnsJwt(E);
         const http2 = require('http2');
-        await apnsPush(http2, jwt, device.mdm_push_token, device.mdm_push_magic, env('MDM_APNS_TOPIC'));
+        await apnsPush(http2, jwt, device.mdm_push_token, device.mdm_push_magic, E('MDM_APNS_TOPIC'), E);
         return { delivered: true, pending: true, reason: 'apns_woke_awaiting_pull', vendor: vc };
       } catch (e) { return { delivered: false, pending: false, reason: 'apns_failed', detail: e.message }; }
     },
@@ -169,15 +171,15 @@ const TRANSPORTS = {
   google_chrome: {
     key: 'google_chrome', label: 'Chromebook（Chrome Management API）', kinds: ['google'],
     envKeys: ['GOOGLE_SA_CLIENT_EMAIL', 'GOOGLE_SA_PRIVATE_KEY', 'GOOGLE_ADMIN_SUBJECT', 'GOOGLE_CUSTOMER_ID'],
-    configured: () => !!(googleSAConfigured() && env('GOOGLE_ADMIN_SUBJECT')),
-    async deliver(device, command) {
-      if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+    configured: (E = env) => !!(googleSAConfigured(E) && E('GOOGLE_ADMIN_SUBJECT')),
+    async deliver(device, command, E = env) {
+      if (!this.configured(E)) return { delivered: false, pending: true, reason: 'transport_not_configured' };
       const vc = mapVendorCommand('google_chrome', command.type);
       if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
       if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_ext_device_id' };
       try {
-        const token = await googleAccessToken('https://www.googleapis.com/auth/admin.directory.device.chromeos', env('GOOGLE_ADMIN_SUBJECT'));
-        const customer = env('GOOGLE_CUSTOMER_ID') || 'my_customer';
+        const token = await googleAccessToken('https://www.googleapis.com/auth/admin.directory.device.chromeos', E('GOOGLE_ADMIN_SUBJECT'), E);
+        const customer = E('GOOGLE_CUSTOMER_ID') || 'my_customer';
         const r = await fetch(`https://admin.googleapis.com/admin/directory/v1/customer/${customer}/devices/chromeos/${encodeURIComponent(device.ext_device_id)}/commands`, {
           method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
           body: JSON.stringify({ commandType: vc }), signal: AbortSignal.timeout(15000),
@@ -191,14 +193,14 @@ const TRANSPORTS = {
   android_mgmt: {
     key: 'android_mgmt', label: 'Android（Android Management API）', kinds: ['google'],
     envKeys: ['GOOGLE_SA_CLIENT_EMAIL', 'GOOGLE_SA_PRIVATE_KEY', 'ANDROID_ENTERPRISE_NAME'],
-    configured: () => !!(googleSAConfigured() && env('ANDROID_ENTERPRISE_NAME')),
-    async deliver(device, command) {
-      if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+    configured: (E = env) => !!(googleSAConfigured(E) && E('ANDROID_ENTERPRISE_NAME')),
+    async deliver(device, command, E = env) {
+      if (!this.configured(E)) return { delivered: false, pending: true, reason: 'transport_not_configured' };
       if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_ext_device_id' };   // 完整资源名 enterprises/LC.../devices/xxx
       // 擦除：Android Management API 没有 WIPE 命令，删除设备资源即触发恢复出厂
       if (command.type === 'wipe') {
         try {
-          const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+          const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement', null, E);
           const r = await fetch(`https://androidmanagement.googleapis.com/v1/${device.ext_device_id}?wipeDataFlags=WIPE_EXTERNAL_STORAGE`, {
             method: 'DELETE', headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000),
           });
@@ -209,7 +211,7 @@ const TRANSPORTS = {
       const vc = mapVendorCommand('android_mgmt', command.type);
       if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
       try {
-        const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+        const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement', null, E);
         const r = await fetch(`https://androidmanagement.googleapis.com/v1/${device.ext_device_id}:issueCommand`, {
           method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: vc }), signal: AbortSignal.timeout(15000),
@@ -223,9 +225,9 @@ const TRANSPORTS = {
 };
 
 // APNs HTTP/2 推送（MDM 唤醒）：发到设备的 APNs token，body 是 {"mdm":"<PushMagic>"}
-function apnsPush(http2, jwt, deviceToken, pushMagic, topic) {
+function apnsPush(http2, jwt, deviceToken, pushMagic, topic, E = env) {
   return new Promise((resolve, reject) => {
-    const host = env('MDM_APNS_HOST') || 'https://api.push.apple.com';
+    const host = E('MDM_APNS_HOST') || 'https://api.push.apple.com';
     const client = http2.connect(host);
     client.on('error', reject);
     const req = client.request({
@@ -245,19 +247,19 @@ function apnsPush(http2, jwt, deviceToken, pushMagic, topic) {
 // ── 从厂商侧拉取设备列表（省掉手填 ext_device_id）──
 // Android：列 Enterprise 下的受管设备（name=资源名即 ext_device_id）。Chromebook：列域内 ChromeOS 设备（deviceId）。
 // ⚠️ gated + try/catch；真实调用需凭据，本机无法联调。
-async function listVendorDevices(transport) {
+async function listVendorDevices(transport, E = env) {
   if (transport === 'android_mgmt') {
-    if (!TRANSPORTS.android_mgmt.configured()) return { ok: false, reason: 'transport_not_configured' };
-    const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
-    const r = await fetch(`https://androidmanagement.googleapis.com/v1/${env('ANDROID_ENTERPRISE_NAME')}/devices?pageSize=100`, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000) });
+    if (!TRANSPORTS.android_mgmt.configured(E)) return { ok: false, reason: 'transport_not_configured' };
+    const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement', null, E);
+    const r = await fetch(`https://androidmanagement.googleapis.com/v1/${E('ANDROID_ENTERPRISE_NAME')}/devices?pageSize=100`, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, reason: 'api_error', detail: (j.error && j.error.message) || r.status };
     return { ok: true, devices: (j.devices || []).map(d => ({ ext_device_id: d.name, model: (d.hardwareInfo || {}).model || '', brand: (d.hardwareInfo || {}).brand || '', serial: (d.hardwareInfo || {}).serialNumber || '', state: d.appliedState || d.state || '' })) };
   }
   if (transport === 'google_chrome') {
-    if (!TRANSPORTS.google_chrome.configured()) return { ok: false, reason: 'transport_not_configured' };
-    const token = await googleAccessToken('https://www.googleapis.com/auth/admin.directory.device.chromeos', env('GOOGLE_ADMIN_SUBJECT'));
-    const customer = env('GOOGLE_CUSTOMER_ID') || 'my_customer';
+    if (!TRANSPORTS.google_chrome.configured(E)) return { ok: false, reason: 'transport_not_configured' };
+    const token = await googleAccessToken('https://www.googleapis.com/auth/admin.directory.device.chromeos', E('GOOGLE_ADMIN_SUBJECT'), E);
+    const customer = E('GOOGLE_CUSTOMER_ID') || 'my_customer';
     const r = await fetch(`https://admin.googleapis.com/admin/directory/v1/customer/${customer}/devices/chromeos?maxResults=100&projection=BASIC`, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, reason: 'api_error', detail: (j.error && j.error.message) || r.status };
@@ -268,10 +270,10 @@ async function listVendorDevices(transport) {
 
 // ── Android：建 enrollment token（设备在开机设置/afw#setup 时用它纳管进 Enterprise）──
 // 先 best-effort 确保策略存在（空策略即可纳管），再建 token；返回 token 值 + qrCode(JSON 字符串) + 过期时间。
-async function createAndroidEnrollmentToken(opts = {}) {
-  if (!TRANSPORTS.android_mgmt.configured()) return { ok: false, reason: 'transport_not_configured' };
-  const ent = env('ANDROID_ENTERPRISE_NAME');
-  const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+async function createAndroidEnrollmentToken(opts = {}, E = env) {
+  if (!TRANSPORTS.android_mgmt.configured(E)) return { ok: false, reason: 'transport_not_configured' };
+  const ent = E('ANDROID_ENTERPRISE_NAME');
+  const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement', null, E);
   const policyId = String(opts.policy || 'default').replace(/[^\w-]/g, '') || 'default';
   const policyName = `${ent}/policies/${policyId}`;
   try { await fetch(`https://androidmanagement.googleapis.com/v1/${policyName}`, { method: 'PATCH', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(15000) }); } catch (_) {}
@@ -288,19 +290,19 @@ async function createAndroidEnrollmentToken(opts = {}) {
 function transportByKey(k) { return TRANSPORTS[k] || TRANSPORTS.pull_agent; }
 function transportForDevice(device) { return transportByKey((device && device.transport) || 'pull_agent'); }
 function transportKeys() { return Object.keys(TRANSPORTS); }
-/** 给管理端 UI：各传输的 key/label/是否已配凭据/适用设备类型/所需 env */
-function transportsMeta() {
-  return Object.values(TRANSPORTS).map(t => ({ key: t.key, label: t.label, configured: t.configured(), kinds: t.kinds, envKeys: t.envKeys || [] }));
+/** 给管理端 UI：各传输的 key/label/是否已配凭据/适用设备类型/所需 env（E=组织 getter 时反映该组织是否已配） */
+function transportsMeta(E = env) {
+  return Object.values(TRANSPORTS).map(t => ({ key: t.key, label: t.label, configured: t.configured(E), kinds: t.kinds, envKeys: t.envKeys || [] }));
 }
-/** 下发：把命令送到设备的传输通道。pull_agent 返回 await_agent（排队等拉取），厂商通道已配则尝试真实下发 */
-async function deliverCommand(device, command) {
+/** 下发：把命令送到设备的传输通道。pull_agent 返回 await_agent（排队等拉取），厂商通道已配则尝试真实下发。E=设备所属组织的 env getter */
+async function deliverCommand(device, command, E = env) {
   const t = transportForDevice(device);
-  try { return Object.assign({ transport: t.key }, await t.deliver(device, command)); }
+  try { return Object.assign({ transport: t.key }, await t.deliver(device, command, E)); }
   catch (e) { return { transport: t.key, delivered: false, pending: false, reason: 'deliver_error', detail: e.message }; }
 }
 
 // 兼容旧调用：transportConfigured() 现表示「Apple APNs 是否已配」（设备列表徽章仍用）
-function transportConfigured() { return TRANSPORTS.apple_mdm.configured(); }
+function transportConfigured(E = env) { return TRANSPORTS.apple_mdm.configured(E); }
 /** 旧 pushWake 名保留：pull_agent 设备的唤醒仍是 no-op（靠轮询），厂商设备走 deliverCommand */
 async function pushWake(device, command) {
   if (!device || (device.transport || 'pull_agent') === 'pull_agent') return { pushed: false, reason: 'await_agent' };

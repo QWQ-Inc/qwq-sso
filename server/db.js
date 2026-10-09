@@ -409,6 +409,8 @@ try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN login_end TEXT'); } catch(_
 // 组织专属凭证（v3.5.15+）：短信/邮件(msg_config) 与 实名(kyc_config) 覆盖，JSON；空=回退全局 env。
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN msg_config TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN kyc_config TEXT'); } catch(_) {}
+// 按组织覆盖的功能配置（v3.5.89）：MDM 厂商凭据 / Wallet / 水印 / 门禁策略 的 env 覆盖，JSON；空=回退全局 env
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN feature_config TEXT'); } catch(_) {}
 // 允许在登录页「直接登录到该组织」（v3.5.17 用）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN allow_direct_login INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 // 成员开放：允许其他组织的管理员查看并复用本组织成员（v3.5.18）
@@ -1260,6 +1262,7 @@ const oauthSubjectStmts = {
   bumpUidSeq: db.prepare('UPDATE oauth_subjects SET uid_seq=uid_seq+1 WHERE id=?'),
   setMsgConfig: db.prepare('UPDATE oauth_subjects SET msg_config=? WHERE id=?'),
   setKycConfig: db.prepare('UPDATE oauth_subjects SET kyc_config=? WHERE id=?'),
+  setFeatureConfig: db.prepare('UPDATE oauth_subjects SET feature_config=? WHERE id=?'),   // v3.5.89
   setDirectLogin: db.prepare('UPDATE oauth_subjects SET allow_direct_login=? WHERE id=?'),
   setMembersOpen: db.prepare('UPDATE oauth_subjects SET members_open=? WHERE id=?'),
   setIndependentSecurity: db.prepare('UPDATE oauth_subjects SET independent_security=? WHERE id=?'),
