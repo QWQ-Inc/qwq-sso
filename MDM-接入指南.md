@@ -56,17 +56,15 @@ Android 和 Chromebook 都用**同一个 Google Cloud 服务账号（Service Acc
    |---|---|---|
    | Android · Enterprise 名 | `ANDROID_ENTERPRISE_NAME` | `enterprises/LC0xxxxxxx` |
 
-4. **把设备纳管进这个 Enterprise**：
-   - 先建一条 Policy（`enterprises.policies.patch`，可先用空策略 `{}`）。
-   - 建 enrollment token：`enterprises.enrollmentTokens.create`（指定 policyName），拿到 token / 二维码。
-   - 新设备在「开机设置」阶段或已擦除设备上，用 Google 账号位置输入 `afw#setup` / 扫描 enrollment 二维码，按引导完成企业纳管。
-   - 纳管后，设备在 `enterprises.devices.list` 里出现，资源名形如
-     **`enterprises/LC0xxxxxxx/devices/3bd4f2e9a1b2c3d4`** —— 这就是要填给 QWQ SSO 的 `ext_device_id`。
+4. **把设备纳管进这个 Enterprise**（v3.5.87 起可在界面里一键完成）：
+   - 在 QWQ SSO 设备管理里登记这台设备（类型选 **Google/Android**）→ 设备行「MDM」→「生成纳管 token」→ 通道选 **Android** → 面板上点 **📲 生成纳管二维码**，系统会自动建一条空策略 + enrollment token，显示 token 值和二维码。
+   - 新设备在「开机设置」阶段输入 `afw#setup` 或扫该二维码，按引导完成企业纳管。
+   - （也可仍用 `enterprises.enrollmentTokens.create` 自行建 token。）
 
-### 2.3 在 QWQ SSO 里纳管该设备
-1. 设备管理里登记这台设备（类型选 **Google/Android**）。
-2. 设备行「MDM」→「生成纳管 token」→ 通道选 **Android（Android Management API）** → `ext_device_id` 填上面那个**完整资源名** `enterprises/.../devices/...`。
-3. 回 MDM 面板下发命令。若凭据已配齐，命令会直接经 Android Management API 执行。
+### 2.3 在 QWQ SSO 里绑定该设备
+1. 设备纳管进 Enterprise 后，在 MDM 面板点 **📥 从 Google 拉取设备** —— 系统调 `enterprises.devices.list` 列出设备，选中即自动回填 `ext_device_id`（完整资源名 `enterprises/.../devices/...`），**不用手敲**。
+2. 回 MDM 面板下发命令。若凭据已配齐，命令会直接经 Android Management API 执行。
+3. （也可在「生成纳管 token」时手填 `ext_device_id`，效果相同。）
 
 ### 2.4 支持的命令（Android）
 | QWQ 命令 | 实际动作 | Android API |
@@ -103,14 +101,11 @@ Android 和 Chromebook 都用**同一个 Google Cloud 服务账号（Service Acc
    | Chrome · 域级委派管理员 | `GOOGLE_ADMIN_SUBJECT` | 一个超级管理员邮箱，如 `admin@yourdomain.com` |
    | Chrome · Customer ID | `GOOGLE_CUSTOMER_ID` | 留空用 `my_customer`（代表本域），或填实际 customerId |
 
-4. **取设备的 deviceId**：
-   - 管理控制台 → 设备 → Chrome → 设备，点开一台设备，URL / 详情里的 **Device ID**；
-   - 或调 `admin.directory.chromeosdevices.list` 拿 `deviceId`。
-   这就是 QWQ SSO 要填的 `ext_device_id`。
+4. **设备纳管**：ChromeOS 设备的企业纳管在**开机设置阶段**完成（输入 Workspace 账号或 Admin Console 里生成的「注册令牌」，管理控制台 → 设备 → Chrome → 设置 → 注册）——这一步在 Google 侧做，QWQ SSO 不代办。
 
-### 3.3 在 QWQ SSO 里纳管该设备
-1. 登记设备（类型选 **Google/Chrome**）。
-2. 设备行「MDM」→「生成纳管 token」→ 通道选 **Chromebook（Chrome Management API）** → `ext_device_id` 填 Chrome 的 **deviceId**。
+### 3.3 在 QWQ SSO 里绑定该设备
+1. 登记设备（类型选 **Google/Chrome**）→ 设备行「MDM」→「生成纳管 token」→ 通道选 **Chromebook（Chrome Management API）**。
+2. 面板点 **📥 从 Google 拉取设备** —— 系统调 `admin.directory.chromeosdevices.list` 列出域内 Chromebook（型号/序列号/使用者），选中即自动回填 `ext_device_id`（Chrome 的 deviceId），**不用手敲**。
 3. 下发命令，凭据齐则经 Directory API 执行。
 
 ### 3.4 支持的命令（Chromebook）
@@ -147,4 +142,4 @@ Android 和 Chromebook 都用**同一个 Google Cloud 服务账号（Service Acc
 - **403 / permission**：（Android）服务账号没在该 Enterprise 下调用、或 API 没启用；（Chromebook）该管理员无权管这台设备 / 未买 Chrome 升级许可。
 - **404 device**：`ext_device_id` 填错——Android 要**完整资源名** `enterprises/.../devices/...`，Chromebook 要 **deviceId**（不是序列号）。
 
-> ⚠️ 当前版本：enrollment token 的创建、设备列表的自动发现尚未做进 QWQ SSO 界面，`ext_device_id` 需你从 Google 侧取好后在「生成纳管 token」时填入。后续可把「列设备 / 建 enrollment token」也接进来。
+> ✅ v3.5.87 起：**列设备**（Android/Chromebook）与 **Android 建 enrollment token/二维码**已接进 MDM 面板（📥 从 Google 拉取设备 / 📲 生成纳管二维码），`ext_device_id` 一般不用手敲。Chromebook 的设备企业注册仍在 Google 管理控制台/开机设置完成（API 无干净公开接口），注册后用「📥 从 Google 拉取设备」绑定即可。

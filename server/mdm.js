@@ -243,6 +243,49 @@ function apnsPush(http2, jwt, deviceToken, topic) {
   });
 }
 
+// ── 从厂商侧拉取设备列表（省掉手填 ext_device_id）──
+// Android：列 Enterprise 下的受管设备（name=资源名即 ext_device_id）。Chromebook：列域内 ChromeOS 设备（deviceId）。
+// ⚠️ gated + try/catch；真实调用需凭据，本机无法联调。
+async function listVendorDevices(transport) {
+  if (transport === 'android_mgmt') {
+    if (!TRANSPORTS.android_mgmt.configured()) return { ok: false, reason: 'transport_not_configured' };
+    const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+    const r = await fetch(`https://androidmanagement.googleapis.com/v1/${env('ANDROID_ENTERPRISE_NAME')}/devices?pageSize=100`, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, reason: 'api_error', detail: (j.error && j.error.message) || r.status };
+    return { ok: true, devices: (j.devices || []).map(d => ({ ext_device_id: d.name, model: (d.hardwareInfo || {}).model || '', brand: (d.hardwareInfo || {}).brand || '', serial: (d.hardwareInfo || {}).serialNumber || '', state: d.appliedState || d.state || '' })) };
+  }
+  if (transport === 'google_chrome') {
+    if (!TRANSPORTS.google_chrome.configured()) return { ok: false, reason: 'transport_not_configured' };
+    const token = await googleAccessToken('https://www.googleapis.com/auth/admin.directory.device.chromeos', env('GOOGLE_ADMIN_SUBJECT'));
+    const customer = env('GOOGLE_CUSTOMER_ID') || 'my_customer';
+    const r = await fetch(`https://admin.googleapis.com/admin/directory/v1/customer/${customer}/devices/chromeos?maxResults=100&projection=BASIC`, { headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, reason: 'api_error', detail: (j.error && j.error.message) || r.status };
+    return { ok: true, devices: (j.chromeosdevices || []).map(d => ({ ext_device_id: d.deviceId, model: d.model || '', serial: d.serialNumber || '', state: d.status || '', user: d.annotatedUser || '' })) };
+  }
+  return { ok: false, reason: 'unsupported_transport' };
+}
+
+// ── Android：建 enrollment token（设备在开机设置/afw#setup 时用它纳管进 Enterprise）──
+// 先 best-effort 确保策略存在（空策略即可纳管），再建 token；返回 token 值 + qrCode(JSON 字符串) + 过期时间。
+async function createAndroidEnrollmentToken(opts = {}) {
+  if (!TRANSPORTS.android_mgmt.configured()) return { ok: false, reason: 'transport_not_configured' };
+  const ent = env('ANDROID_ENTERPRISE_NAME');
+  const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+  const policyId = String(opts.policy || 'default').replace(/[^\w-]/g, '') || 'default';
+  const policyName = `${ent}/policies/${policyId}`;
+  try { await fetch(`https://androidmanagement.googleapis.com/v1/${policyName}`, { method: 'PATCH', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(15000) }); } catch (_) {}
+  const dur = Math.max(300, Math.min(Number(opts.duration) || 3600, 7776000));   // 5 分钟 ~ 90 天
+  const r = await fetch(`https://androidmanagement.googleapis.com/v1/${ent}/enrollmentTokens`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ policyName, duration: dur + 's' }), signal: AbortSignal.timeout(15000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return { ok: false, reason: 'api_error', detail: (j.error && j.error.message) || r.status };
+  return { ok: true, value: j.value, qrCode: j.qrCode, expiration: j.expirationTimestamp, name: j.name, policyName };
+}
+
 function transportByKey(k) { return TRANSPORTS[k] || TRANSPORTS.pull_agent; }
 function transportForDevice(device) { return transportByKey((device && device.transport) || 'pull_agent'); }
 function transportKeys() { return Object.keys(TRANSPORTS); }
@@ -272,4 +315,6 @@ module.exports = {
   // v3.5.84 多传输
   TRANSPORTS, mapVendorCommand, transportByKey, transportForDevice, transportKeys, transportsMeta, deliverCommand,
   buildGoogleAssertion, buildApnsJwt, googleSAConfigured,
+  // v3.5.87 厂商设备拉取 + Android 纳管 token
+  listVendorDevices, createAndroidEnrollmentToken,
 };

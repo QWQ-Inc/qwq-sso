@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.87 — MDM 把「列设备 / 建 enrollment token」接进界面
+
+- 省掉手填 `ext_device_id`。MDM 面板对 Android / Chromebook 通道新增：
+  - **📥 从 Google 拉取设备**：调厂商 API 列出设备（Android `enterprises/{ent}/devices`、Chromebook Directory `chromeosdevices`），选中即回填 `ext_device_id`。
+  - **📲 生成纳管二维码**（Android）：自动建空策略 + `enterprises/{ent}/enrollmentTokens`，显示 token 值与二维码（设备 afw#setup / 扫码纳管）。
+- 新 `mdm.listVendorDevices(transport)` / `mdm.createAndroidEnrollmentToken()`（gated + try/catch）；接口 `GET /admin/mdm/vendor-devices`（列设备，系统管理员）、`POST /admin/mdm/android/enrollment-token`（建 token，Lv.2）、`POST /admin/devices/:id/transport`（选中后回填 transport+ext_device_id，不重置 enroll secret）。
+- `MDM-接入指南.md` 更新为界面化流程。测试：gating 4 项（未配不发网络）+ 传输层 24 项回归全过；server + dashboard 内联 JS 语法通过。⚠️ 真实 Google API 无凭据未联调。
+
 ## v3.5.86 — 我的设备·自助锁定 / 定位（丢失设备自救）
 
 - 「我的设备」从只读升级：设备 owner 本人可对**自己的、已纳管的**设备下发**非破坏性**命令——锁定（可带锁屏留言）、定位。擦除/退役/重启等仍只管理员（避免账号被盗就能擦掉名下所有设备）。

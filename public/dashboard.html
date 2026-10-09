@@ -8059,6 +8059,10 @@ async function refreshMdmPanel() {
         ${tKey==='pull_agent'?'命令进队列，靠设备 agent 轮询 check-in 拉取执行（实时性取决于轮询间隔）。'
           :'厂商通道：已配凭据则下发时直接经厂商 API 执行；未配则入队待配置。iPhone 需 Apple MDM 推送证书，Chromebook/Android 需 Google 服务账号。'}
       </div>
+      ${(tKey==='android_mgmt'||tKey==='google_chrome')?`<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn" style="${btn}" onclick="mdmPullVendorDevices('${tKey}')">📥 从 Google 拉取设备</button>
+        ${tKey==='android_mgmt'?`<button class="btn" style="${btn}" onclick="mdmAndroidToken()">📲 生成纳管二维码</button>`:''}
+      </div>`:''}
       <div id="mdm-enroll-out"></div>
     </div>
     <div style="margin-bottom:6px;color:var(--txt);">下发命令</div>
@@ -8136,6 +8140,42 @@ async function mdmUnenroll() {
   if (!await uiConfirm('解除纳管？设备将不再受管，已装描述文件记录清除（台账保留）。')) return;
   const { ok } = await api('POST', '/admin/devices/' + _mdmDev.id + '/unenroll', {});
   if (ok) { showToast('已解除纳管'); _mdmDev.enroll_status='unenrolled'; _mdmDev.lock_state=null; refreshMdmPanel(); loadDevices(_devCtx); }
+}
+// v3.5.87：从 Google 拉取设备列表，选一个回填 ext_device_id（省去手填）
+async function mdmPullVendorDevices(transport) {
+  showToast('正在从 Google 拉取…');
+  const { ok, data } = await api('GET', '/admin/mdm/vendor-devices?transport=' + encodeURIComponent(transport));
+  if (!ok) { await uiAlert('拉取失败：' + (data?.error || '')); return; }
+  const list = data.devices || [];
+  if (!list.length) { await uiAlert('厂商侧没有查到设备。确认设备已纳管进你的 ' + (transport==='android_mgmt'?'Android Enterprise':'Google 域') + '。'); return; }
+  const pick = await uiPrompt('选择要绑定到本设备的厂商设备序号：\n' + list.map((d,i)=>`${i+1}. ${d.model||'(无型号)'}${d.serial?' · '+d.serial:''}${d.user?' · '+d.user:''}${d.state?' · '+d.state:''}\n    ${d.ext_device_id}`).join('\n'), '1');
+  if (pick === null) return;
+  const idx = parseInt(pick,10)-1;
+  if (!(idx>=0 && idx<list.length)) { showToast('序号无效'); return; }
+  const r = await api('POST', '/admin/devices/' + _mdmDev.id + '/transport', { transport, ext_device_id: list[idx].ext_device_id });
+  if (!r.ok) { showToast(r.data?.error || '绑定失败'); return; }
+  _mdmDev.ext_device_id = list[idx].ext_device_id; _mdmDev.transport = transport;
+  showToast('已绑定厂商设备'); refreshMdmPanel(); loadDevices(_devCtx);
+}
+// v3.5.87：Android 建纳管 token（设备 afw#setup / 扫码纳管）
+async function mdmAndroidToken() {
+  showToast('正在生成纳管 token…');
+  const { ok, data } = await api('POST', '/admin/mdm/android/enrollment-token', {});
+  const out = document.getElementById('mdm-enroll-out'); if (!out) return;
+  if (!ok) { await uiAlert('生成失败：' + (data?.error || '')); return; }
+  let qrHtml = '';
+  if (data.qrCode && window.QRMini && QRMini.svg) {
+    const svg = QRMini.svg(data.qrCode, { scale: 3, quiet: 4 });   // qrCode 是 JSON 字符串，可能超容量
+    qrHtml = svg ? `<div style="background:#fff;padding:8px;border-radius:6px;display:inline-block;margin-top:6px;">${svg}</div>
+      <div style="font-size:10px;color:var(--txd);">新设备开机设置时扫此码纳管</div>`
+      : '<div style="font-size:10px;color:var(--txd);margin-top:6px;">（二维码内容过长无法本地出码，请用下面的 token 值：设备开机后在账号处输入 <b>afw#setup</b> 再粘贴 token）</div>';
+  }
+  out.innerHTML = `<div style="margin-top:8px;background:var(--sf);border:1px solid var(--ac);border-radius:4px;padding:8px;font-size:11px;word-break:break-all;">
+    <b>Android 纳管 token</b>（${data.expiration?('有效至 '+esc(data.expiration)):'限时有效'}）：<br>
+    <code>${esc(data.value||'')}</code>
+    ${qrHtml}
+    <div style="font-size:10px;color:var(--txd);margin-top:6px;">纳管后点上面「📥 从 Google 拉取设备」把该设备绑定到这里。</div>
+  </div>`;
 }
 
 // 配置描述文件管理

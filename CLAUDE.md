@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.86**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.87**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.87 MDM 把「列设备 / 建 enrollment token」接进界面（用户反馈）
+
+三级版本。用户：「把『列设备 / 建 enrollment token』接进界面。」省掉手填 `ext_device_id`。
+
+- `mdm.js`：`listVendorDevices(transport)`——Android 调 `GET {ANDROID_ENTERPRISE_NAME}/devices`（name=资源名=ext_device_id、hardwareInfo.model/serialNumber/brand、state），Chromebook 调 `GET admin/directory/v1/customer/{cust}/devices/chromeos`（deviceId=ext_device_id、model/serialNumber/status/annotatedUser）。`createAndroidEnrollmentToken({policy,duration})`——best-effort PATCH 空策略 `{ent}/policies/{id}` 确保存在，再 POST `{ent}/enrollmentTokens`，返回 `value`/`qrCode`(JSON 串)/`expiration`。都 gated（未配 → `transport_not_configured`，不发网络）+ try/catch。
+- `api.js`：`GET /admin/mdm/vendor-devices?transport=`（仅 android/chrome，系统管理员 Lv.3）、`POST /admin/mdm/android/enrollment-token`（Lv.2，审计 `device.android_token`）、`POST /admin/devices/:id/transport`（canManageDevice，只设 transport+ext_device_id，**不重置 enroll secret**，供选中后回填）。
+- 前端（dashboard MDM 面板）：Android/Chromebook 通道显示「📥 从 Google 拉取设备」→ `mdmPullVendorDevices` 拉列表 → uiPrompt 选序号 → `/transport` 回填；Android 另有「📲 生成纳管二维码」→ `mdmAndroidToken` 建 token → 显示 token 值 + `QRMini.svg(qrCode)`（qrCode JSON 可能超二维码容量 → 回退只显示 token 值 + afw#setup 指引）。
+- `MDM-接入指南.md` 更新为界面化流程（不再要求手敲 ext_device_id；Chromebook 设备企业注册仍在 Google 侧，注册后用「拉取设备」绑定）。
+- 测试：新函数 gating 4 项（android/chrome 未配→transport_not_configured 不发网络、apple→unsupported_transport、token 未配→transport_not_configured）；`mdm-transport-test.js` 24 项回归全过；server(mdm/api) + dashboard 内联 JS 语法通过。
+- ⚠️ 真实 Google API 无凭据未联调（同既有约束）；列设备/建 token 的请求结构按 AMAPI / Admin SDK 文档写。Chromebook 无干净的「建注册令牌」公开 API，故只做列设备。
 
 ## v3.5.86 我的设备·自助锁定 / 定位（丢失设备自救）（用户反馈）
 

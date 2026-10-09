@@ -5098,6 +5098,39 @@ router.post('/admin/devices/:id/unenroll', requireAuth, (req, res) => {
   audit('device.unenrolled', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id } });
   res.json({ success: true });
 });
+// v3.5.87：只设传输通道 + 厂商设备 id（不重置 enroll secret）——从厂商设备列表选中后回填用
+router.post('/admin/devices/:id/transport', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  const transport = mdm.transportKeys().includes(String(req.body?.transport)) ? req.body.transport : (dev.transport || 'pull_agent');
+  const extId = String(req.body?.ext_device_id || '').trim() || null;
+  devices.setTransport.run(transport, extId, dev.id);
+  res.json({ success: true, transport, ext_device_id: extId });
+});
+// v3.5.87：从厂商侧（Google）拉取设备列表，供管理员挑选回填 ext_device_id。org-wide 厂商查询 → 仅系统管理员
+router.get('/admin/mdm/vendor-devices', requireAuth, async (req, res) => {
+  if (!isSysAdmin(req, 3)) return res.status(403).json({ error: '仅系统管理员可从厂商拉取设备列表' });
+  const transport = String(req.query?.transport || '');
+  if (!['android_mgmt', 'google_chrome'].includes(transport)) return res.status(400).json({ error: '该通道不支持从厂商拉取（仅 Android / Chromebook）' });
+  let r; try { r = await mdm.listVendorDevices(transport); } catch (e) { return res.status(502).json({ error: '调用厂商 API 失败：' + e.message }); }
+  if (!r.ok) {
+    if (r.reason === 'transport_not_configured') return res.status(400).json({ error: '该通道凭据未配置，请先在系统配置 → MDM 设备纳管里填好' });
+    return res.status(502).json({ error: '厂商返回错误：' + (r.detail || r.reason) });
+  }
+  res.json({ success: true, devices: r.devices });
+});
+// v3.5.87：Android 建 enrollment token（设备 afw#setup / 扫码纳管进 Enterprise）
+router.post('/admin/mdm/android/enrollment-token', requireAuth, async (req, res) => {
+  if (!isSysAdmin(req, 2)) return res.status(403).json({ error: '无权' });
+  let r; try { r = await mdm.createAndroidEnrollmentToken({ policy: req.body?.policy, duration: req.body?.duration }); } catch (e) { return res.status(502).json({ error: '调用厂商 API 失败：' + e.message }); }
+  if (!r.ok) {
+    if (r.reason === 'transport_not_configured') return res.status(400).json({ error: 'Android 通道凭据未配置（GOOGLE_SA_* + ANDROID_ENTERPRISE_NAME）' });
+    return res.status(502).json({ error: '厂商返回错误：' + (r.detail || r.reason) });
+  }
+  audit('device.android_token', { actor: actorOf(req), detail: { policy: r.policyName } });
+  res.json({ success: true, value: r.value, qrCode: r.qrCode, expiration: r.expiration });
+});
 
 // 配置描述文件 CRUD（读 Lv.3 / 写 Lv.2；组织管理员限本组织）
 function canManageProfile(req, p, write = true) {
