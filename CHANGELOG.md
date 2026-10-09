@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.90 — 水印 + 门禁主码有效期按组织覆盖
+
+- 复用 v3.5.89 的 feature_config 机制，扩展可覆盖键：水印 `WATERMARK_*`（8 项，烧录/字体仍全局）+ 门禁 `ACCESS_QR_TTL`。⚠️ 门禁签名密钥 `ACCESS_QR_SECRET` 保持全局（跨门签名，不按组织拆）。
+- `watermarkPolicy(sid)` 按组织覆盖；`GET /api/public/watermark?org=` + dashboard initWatermark 带当前组织；附件水印烧录按查看者所属组织。
+- 门禁主码 `/user/access/qr` 的 TTL 按用户所属组织覆盖（15~600 夹紧，回退全局 60）；子码仍按门 sub_ttl。
+- 组织弹窗加「水印 + 门禁（本组织）」折叠区；系统配置水印/门禁组标注可按组织覆盖。
+- 测试：水印+TTL 按组织 9 项全过（覆盖/回退/越界夹紧）。⚠️ 下一步 Google Wallet + Wallet 按组织。
+
 ## v3.5.89 — MDM 厂商凭据按组织覆盖（多租户第一步）
 
 - 用户反馈：MDM / Wallet / 水印 / 门禁这些可能该按组织管理、统一平台不对。先做 MDM（设备本就归属组织）+ 打通用机制，其余分版本跟进。

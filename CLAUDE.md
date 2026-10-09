@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.89**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.90**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.90 水印 + 门禁主码有效期按组织覆盖（用户反馈·接 v3.5.89）
+
+三级版本。承接 v3.5.89 的 feature_config 机制，做水印和门禁 TTL 的按组织覆盖。
+
+- api.js 可覆盖键扩展：`WM_ORG_KEYS`（WATERMARK_ENABLED/SCOPE/TEXT/OPACITY/ANGLE/SIZE/GAP/COLOR，8 项）+ `ACCESS_ORG_KEYS`（ACCESS_QR_TTL）+ `WALLET_ORG_KEYS`（v3.5.92 用，先纳入 FEATURE_ORG_KEYS 可存）。`FEATURE_ORG_KEYS` = MDM+WM+ACCESS+WALLET；`featureConfigView`/`mergeFeatureConfig` 改遍历 FEATURE_ORG_KEYS；`FEATURE_SECRET_KEYS` 补 Wallet 证书类。
+- `watermarkPolicy(sid)`：sid 传入用 `orgEnvGetter(sid)`，否则全局。烧录（wmBurn.isBurnOn）+ 字体仍全局。`GET /public/watermark?org=` → watermarkPolicy(org)（水印策略非敏感，按 org id 返回即可，不验成员）；dashboard `initWatermark` 带 `sso_current_org`；附件烧录 `watermarkPolicy(userFirstOrgId(viewer))`。`userFirstOrgId(userId)` 新助手（orgMembers.ofUser 第一个）。
+- 门禁主码 `/user/access/qr`：主码 TTL 用 `orgEnvGetter(userFirstOrgId(u.id))('ACCESS_QR_TTL')`（15~600 夹，回退全局/默认 60）传给 signQr；子码仍 subTtl(door)。access.js qrTtl()/qrSecret() 不动（签名密钥全局）。开放 API /v1/watermark 保持全局。
+- 前端：组织弹窗加「水印 + 门禁（本组织）」折叠区（WATERMARK_* 8 项 + ACCESS_QR_TTL）；load/save 的 sm-feat 键表扩展；系统配置水印/门禁组 desc 标注可按组织覆盖、ACCESS_QR_SECRET 保持全局。
+- 测试：node:sqlite 复刻 9 项（水印启用/文案/颜色覆盖、o2 回退全局、无 org 用全局、TTL 覆盖 30/回退 60/默认 60/越界夹 15）。server + dashboard 内联 JS 语法通过。
+- ⚠️ 下一步：Google Wallet 新通道（v3.5.91）、Wallet（Apple+Google）按组织（v3.5.92，WALLET_ORG_KEYS 已就位）。
 
 ## v3.5.89 MDM 厂商凭据按组织覆盖（多租户第一步 + 通用机制）（用户反馈）
 

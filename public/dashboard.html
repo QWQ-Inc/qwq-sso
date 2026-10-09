@@ -1058,7 +1058,8 @@ function applyWatermark(page) {
 async function initWatermark() {
   try {
     if (_IS_DEV) { _WM = { enabled: true, scope: ['dashboard'], text: '{name} {uid} {datetime}', opacity: 0.14, angle: -22, size: 14, gap: 180, color: '#000000' }; applyWatermark(); return; }
-    const { ok, data } = await api('GET', '/public/watermark');
+    const org = (() => { try { return localStorage.getItem('sso_current_org') || ''; } catch (_) { return ''; } })();   // v3.5.90 按当前组织取水印策略
+    const { ok, data } = await api('GET', '/public/watermark' + (org ? '?org=' + encodeURIComponent(org) : ''));
     if (ok && data.watermark) { _WM = data.watermark; applyWatermark(); }
   } catch (_) {}
 }
@@ -3153,6 +3154,24 @@ async function loadMe() {
         <input id="sm-feat-GOOGLE_ADMIN_SUBJECT" placeholder="GOOGLE_ADMIN_SUBJECT（Chrome 域级委派管理员）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-feat-GOOGLE_CUSTOMER_ID" placeholder="GOOGLE_CUSTOMER_ID（留空 my_customer）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-feat-ANDROID_ENTERPRISE_NAME" placeholder="ANDROID_ENTERPRISE_NAME（enterprises/LC…）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+      </div>
+    </details>
+
+    <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
+      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">水印 + 门禁（本组织）· 可选</summary>
+      <div style="font-size:11px;color:var(--txd);margin:8px 0;">本组织成员看到的页面水印、门禁主码有效期。留空=回退全局默认。</div>
+      <div style="display:grid;gap:8px;">
+        <input id="sm-feat-WATERMARK_ENABLED" placeholder="WATERMARK_ENABLED（on/off，留空=全局）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-WATERMARK_TEXT" placeholder="WATERMARK_TEXT（如 {name} {uid} 本组织）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-WATERMARK_SCOPE" placeholder="WATERMARK_SCOPE（dashboard/all/逗号分隔页面）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <input id="sm-feat-WATERMARK_OPACITY" placeholder="OPACITY 0.01~1" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+          <input id="sm-feat-WATERMARK_ANGLE" placeholder="ANGLE -90~90" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+          <input id="sm-feat-WATERMARK_SIZE" placeholder="SIZE 8~48" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+          <input id="sm-feat-WATERMARK_GAP" placeholder="GAP 60~600" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        </div>
+        <input id="sm-feat-WATERMARK_COLOR" placeholder="COLOR #RRGGBB" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
+        <input id="sm-feat-ACCESS_QR_TTL" placeholder="ACCESS_QR_TTL 门禁主码有效期秒 15~600（留空=全局）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
       </div>
     </details>
 
@@ -9689,7 +9708,7 @@ function openSubjectModal(subj) {
   document.getElementById('sm-kyc-alipay-priv').value   = kc.ALIPAY_PRIVATE_KEY || '';
   // MDM 厂商凭据（本组织，v3.5.89）：密钥已配回填为 ••••••••
   const fc = (editing && subj.feature_config) || {};
-  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME']
+  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL']
     .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) el.value = fc[k] || ''; });
   document.getElementById('sm-direct').checked   = editing ? !!subj.allow_direct_login : false;
   document.getElementById('sm-members-open').checked = editing ? !!subj.members_open : false;
@@ -9726,7 +9745,7 @@ async function saveSubject() {
   putK('ALIPAY_APP_ID','sm-kyc-alipay-appid'); putK('ALIPAY_PRIVATE_KEY','sm-kyc-alipay-priv');
   // MDM 厂商凭据（本组织，v3.5.89）：提交非空字段（•••• 打码串由后端识别为「不改」，空=清除覆盖）
   const feature_config = {};
-  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME']
+  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL']
     .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) { const v = (el.value||'').trim(); feature_config[k] = v; } });
   const allow_direct_login = document.getElementById('sm-direct').checked;
   const members_open = document.getElementById('sm-members-open').checked;
@@ -11662,7 +11681,7 @@ const ENV_GROUPS = [
   },
   {
     key: 'watermark', category: 'system', label: '水印', icon: '💧', color: '#2E86C1',
-    desc: '页面防截图水印。显示范围与样式策略由管理员在此配置，也可用开放 API（GET/PUT /v1/watermark，scope config:read/write）程序化对接修改。',
+    desc: '页面防截图水印【全局默认】。💡 可【按组织覆盖】：「组织管理 → 编辑组织 → 水印 + 门禁（本组织）」，各组织成员看到自己的水印文案/样式；组织没配则回退这里。烧录到导出文件、字体仍全局。也可用开放 API（GET/PUT /v1/watermark）。',
     vars: [
       { key: 'WATERMARK_ENABLED', label: '启用水印', desc: '填 on 开启、off 关闭（默认关闭）', required: false, secret: false, placeholder: 'on', value: '' },
       { key: 'WATERMARK_SCOPE', label: '显示范围', desc: '逗号分隔要显示水印的页面：dashboard=整个控制台 / login=登录页 / home / apps / shop / account / memo / kyc；或填 all。默认 dashboard', required: false, secret: false, placeholder: 'dashboard', value: '' },
@@ -11680,7 +11699,7 @@ const ENV_GROUPS = [
   },
   {
     key: 'access', category: 'system', label: '门禁', icon: '🚪', color: '#C0392B',
-    desc: '动态开门码的签名密钥。门/通道、授权规则在「门禁管理」页配置；门口设备经开放 API（scope access:verify/read）或扫码终端页接入。',
+    desc: '动态开门码的签名密钥【全局】。💡 主码有效期 ACCESS_QR_TTL 可【按组织覆盖】（组织管理 → 编辑组织 → 水印 + 门禁）；⚠️ 签名密钥 ACCESS_QR_SECRET 保持全局（跨门签名，不按组织拆）。门/授权规则在「门禁管理」页配置。',
     vars: [
       { key: 'ACCESS_QR_TTL', label: '主码有效期（秒）', desc: '用户「主码」（能开有权限的所有门）的有效秒数，默认 60，范围 15~600。各门的子码有效期在门禁管理里单独设，留空则跟随本值', required: false, placeholder: '60', value: '' },
       { key: 'ACCESS_QR_SECRET', label: '开门码签名密钥', desc: '用于给动态二维码签名的独立密钥；留空则回退用 JWT_SECRET。更换后，已出示但未使用的旧码立即失效（建议设一个独立的长随机串）', required: false, secret: true, placeholder: '一串长随机字符', value: '' },

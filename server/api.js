@@ -61,8 +61,11 @@ function smsOverrideFor(phone, orgId) {
 // MDM 厂商凭据（Apple 证书 / Google 服务账号 / Android enterprise）可按组织配；空=回退全局 env。
 const MDM_ORG_KEYS = ['MDM_APNS_TOPIC','MDM_APNS_KEY','MDM_APNS_KEY_ID','MDM_APNS_TEAM_ID','MDM_APNS_HOST',
   'GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME'];
-const MDM_ORG_SECRET_KEYS = ['MDM_APNS_KEY','GOOGLE_SA_PRIVATE_KEY'];
-const FEATURE_SECRET_KEYS = new Set(MDM_ORG_SECRET_KEYS);
+const WM_ORG_KEYS = ['WATERMARK_ENABLED','WATERMARK_SCOPE','WATERMARK_TEXT','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR'];   // 水印页面覆盖（v3.5.90；烧录/字体仍全局）
+const ACCESS_ORG_KEYS = ['ACCESS_QR_TTL'];   // 门禁主码有效期（v3.5.90；签名密钥 ACCESS_QR_SECRET 保持全局）
+const WALLET_ORG_KEYS = ['APPLE_PASS_TYPE_ID','APPLE_TEAM_ID','APPLE_PASS_CERT','APPLE_PASS_KEY','APPLE_PASS_KEY_PASSWORD','APPLE_WWDR_CERT','PKPASS_ORG_NAME','PKPASS_BG_COLOR','GOOGLE_WALLET_ISSUER_ID'];   // Wallet 按组织（v3.5.92 用，先纳入可存）
+const FEATURE_ORG_KEYS = [...MDM_ORG_KEYS, ...WM_ORG_KEYS, ...ACCESS_ORG_KEYS, ...WALLET_ORG_KEYS];
+const FEATURE_SECRET_KEYS = new Set(['MDM_APNS_KEY','GOOGLE_SA_PRIVATE_KEY','APPLE_PASS_CERT','APPLE_PASS_KEY','APPLE_PASS_KEY_PASSWORD','APPLE_WWDR_CERT']);
 const FEAT_MASK = '••••••••';
 function orgFeatureCfg(sid) {
   if (!sid) return {};
@@ -76,14 +79,14 @@ function orgEnvGetter(sid) {
 /** 组织 feature_config 视图：密钥类打码（已设→MASK） */
 function featureConfigView(sid) {
   const fc = orgFeatureCfg(sid); const out = {};
-  for (const k of MDM_ORG_KEYS) if (fc[k] != null && String(fc[k]).trim() !== '') out[k] = FEATURE_SECRET_KEYS.has(k) ? FEAT_MASK : fc[k];
+  for (const k of FEATURE_ORG_KEYS) if (fc[k] != null && String(fc[k]).trim() !== '') out[k] = FEATURE_SECRET_KEYS.has(k) ? FEAT_MASK : fc[k];
   return out;
 }
 /** 合并前端提交的 feature_config（打码串=不改、空=清除该覆盖、否则覆盖），返回新对象或 null（全空） */
 function mergeFeatureConfig(sid, incoming) {
   const cur = orgFeatureCfg(sid); const out = { ...cur };
   if (incoming && typeof incoming === 'object') {
-    for (const k of MDM_ORG_KEYS) {
+    for (const k of FEATURE_ORG_KEYS) {
       if (!(k in incoming)) continue;
       const v = incoming[k];
       if (v === FEAT_MASK) continue;                                   // 打码未改
@@ -1235,29 +1238,33 @@ router.get('/public/email-domain-policy', (req, res) => {
 // ── 水印策略（管理员在系统配置里定，或经开放 API /v1/watermark 改）──
 // 显示范围 scope：逗号分隔的页面标识（dashboard=整个控制台 / login / home / apps / shop / account / memo / kyc），或 all。
 // 文本模板变量：{name} {uid} {email} {date} {time} {datetime}（登录页无用户，用户类变量解析为空）。
-function watermarkPolicy() {
-  const e = process.env;
-  const on = /^(on|1|true|yes|开|开启|启用|是|y)$/i.test(String(e.WATERMARK_ENABLED || '').trim());
+// v3.5.90：sid 传入则用该组织的覆盖（页面水印策略按查看者所属组织）；烧录/字体仍全局
+function watermarkPolicy(sid) {
+  const g = sid ? orgEnvGetter(sid) : (k) => String(process.env[k] || '').trim();
+  const on = /^(on|1|true|yes|开|开启|启用|是|y)$/i.test(g('WATERMARK_ENABLED'));
   const clampNum = (v, def, min, max) => {
     const n = parseFloat(v); if (!isFinite(n)) return def;
     return Math.min(max, Math.max(min, n));
   };
-  const scope = String(e.WATERMARK_SCOPE || 'dashboard').split(/[，,]/).map(s => s.trim().toLowerCase()).filter(Boolean);
-  const color = /^#[0-9a-fA-F]{3,8}$/.test(String(e.WATERMARK_COLOR || '').trim()) ? e.WATERMARK_COLOR.trim() : '#000000';
+  const scope = String(g('WATERMARK_SCOPE') || 'dashboard').split(/[，,]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  const color = /^#[0-9a-fA-F]{3,8}$/.test(g('WATERMARK_COLOR')) ? g('WATERMARK_COLOR') : '#000000';
   return {
     enabled: on,
     scope: scope.length ? scope : ['dashboard'],
-    text: String(e.WATERMARK_TEXT || '{name} {uid} {datetime}').slice(0, 200),
-    opacity: clampNum(e.WATERMARK_OPACITY, 0.12, 0.01, 1),
-    angle: clampNum(e.WATERMARK_ANGLE, -22, -90, 90),
-    size: clampNum(e.WATERMARK_SIZE, 14, 8, 48),
-    gap: clampNum(e.WATERMARK_GAP, 180, 60, 600),
+    text: String(g('WATERMARK_TEXT') || '{name} {uid} {datetime}').slice(0, 200),
+    opacity: clampNum(g('WATERMARK_OPACITY'), 0.12, 0.01, 1),
+    angle: clampNum(g('WATERMARK_ANGLE'), -22, -90, 90),
+    size: clampNum(g('WATERMARK_SIZE'), 14, 8, 48),
+    gap: clampNum(g('WATERMARK_GAP'), 180, 60, 600),
     color,
-    burn: wmBurn.isBurnOn(),   // 导出的图片/PDF 是否烧录水印（与页面水印开关独立）
+    burn: wmBurn.isBurnOn(),   // 导出的图片/PDF 是否烧录水印（与页面水印开关独立，全局）
   };
 }
+// 某用户所属的第一个组织 id（给水印/门禁 TTL 的「按查看者组织」用；无则 null）
+function userFirstOrgId(userId) { try { const o = (orgMembers.ofUser.all(userId) || [])[0]; return o ? o.id : null; } catch (_) { return null; } }
 router.get('/public/watermark', (req, res) => {
-  res.json({ success: true, watermark: watermarkPolicy() });
+  const org = String(req.query?.org || '').trim();   // v3.5.90 查看者当前组织（仅取覆盖的展示策略，非敏感）
+  res.json({ success: true, watermark: watermarkPolicy(org || undefined) });
 });
 
 router.get('/public/configured-platforms', (req, res) => {
@@ -2469,7 +2476,7 @@ router.get('/memos/:id/attachments/:aid', requireAuth, noPublic, async (req, res
     const trace = wmBurn.genTrace();
     const viewer = users.findById.get(req.user.uid);
     try {
-      const out = await wmBurn.burn(Buffer.from(a.data), a.mime, { user: viewer, policy: watermarkPolicy(), trace });
+      const out = await wmBurn.burn(Buffer.from(a.data), a.mime, { user: viewer, policy: watermarkPolicy(userFirstOrgId(req.user.uid) || undefined), trace });
       data = out.data;
       audit('file.watermarked', { subject: viewer ? String(viewer.uid_seq) : null, actor: actorOf(req),
         detail: { trace, memo: m.id, attachment: a.id, file: String(a.filename || '').slice(0, 80), mime: a.mime, cjk: out.cjk } });
@@ -7590,7 +7597,10 @@ router.post('/user/access/qr', requireAuth, (req, res) => {
     const r = accessCore.signQr(u, accessCore.subTtl(door), door.id);
     return res.json({ success: true, code: r.code, expires_in: r.expires_in, exp: r.exp, door: { id: door.id, name: door.name } });
   }
-  const r = accessCore.signQr(u);
+  // 主码 TTL 按用户所属组织覆盖（v3.5.90）：组织配了 ACCESS_QR_TTL 用它，否则回退全局
+  const ttlv = parseInt(orgEnvGetter(userFirstOrgId(u.id))('ACCESS_QR_TTL'), 10);
+  const ttl = Number.isFinite(ttlv) ? Math.min(600, Math.max(15, ttlv)) : undefined;
+  const r = ttl ? accessCore.signQr(u, ttl) : accessCore.signQr(u);
   res.json({ success: true, code: r.code, expires_in: r.expires_in, exp: r.exp });
 });
 router.get('/user/access/doors', requireAuth, (req, res) => {
