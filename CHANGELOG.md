@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.84.1 — Android/Chromebook MDM 接入文档 + 修 Android 擦除映射
+
+- 新增 [`MDM-接入指南.md`](MDM-接入指南.md)：Android（Android Management API）、Chromebook（Chrome Management API）两条通道的完整接入步骤——建 Google 服务账号、各自的 API 启用 / enterprise 绑定 / 域级委派、取 `ext_device_id`、填哪些环境变量、支持的命令矩阵、排错。
+- 🐛 修 Android 擦除：Android Management API 的 `issueCommand` **没有 WIPE 枚举**，擦除是 `DELETE enterprises/.../devices/...`（恢复出厂）。v3.5.84 错把 wipe 映射成 issueCommand type=WIPE，改为 DELETE 特判（带 `wipeDataFlags=WIPE_EXTERNAL_STORAGE`）。其余 lock/clear_passcode/restart/retire 仍走 issueCommand。
+- README / agent README 加接入指南链接。测试 `mdm-transport-test.js` 更新为 24 项全过。
+
 ## v3.5.84 — MDM 多传输适配层（iPhone / Chromebook / Android 通道，gated）
 
 - 把 MDM 下发做成**多传输适配层**（`server/mdm.js` `TRANSPORTS` 注册表）：一台设备走哪条通道由 `devices.transport` 决定——

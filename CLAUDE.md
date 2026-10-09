@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.84**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.84.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.84.1 Android/Chromebook MDM 接入文档 + 修 Android 擦除映射（用户反馈）
+
+四级补丁。用户：「Android 和 Chromebook 的接入文档写一下」。写文档时核对 Android Management API 命令枚举，发现并修了 v3.5.84 的一个真 bug。
+
+- **新增 `MDM-接入指南.md`**（仓库根，与 API-docs.md 同级）：Android / Chromebook 两条通道从零接入——① 通用:建 Google 服务账号取 JSON（`GOOGLE_SA_CLIENT_EMAIL`/`GOOGLE_SA_PRIVATE_KEY`）;② Android:启用 Android Management API + 建 enterprise(`ANDROID_ENTERPRISE_NAME`=`enterprises/LC...`) + enrollment token 纳管设备 + 取完整资源名作 `ext_device_id`;③ Chromebook:启用 Admin SDK + 服务账号域级委派(授权 `admin.directory.device.chromeos` 范围 + `GOOGLE_ADMIN_SUBJECT` 管理员邮箱) + 取 deviceId 作 `ext_device_id`;④ 命令支持矩阵 + 排错。
+- 🐛 **修 Android 擦除**：Android Management API 的 `issueCommand` 没有 WIPE 枚举（只有 LOCK/RESET_PASSWORD/REBOOT/RELINQUISH_OWNERSHIP/CLEAR_APP_DATA/START·STOP_LOST_MODE）——擦除=`DELETE enterprises/.../devices/...`（恢复出厂）。v3.5.84 把 wipe 错映射成 `issueCommand type=WIPE`。`mdm.js`：从 `VENDOR_CMD.android_mgmt` 去掉 wipe，`deliver` 里对 `wipe` 特判走 DELETE（带 `wipeDataFlags=WIPE_EXTERNAL_STORAGE`），ext_device_id 缺失检查提到特判之前。Chrome 的 `REMOTE_POWERWASH`/`REBOOT` 本就正确未动。
+- README / `tools/mdm-agent/README.md` 加接入指南链接。`scratchpad/mdm-transport-test.js` 更新（android wipe 不再走 issueCommand 映射、加 android lock→LOCK），24 项全过。
+- ⚠️ 仍未做进界面：enrollment token 创建、设备列表自动发现——`ext_device_id` 需从 Google 侧取好手填（文档已注明，后续可接）。真实厂商 API 仍无凭据未联调。
 
 ## v3.5.84 MDM 多传输适配层（iPhone / Chromebook / Android 厂商通道，gated）（用户反馈·阶段B/C/D 骨架）
 

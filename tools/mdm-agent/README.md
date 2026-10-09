@@ -40,7 +40,7 @@
 
 - **macOS 真·配置下发**：把管理端的描述文件做成 `.mobileconfig`（plist），在 payload 里带 `mobileconfig` 字段，agent 会 `profiles install`。更完整的 macOS 管理（锁定/擦除的强制力）仍建议走真实 Apple MDM。
 - **iPhone / iPad**：不走本 agent，需 Apple MDM 协议（APNs 推送 + 纳管描述文件），服务端配 `MDM_APNS_*`、你去 Apple 申请 MDM 推送证书。
-- **Chromebook / Android**：走各自的 Google 管理平面（Chrome Management API / Android Management API），不是本 agent。
+- **Chromebook / Android**：走各自的 Google 管理平面（Chrome Management API / Android Management API），不是本 agent。接入步骤见仓库根目录 [`MDM-接入指南.md`](../../MDM-接入指南.md)。
 
 ## 没有 agent 也能做什么
 

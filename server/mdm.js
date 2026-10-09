@@ -96,7 +96,8 @@ const env = (k) => String(process.env[k] || '').trim();
 const VENDOR_CMD = {
   apple_mdm:     { lock: 'DeviceLock', clear_passcode: 'ClearPasscode', restart: 'RestartDevice', wipe: 'EraseDevice', push_profile: 'InstallProfile', remove_profile: 'RemoveProfile' },
   google_chrome: { restart: 'REBOOT', wipe: 'REMOTE_POWERWASH' },
-  android_mgmt:  { lock: 'LOCK', clear_passcode: 'RESET_PASSWORD', restart: 'REBOOT', wipe: 'WIPE', retire: 'RELINQUISH_OWNERSHIP' },
+  // ⚠️ Android Management API 的 issueCommand 没有 WIPE 枚举——擦除=删除设备资源（DELETE），在 deliver 里特判。
+  android_mgmt:  { lock: 'LOCK', clear_passcode: 'RESET_PASSWORD', restart: 'REBOOT', retire: 'RELINQUISH_OWNERSHIP' },
 };
 function mapVendorCommand(transport, type) {
   const m = VENDOR_CMD[transport];
@@ -194,12 +195,22 @@ const TRANSPORTS = {
     configured: () => !!(googleSAConfigured() && env('ANDROID_ENTERPRISE_NAME')),
     async deliver(device, command) {
       if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
+      if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_ext_device_id' };   // 完整资源名 enterprises/LC.../devices/xxx
+      // 擦除：Android Management API 没有 WIPE 命令，删除设备资源即触发恢复出厂
+      if (command.type === 'wipe') {
+        try {
+          const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
+          const r = await fetch(`https://androidmanagement.googleapis.com/v1/${device.ext_device_id}?wipeDataFlags=WIPE_EXTERNAL_STORAGE`, {
+            method: 'DELETE', headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(15000),
+          });
+          if (!r.ok) { const j = await r.json().catch(() => ({})); return { delivered: false, pending: false, reason: 'android_api_error', detail: (j.error && j.error.message) || r.status }; }
+          return { delivered: true, pending: false, reason: 'issued', vendor: 'DELETE(wipe)' };
+        } catch (e) { return { delivered: false, pending: false, reason: 'android_failed', detail: e.message }; }
+      }
       const vc = mapVendorCommand('android_mgmt', command.type);
       if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
-      if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_ext_device_id' };
       try {
         const token = await googleAccessToken('https://www.googleapis.com/auth/androidmanagement');
-        // ext_device_id 存完整资源名 enterprises/LC.../devices/xxx
         const r = await fetch(`https://androidmanagement.googleapis.com/v1/${device.ext_device_id}:issueCommand`, {
           method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: vc }), signal: AbortSignal.timeout(15000),
