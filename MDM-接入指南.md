@@ -1,7 +1,7 @@
 # QWQ SSO · MDM 设备纳管接入指南（Android / Chromebook）
 
 > 本文覆盖 **Android（Android Management API）** 和 **Chromebook（Chrome Management API）** 两条厂商通道的接入。
-> 电脑（Windows/Mac/Linux）走拉取式 agent，见 [`tools/mdm-agent/README.md`](tools/mdm-agent/README.md)；iPhone/iPad 走 Apple MDM（需 Apple MDM 推送证书，端点待补）。
+> 电脑（Windows/Mac/Linux）走拉取式 agent，见 [`tools/mdm-agent/README.md`](tools/mdm-agent/README.md)；iPhone/iPad 走 Apple MDM（服务端端点与描述文件已就位，见 3.5，需你提供 Apple MDM 推送证书）。
 
 ---
 
@@ -118,6 +118,41 @@ Android 和 Chromebook 都用**同一个 Google Cloud 服务账号（Service Acc
 
 ---
 
+## 3.5 iPhone / iPad（Apple MDM）
+
+### 需要什么
+- 一张 **Apple MDM 推送证书**（APNs），用来唤醒设备。走 **Apple Business Manager** 注册、或从已有 MDM vendor 证书签发，最终在 [Apple Push Certificates Portal](https://identity.apple.com/pushcert/) 拿到证书。
+- 证书对应的 **推送主题（Topic）**、以及一个 APNs 鉴权密钥（.p8，Team ID + Key ID）。
+
+### 配置（系统配置 → 📱 MDM 设备纳管）
+| 项 | 环境变量 | 说明 |
+|---|---|---|
+| Apple · Team ID | `MDM_APNS_TEAM_ID` | Apple 开发者 Team ID |
+| Apple · APNs Key ID | `MDM_APNS_KEY_ID` | .p8 密钥的 Key ID |
+| Apple · APNs 密钥(.p8) | `MDM_APNS_KEY` | .p8 文件内容 |
+| Apple · MDM 推送主题 | `MDM_APNS_TOPIC` | 推送证书的主题（通常是证书 UID，形如 `com.apple.mgmt.External.xxxx`） |
+
+### 纳管步骤
+1. 设备管理里登记这台设备（类型 **Apple**）→ 设备行「MDM」→ 点 **🍎 下载纳管描述文件 (.mobileconfig)**。
+2. 把这个 `.mobileconfig` 发到该 iPhone/iPad（隔空投送 / 邮件 / 访达），在设备上打开 → 设置里「安装描述文件」。
+3. 安装后设备自动 check-in（上报 APNs 凭据），这里纳管状态变「已纳管」。之后下发锁定 / 擦除 / 装描述文件：服务端用 APNs 唤醒设备，设备回连拉取命令并执行、回报。
+
+### 支持的命令（iOS）
+| QWQ 命令 | MDM RequestType |
+|---|---|
+| 锁定（可带锁屏留言） | `DeviceLock` |
+| 清除锁屏密码 | `ClearPasscode`（需设备 check-in 时上报了 UnlockToken） |
+| 重启 | `RestartDevice`（通常需监管设备 Supervised） |
+| 远程擦除 | `EraseDevice` |
+| 推送/移除描述文件 | `InstallProfile` / `RemoveProfile`（描述文件需为 .mobileconfig） |
+
+> ⚠️ **两点限制**（拿到证书联调时需补齐）：
+> 1. **安全**：当前无 SCEP，设备鉴权只靠「描述文件里每设备随机 token」。生产环境应再加一个 `com.apple.security.scep` 载荷下发设备身份证书，并在服务端校验 `Mdm-Signature`。
+> 2. **严格模式/未签名描述文件**：描述文件未做 Apple 证书签名，设备上安装会提示「未验证」；监管模式（Supervised，经 Apple Configurator / ABM）下更多命令才生效（如 RestartDevice）。
+> 定位（Locate）在 iOS 需「丢失模式（Lost Mode）」才行，暂未接入——用「我的设备」或 Apple「查找」更合适。
+
+---
+
 ## 4. 命令支持矩阵（一览）
 
 | 命令 | 电脑(pull_agent) | Android | Chromebook | iPhone(Apple MDM) |
@@ -131,7 +166,7 @@ Android 和 Chromebook 都用**同一个 Google Cloud 服务账号（Service Acc
 | 退役 | ✅ | ✅ | — | — |
 | 推送/移除描述文件 | ✅(本地) | — | — | ✅* |
 
-\* iPhone 的 APNs 唤醒已就位，但真正执行还差「设备回连的 MDM plist 端点 + .mobileconfig 纳管描述文件签发」，需拿到 Apple MDM 推送证书后补。
+\* iPhone 的服务端 MDM 端点（check-in + command）、描述文件生成、命令翻译已就位（见 3.5）；真机 enroll 需你提供 Apple MDM 推送证书（MDM_APNS_*）。擦除/重启等受监管模式(Supervised)影响。
 
 ---
 

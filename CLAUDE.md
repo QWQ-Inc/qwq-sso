@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.87**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.88**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,33 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.88 Apple MDM 协议端点（iPhone / iPad 真纳管）（用户反馈）
+
+三级版本。用户：「补 iPhone 端点」。承接 v3.5.84（apple_mdm 当时只有 APNs 唤醒就位），把设备回连的 Apple MDM 协议端点 + 纳管描述文件 + 命令翻译补齐。
+
+### 新文件
+- `server/plist.js`：零依赖 XML plist 编解码（dict/array/string/integer/real/bool/data(base64)/date）。MDM 报文、命令、描述文件往返用。`data()` 包装 base64，解码出 `{__data}`。
+- `server/mdm-apple.js`：`buildEnrollProfile(device,{base,token,topic,orgName})` 生成 `.mobileconfig`（Configuration + `com.apple.mdm` 载荷：ServerURL/CheckInURL 内嵌每设备 token、Topic、AccessRights 8191、CheckOutWhenRemoved）；`commandToMdm(cmd,{profile,unlockToken})` 把本系统命令翻译成 MDM 命令 plist（lock→DeviceLock+Message/PIN、restart→RestartDevice、clear_passcode→ClearPasscode(需 UnlockToken)、wipe→EraseDevice、push_profile→InstallProfile(Payload=base64 的 .mobileconfig)、remove_profile→RemoveProfile(Identifier)、unlock→noop、其余→null 不支持）。
+
+### 数据（db.js）
+- `devices` 加 `mdm_push_token`（APNs token hex）/ `mdm_push_magic` / `mdm_unlock_token`（base64）。`deviceStmts.setAppleTokens`（TokenUpdate 回填 + enrolled + 回填 UDID 到 ext_device_id）/ `clearAppleTokens`（CheckOut 清 + unenrolled）。
+
+### 接口（api.js）
+- 管理端 `POST /admin/devices/:id/apple-profile`（canManageDevice，kind 须 apple）：`genEnrollSecret` 出 token（明文嵌 URL，hash 存 enroll_hash）、设 transport=apple_mdm + enroll pending，返回 `.mobileconfig`（`application/x-apple-aspen-config` 下载）。
+- 设备侧（公开，token 鉴权，`express.text` 收 plist）：`appleDeviceByToken(token)` = byEnrollHash(hashSecret(token)) 且 transport=apple_mdm。
+  - `PUT /api/mdm/apple/:token/checkin`：Authenticate→pending；TokenUpdate→setAppleTokens(Token 转 hex、PushMagic、UnlockToken、UDID) + 审计 device.enrolled；CheckOut→clearAppleTokens。回空 plist。
+  - `PUT /api/mdm/apple/:token`：有 CommandUUID+Acknowledged/Error→ack 对应命令 + onCommandAcked 副作用；NotNow→不发新命令；否则 `nextAppleCommand(dev)`（循环 pending：不支持/缺前置→标 failed 跳过、noop→当场 acked、可发→commandToMdm 标 sent 返回 xml）。回命令 plist 或空 plist。
+- apple_mdm 通道 `deliver` 改为：命令已入队，用 `mdm_push_token`+`mdm_push_magic` 发 APNs 唤醒（`apnsPush` body 修正为 `{mdm: PushMagic}`），设备回拉；未 check-in（无 token）→ `not_enrolled`。
+
+### 前端（dashboard MDM 面板）
+- Apple 设备显示「🍎 下载纳管描述文件 (.mobileconfig)」→ `mdmAppleProfile()`（裸 fetch+Bearer→blob 下载）+ 发给设备安装的指引 + 是否已配 APNs 提示（查 `_devCache.transports` 的 apple_mdm.configured）。
+
+### 测试
+- `plist` 编解码 14 项（string/data/bool/integer 往返、真实 check-in 报文、ack 嵌套、命令嵌套、array、空容器）。
+- `mdm-apple-test.js` node:sqlite 复刻全流程 26 项：描述文件结构（Configuration/com.apple.mdm/ServerURL 带 token/Topic）、token 鉴权正确与错误、Authenticate→pending、TokenUpdate 存 APNs 凭据/UDID/UnlockToken+enrolled、下发 lock→取到 DeviceLock+Message+UUID 标 sent、Acknowledged→acked+lock_state=locked、locate 不支持被跳过标 failed 无命令、clear_passcode 带 UnlockToken、push_profile→InstallProfile(base64 payload)、CheckOut→unenrolled 清凭据。
+- server 全量 + dashboard 内联 JS 语法通过。
+- ⚠️ 鉴权只到每设备 URL token（无 SCEP）；生产应加 `com.apple.security.scep` 载荷下发设备证书 + 校验 `Mdm-Signature`。真机 enroll 需 Apple MDM 推送证书；未签名描述文件安装会提示未验证；RestartDevice/部分命令需监管模式(Supervised)。定位(Locate)需 iOS 丢失模式，未接入。真机无证书未联调。
 
 ## v3.5.87 MDM 把「列设备 / 建 enrollment token」接进界面（用户反馈）
 

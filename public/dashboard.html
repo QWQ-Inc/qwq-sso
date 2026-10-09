@@ -8063,6 +8063,10 @@ async function refreshMdmPanel() {
         <button class="btn" style="${btn}" onclick="mdmPullVendorDevices('${tKey}')">📥 从 Google 拉取设备</button>
         ${tKey==='android_mgmt'?`<button class="btn" style="${btn}" onclick="mdmAndroidToken()">📲 生成纳管二维码</button>`:''}
       </div>`:''}
+      ${dev.kind==='apple'?`<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        <button class="btn" style="${btn}" onclick="mdmAppleProfile()">🍎 下载纳管描述文件 (.mobileconfig)</button>
+        <span style="font-size:10px;color:var(--txd);">${((_devCache.transports||[]).find(t=>t.key==='apple_mdm')||{}).configured?'已配 APNs 推送':'未配 APNs：描述文件仍可装，但唤醒推送不可用'}</span>
+      </div>`:''}
       <div id="mdm-enroll-out"></div>
     </div>
     <div style="margin-bottom:6px;color:var(--txt);">下发命令</div>
@@ -8176,6 +8180,24 @@ async function mdmAndroidToken() {
     ${qrHtml}
     <div style="font-size:10px;color:var(--txd);margin-top:6px;">纳管后点上面「📥 从 Google 拉取设备」把该设备绑定到这里。</div>
   </div>`;
+}
+// v3.5.88：下载 Apple 纳管描述文件（.mobileconfig）。返回的是文件不是 JSON，用裸 fetch+Bearer→blob 下载
+async function mdmAppleProfile() {
+  try {
+    const r = await fetch('/api/admin/devices/' + _mdmDev.id + '/apple-profile', { method: 'POST', headers: { Authorization: 'Bearer ' + getToken() } });
+    if (!r.ok) { let e = {}; try { e = await r.json(); } catch (_) {} await uiAlert('生成失败：' + (e.error || r.status)); return; }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'qwqsso-enroll-' + _mdmDev.id + '.mobileconfig';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    _mdmDev.transport = 'apple_mdm'; _mdmDev.enroll_status = 'pending';
+    const out = document.getElementById('mdm-enroll-out');
+    if (out) out.innerHTML = `<div style="margin-top:8px;background:var(--sf);border:1px solid var(--ac);border-radius:4px;padding:8px;font-size:11px;">
+      已下载描述文件。把它发给这台 iPhone/iPad（隔空投送 / 邮件 / 访达），在设备上打开 → 设置里「安装描述文件」。
+      安装后设备会自动 check-in，这里纳管状态变「已纳管」，之后即可下发锁定 / 擦除等命令${((_devCache.transports||[]).find(t=>t.key==='apple_mdm')||{}).configured?'':'（注意：未配 APNs 推送，下发后需设备下次联网才拉取）'}。
+    </div>`;
+    showToast('描述文件已下载'); loadDevices(_devCtx);
+  } catch (e) { await uiAlert('下载失败：' + e.message); }
 }
 
 // 配置描述文件管理

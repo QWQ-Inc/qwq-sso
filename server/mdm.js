@@ -156,14 +156,13 @@ const TRANSPORTS = {
       if (!this.configured()) return { delivered: false, pending: true, reason: 'transport_not_configured' };
       const vc = mapVendorCommand('apple_mdm', command.type);
       if (!vc) return { delivered: false, pending: false, reason: 'unsupported_command' };
-      if (!device.ext_device_id) return { delivered: false, pending: false, reason: 'no_push_token' };   // 纳管时记下的 APNs device token / PushMagic
+      // Apple MDM：命令已入队，APNs 只负责「唤醒」设备来 PUT ServerURL 取命令（见 mdm-apple.js + /api/mdm/apple）。
+      if (!device.mdm_push_token || !device.mdm_push_magic) return { delivered: false, pending: true, reason: 'not_enrolled' };   // 设备还没 check-in 上报 APNs 凭据
       try {
-        // Apple MDM：APNs 只负责「唤醒」，真正的命令（plist）在设备回连 MDM 端点时取走。
-        // 这里发唤醒推送；MDM 端点（设备→服务端 plist 协议 + .mobileconfig 纳管）需单独实现，拿到 MDM 推送证书后补。
         const jwt = buildApnsJwt();
         const http2 = require('http2');
-        await apnsPush(http2, jwt, device.ext_device_id, env('MDM_APNS_TOPIC'));
-        return { delivered: true, pending: true, reason: 'apns_woke_awaiting_mdm_endpoint', vendor: vc };
+        await apnsPush(http2, jwt, device.mdm_push_token, device.mdm_push_magic, env('MDM_APNS_TOPIC'));
+        return { delivered: true, pending: true, reason: 'apns_woke_awaiting_pull', vendor: vc };
       } catch (e) { return { delivered: false, pending: false, reason: 'apns_failed', detail: e.message }; }
     },
   },
@@ -223,8 +222,8 @@ const TRANSPORTS = {
   },
 };
 
-// APNs HTTP/2 推送（MDM 唤醒；payload 对 MDM 是 {"mdm":"<PushMagic>"}，这里用 device.ext_device_id 作 device token）
-function apnsPush(http2, jwt, deviceToken, topic) {
+// APNs HTTP/2 推送（MDM 唤醒）：发到设备的 APNs token，body 是 {"mdm":"<PushMagic>"}
+function apnsPush(http2, jwt, deviceToken, pushMagic, topic) {
   return new Promise((resolve, reject) => {
     const host = env('MDM_APNS_HOST') || 'https://api.push.apple.com';
     const client = http2.connect(host);
@@ -239,7 +238,7 @@ function apnsPush(http2, jwt, deviceToken, topic) {
     req.on('end', () => { client.close(); status === 200 ? resolve(true) : reject(new Error('APNs ' + status + ' ' + data)); });
     req.on('error', reject);
     req.setTimeout(15000, () => req.destroy(new Error('APNs timeout')));
-    req.end(JSON.stringify({ mdm: deviceToken }));
+    req.end(JSON.stringify({ mdm: pushMagic }));
   });
 }
 

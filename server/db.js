@@ -230,6 +230,10 @@ try { db.exec('ALTER TABLE devices ADD COLUMN last_command_at TEXT'); } catch(_)
 // MDM 多传输（v3.5.84）：pull_agent（电脑跑 agent.js）/ apple_mdm / google_chrome / android_mgmt
 try { db.exec("ALTER TABLE devices ADD COLUMN transport TEXT NOT NULL DEFAULT 'pull_agent'"); } catch(_) {}
 try { db.exec('ALTER TABLE devices ADD COLUMN ext_device_id TEXT'); } catch(_) {}   // 厂商侧设备 id（Android resourceName / Chrome deviceId / Apple UDID）
+// Apple MDM（v3.5.88）：设备 check-in(TokenUpdate) 时上报的 APNs 推送凭据
+try { db.exec('ALTER TABLE devices ADD COLUMN mdm_push_token TEXT'); } catch(_) {}   // APNs device token（hex）
+try { db.exec('ALTER TABLE devices ADD COLUMN mdm_push_magic TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN mdm_unlock_token TEXT'); } catch(_) {} // ClearPasscode 用（base64）
 // Passkey（WebAuthn 凭据）
 try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_id TEXT NOT NULL UNIQUE,
@@ -1679,6 +1683,9 @@ const deviceStmts = {
   setLock:     db.prepare("UPDATE devices SET lock_state=?, updated_at=datetime('now') WHERE id=?"),
   markPushed:  db.prepare("UPDATE devices SET last_command_at=datetime('now') WHERE id=?"),
   setTransport: db.prepare("UPDATE devices SET transport=?, ext_device_id=?, updated_at=datetime('now') WHERE id=?"),   // v3.5.84
+  // Apple MDM（v3.5.88）：check-in TokenUpdate 回填 APNs 凭据 + UDID；check-in Authenticate 置 pending；CheckOut 清
+  setAppleTokens: db.prepare("UPDATE devices SET mdm_push_token=?, mdm_push_magic=?, mdm_unlock_token=COALESCE(?,mdm_unlock_token), ext_device_id=COALESCE(?,ext_device_id), enroll_status='enrolled', last_seen=datetime('now'), updated_at=datetime('now') WHERE id=?"),
+  clearAppleTokens: db.prepare("UPDATE devices SET mdm_push_token=NULL, mdm_push_magic=NULL, mdm_unlock_token=NULL, enroll_status='unenrolled', updated_at=datetime('now') WHERE id=?"),
 };
 
 // MDM：设备命令队列 + 配置描述文件（v3.5.82）

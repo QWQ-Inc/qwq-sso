@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
+const mdmApple = require('./mdm-apple');
+const plist = require('./plist');
 const accessCore = require('./access');
 const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = require('./memo-util');
 const contactUtil = require('./contacts');
@@ -5130,6 +5132,103 @@ router.post('/admin/mdm/android/enrollment-token', requireAuth, async (req, res)
   }
   audit('device.android_token', { actor: actorOf(req), detail: { policy: r.policyName } });
   res.json({ success: true, value: r.value, qrCode: r.qrCode, expiration: r.expiration });
+});
+
+// ══════════════════════════════════════════
+// Apple MDM 协议（v3.5.88）：纳管描述文件 + 设备侧 check-in / command 端点
+//   设备装描述文件后 PUT 到 ServerURL（内嵌每设备随机 token 做鉴权）。
+//   ⚠️ 无 SCEP 时只做 token 级鉴权；生产应再加设备证书 + Mdm-Signature 校验（拿到 Apple MDM 推送证书联调时补）。
+// ══════════════════════════════════════════
+// 生成并下载纳管描述文件（.mobileconfig）。设备类型须 apple；设 transport=apple_mdm + 随机 token（hash 存 enroll_hash）
+router.post('/admin/devices/:id/apple-profile', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  if (dev.kind !== 'apple') return res.status(400).json({ error: '仅 Apple 设备可用 Apple MDM 纳管' });
+  const topic = (process.env.MDM_APNS_TOPIC || '').trim();
+  const { secret, hash } = mdm.genEnrollSecret();          // secret 作 URL token（明文嵌进描述文件），hash 存库
+  devices.setTransport.run('apple_mdm', dev.ext_device_id || null, dev.id);
+  devices.setEnroll.run('pending', hash, dev.id);
+  const base = (process.env.BASE_URL || '').replace(/\/$/, '')
+    || ((req.headers['x-forwarded-proto'] || 'https').split(',')[0] + '://' + String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0]);
+  const orgName = dev.subject_id ? (oauthSubjects.get.get(dev.subject_id) || {}).name : '';
+  const xml = mdmApple.buildEnrollProfile(dev, { base, token: secret, topic, orgName });
+  audit('device.apple_profile', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, has_topic: !!topic } });
+  res.setHeader('Content-Type', 'application/x-apple-aspen-config');
+  res.setHeader('Content-Disposition', 'attachment; filename="qwqsso-enroll-' + dev.id + '.mobileconfig"');
+  res.send(xml);
+});
+
+// 设备侧：根据 URL token 找设备（token 明文 → hash → byEnrollHash），且必须是 apple_mdm
+function appleDeviceByToken(token) {
+  if (!token) return null;
+  const dev = devices.byEnrollHash.get(mdm.hashSecret(String(token)));
+  return (dev && dev.transport === 'apple_mdm') ? dev : null;
+}
+// 取下一条可下发的 Apple 命令：跳过 iOS 不支持 / noop 的命令（当场在服务端确认掉），返回命令 plist 或 ''（无命令）
+function nextAppleCommand(dev) {
+  for (let guard = 0; guard < 50; guard++) {
+    const pend = deviceCommands.pending.all(dev.id);
+    if (!pend.length) return '';
+    const c = pend[0];
+    let payload = {}; try { payload = JSON.parse(c.payload || '{}'); } catch (_) {}
+    const ctx = {};
+    if (c.type === 'push_profile' || c.type === 'remove_profile') ctx.profile = mdmProfiles.get.get(payload.profile_id);
+    if (c.type === 'clear_passcode') ctx.unlockToken = dev.mdm_unlock_token;
+    const t = mdmApple.commandToMdm({ id: c.id, type: c.type, payload }, ctx);
+    if (!t || t.unsupported) { deviceCommands.ack.run('failed', 'iOS 不支持该命令' + (t && t.reason ? '（' + t.reason + '）' : ''), c.id); continue; }
+    if (t.noop) { deviceCommands.ack.run('acked', 'noop', c.id); onCommandAcked(c, 'acked'); continue; }
+    deviceCommands.markSent.run(c.id);
+    return t.xml;
+  }
+  return '';
+}
+const appleBody = express.text({ type: () => true, limit: '1mb' });
+// CheckIn：Authenticate / TokenUpdate / CheckOut
+router.put('/mdm/apple/:token/checkin', appleBody, (req, res) => {
+  const dev = appleDeviceByToken(req.params.token);
+  if (!dev) return res.status(401).end();
+  let msg = {}; try { msg = plist.decode(req.body || '') || {}; } catch (_) {}
+  const type = msg.MessageType;
+  const udid = msg.UDID || null;
+  if (type === 'Authenticate') {
+    devices.setEnrollStatus.run('pending', dev.id);
+    if (udid) devices.setTransport.run('apple_mdm', udid, dev.id);
+  } else if (type === 'TokenUpdate') {
+    const token = msg.Token && msg.Token.__data ? Buffer.from(msg.Token.__data, 'base64').toString('hex') : null;
+    const magic = msg.PushMagic || null;
+    const unlock = msg.UnlockToken && msg.UnlockToken.__data ? msg.UnlockToken.__data : null;
+    if (token && magic) {
+      devices.setAppleTokens.run(token, magic, unlock, udid, dev.id);
+      audit('device.enrolled', { subject: dev.serial || dev.id, actor: 'device:' + dev.id, detail: { via: 'apple_mdm' } });
+    }
+  } else if (type === 'CheckOut') {
+    devices.clearAppleTokens.run(dev.id);
+    deviceProfiles.removeByDevice.run(dev.id);
+  }
+  res.setHeader('Content-Type', 'application/xml');
+  res.send(plist.encode({}));
+});
+// Command：设备 Idle 取命令；Acknowledged/Error 回报后取下一条
+router.put('/mdm/apple/:token', appleBody, (req, res) => {
+  const dev = appleDeviceByToken(req.params.token);
+  if (!dev) return res.status(401).end();
+  let msg = {}; try { msg = plist.decode(req.body || '') || {}; } catch (_) {}
+  const status = msg.Status;
+  const cuuid = msg.CommandUUID;
+  if (cuuid && (status === 'Acknowledged' || status === 'Error' || status === 'CommandFormatError')) {
+    const c = deviceCommands.get.get(String(cuuid));
+    if (c && c.device_id === dev.id) {
+      const st = status === 'Acknowledged' ? 'acked' : 'failed';
+      deviceCommands.ack.run(st, status === 'Acknowledged' ? 'ok' : JSON.stringify(msg).slice(0, 500), c.id);
+      onCommandAcked(c, st);
+    }
+  }
+  // NotNow：设备暂时不能执行（如锁屏态），不发新命令，等下次唤醒
+  if (status === 'NotNow') { res.setHeader('Content-Type', 'application/xml'); return res.send(plist.encode({})); }
+  const xml = nextAppleCommand(dev);
+  res.setHeader('Content-Type', 'application/xml');
+  res.send(xml || plist.encode({}));   // 空 plist = 当前无命令
 });
 
 // 配置描述文件 CRUD（读 Lv.3 / 写 Lv.2；组织管理员限本组织）

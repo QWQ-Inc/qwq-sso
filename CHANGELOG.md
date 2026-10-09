@@ -4,6 +4,15 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.88 — Apple MDM 协议端点（iPhone / iPad 真纳管）
+
+- 补上 iPhone 那条的服务端 MDM 协议端点，设备装纳管描述文件后即可被远程锁定/擦除/下发配置。
+- 新 `server/plist.js`（零依赖 XML plist 编解码）+ `server/mdm-apple.js`（`.mobileconfig` 纳管描述文件生成 + 命令翻译：lock→DeviceLock、wipe→EraseDevice、clear_passcode→ClearPasscode、restart→RestartDevice、push/remove_profile→InstallProfile/RemoveProfile）。
+- 接口：`POST /admin/devices/:id/apple-profile`（下载 .mobileconfig，设 transport=apple_mdm + 每设备随机 token）；设备侧 `PUT /api/mdm/apple/:token/checkin`（Authenticate / TokenUpdate 存 APNs 凭据 / CheckOut）、`PUT /api/mdm/apple/:token`（Idle 取下一条命令、Acknowledged/Error 回报 + onCommandAcked 副作用、NotNow 跳过、iOS 不支持的命令服务端跳过）。
+- `devices` 加 `mdm_push_token` / `mdm_push_magic` / `mdm_unlock_token`（check-in 回填）。apple_mdm 通道下发改为 APNs 唤醒（body=PushMagic）+ 设备回拉。前端设备行「🍎 下载纳管描述文件」。
+- ⚠️ 鉴权当前只到「每设备 URL token」级（无 SCEP）；生产应加设备身份证书 + Mdm-Signature 校验。真机 enroll 需 Apple MDM 推送证书（MDM_APNS_*）。
+- 测试：plist 编解码 14 项 + Apple 协议端到端逻辑（node:sqlite 复刻 check-in→取命令→回报→副作用）26 项全过；server 全量 + dashboard 内联 JS 语法通过。真机无证书未联调。
+
 ## v3.5.87 — MDM 把「列设备 / 建 enrollment token」接进界面
 
 - 省掉手填 `ext_device_id`。MDM 面板对 Android / Chromebook 通道新增：
