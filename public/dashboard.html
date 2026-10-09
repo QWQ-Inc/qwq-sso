@@ -1120,6 +1120,8 @@ async function loadMe() {
   if ((ME.role !== 'admin' || orgScoped) && !_IS_PUBLIC_SESSION) checkOrgAdminNav();
   // 本人是核验员 → 点亮「身份核验」菜单（管理员端另有入口，这里只给非管理员用户）
   if ((ME.role !== 'admin' || orgScoped) && !_IS_PUBLIC_SESSION) checkVerifierNav();
+  // 名下有归属设备 → 点亮「我的设备」菜单（公共账号会话不显示）
+  if (!_IS_PUBLIC_SESSION) checkMyDevicesNav();
 }
 </script>
 </head>
@@ -1170,6 +1172,11 @@ async function loadMe() {
       <button class="nav-item" onclick="goto('verify')" id="ni-verify" style="display:none;">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="7" r="3"/><path d="M2 17c0-3 2.5-5 6-5"/><path d="M12.5 12.5l2 2 3.5-4"/></svg>
         身份核验
+      </button>
+      <!-- 我的设备：仅当有归属到本人的设备时显示 -->
+      <button class="nav-item" onclick="goto('devices')" id="ni-devices" style="display:none;">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="14" height="9" rx="1.5"/><path d="M7 16h6M10 13v3"/></svg>
+        我的设备
       </button>
       <button class="nav-item" onclick="goto('account')" id="ni-account">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="7" r="4"/><path d="M3 18c0-4 3-6 7-6s7 2 7 6"/></svg>
@@ -1729,6 +1736,17 @@ async function loadMe() {
               <button class="btn" onclick="doVerifyScan(document.getElementById('vfy-code').value.trim())">核验</button>
             </div>
             <div id="vfy-result" style="margin-top:16px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ▸ 我的设备 -->
+      <div class="page" id="page-devices">
+        <div class="card">
+          <div class="card-header"><h3>我的设备</h3></div>
+          <div class="card-body">
+            <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">归属到你名下的设备。只读——纳管与远程操作由管理员在管理端进行。</div>
+            <div id="my-devices-list"><div style="text-align:center;padding:20px;color:var(--txd);">加载中…</div></div>
           </div>
         </div>
       </div>
@@ -3516,7 +3534,7 @@ function setMode(mode, targetPage) {
 }
 
 // ── 刷新后恢复上次所在菜单（否则每次刷新都回退到首页/用户管理）──
-const USER_PAGES = ['home','apps','shop','account','public','memo','access','orgadmin','verify'];
+const USER_PAGES = ['home','apps','shop','account','public','memo','access','orgadmin','verify','devices'];
 function bootToLastPage() {
   let target = null;
   try { target = localStorage.getItem('sso_last_page'); } catch (_) {}
@@ -3542,6 +3560,10 @@ function bootToLastPage() {
     }
     if (target === 'verify') {                                    // 身份核验入口需是核验员
       const ni = document.getElementById('ni-verify');
+      if (!ni || ni.style.display === 'none') target = null;
+    }
+    if (target === 'devices') {                                   // 我的设备入口需名下有设备
+      const ni = document.getElementById('ni-devices');
       if (!ni || ni.style.display === 'none') target = null;
     }
     if (_PUBLIC_ACCT && target === 'shop') target = null;         // 公共账号无商城
@@ -3654,7 +3676,7 @@ function goto(page) {
 
   // 更新标题
   const titles = {
-    'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
+    'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','devices':'我的设备','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
     'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
@@ -3692,6 +3714,7 @@ function goto(page) {
   if(page === 'access') loadMyAccess();
   if(page === 'orgadmin') loadMyOrgs();
   if(page === 'verify') initVerifyScan();
+  if(page === 'devices') loadMyDevices();
   if(page === 'adm-access') loadAccessAdmin();
   if(page === 'adm-verify') loadVerifyAdmin();
   if(page === 'adm-about') loadVersionInfo();
@@ -9051,6 +9074,47 @@ async function checkVerifierNav() {
     const el = document.getElementById('ni-verify');
     if (el && ok && data.verifier) el.style.display = '';
   } catch (_) {}
+}
+
+// ══════════════════════════════════════════
+// 我的设备（v3.5.85）：归属到本人的设备，只读
+// ══════════════════════════════════════════
+const _MYDEV_KIND = { apple:'🍎 Apple', google:'🤖 Google/Android', microsoft:'🪟 Microsoft', access_controller:'🚪 门禁机', card_reader:'💳 读卡器' };
+const _MYDEV_ENROLL = { unenrolled:'未纳管', pending:'待纳管', enrolled:'已纳管', retired:'已退役' };
+const _MYDEV_STATUS = { active:'正常', disabled:'已停用', lost:'已挂失' };
+async function checkMyDevicesNav() {
+  try {
+    const { ok, data } = await api('GET', '/user/devices');
+    if (ok && (data.devices || []).length) {
+      const el = document.getElementById('ni-devices'); if (el) el.style.display = '';
+    }
+  } catch (_) {}
+}
+async function loadMyDevices() {
+  const box = document.getElementById('my-devices-list'); if (!box) return;
+  const { ok, data } = await api('GET', '/user/devices');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);padding:12px;">加载失败</div>'; return; }
+  const list = data.devices || [];
+  if (!list.length) { box.innerHTML = '<div style="color:var(--txd);padding:20px;text-align:center;">名下还没有设备</div>'; return; }
+  box.innerHTML = list.map(d => {
+    const online = d.last_seen ? d.last_seen : '从未';
+    const locked = d.lock_state === 'locked';
+    const stColor = d.status === 'active' ? '#1a7f37' : 'var(--err)';
+    return `<div style="border:1px solid var(--bd);border-radius:8px;padding:12px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <b style="color:var(--txt);">${esc(d.name)}</b>
+        <span style="font-size:11px;color:${stColor};">${esc(_MYDEV_STATUS[d.status]||d.status)}${locked?' · 🔒 已锁定':''}</span>
+      </div>
+      <div style="font-size:12px;color:var(--txd);margin-top:6px;line-height:1.7;">
+        类型：${esc(_MYDEV_KIND[d.kind]||d.kind)}　纳管：${esc(_MYDEV_ENROLL[d.enroll_status]||d.enroll_status||'未纳管')}
+        ${d.model?`<br>机型：${esc(d.model)}`:''}${d.os_version?`　系统：${esc(d.os_version)}`:''}
+        ${d.serial?`<br>序列号：${esc(d.serial)}`:''}
+        ${d.subject_name?`<br>所属组织：${esc(d.subject_name)}`:''}
+        <br>最近在线：${esc(online)}
+        ${d.note?`<br><span style="color:var(--txd);">备注：${esc(d.note)}</span>`:''}
+      </div>
+    </div>`;
+  }).join('');
 }
 // ── 管理端 ──
 async function loadVerifyAdmin() { loadVerifyFields(); loadVerifiers(); }

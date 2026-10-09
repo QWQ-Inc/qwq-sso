@@ -1660,6 +1660,9 @@ const deviceStmts = {
     LEFT JOIN access_doors dr ON d.door_id=dr.id
     WHERE d.subject_id IN (SELECT value FROM json_each(?)) ORDER BY d.created_at DESC`),
   get: db.prepare('SELECT * FROM devices WHERE id=?'),
+  byOwner: db.prepare(`SELECT d.*, s.name AS subject_name FROM devices d
+    LEFT JOIN oauth_subjects s ON d.subject_id=s.id
+    WHERE d.owner_user_id=? ORDER BY d.created_at DESC`),   // v3.5.85 用户端「我的设备」
   insert: db.prepare(`INSERT INTO devices (id,name,kind,serial,owner_user_id,subject_id,door_id,status,tags,note)
                       VALUES (@id,@name,@kind,@serial,@owner_user_id,@subject_id,@door_id,@status,@tags,@note)`),
   update: db.prepare(`UPDATE devices SET name=@name,kind=@kind,serial=@serial,owner_user_id=@owner_user_id,

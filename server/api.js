@@ -4939,6 +4939,16 @@ router.get('/admin/devices', requireAuth, (req, res) => {
   const doors = access.allDoors.all().map(d => ({ id: d.id, name: d.name }));
   res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured(), transports: mdm.transportsMeta() });
 });
+// 用户端「我的设备」（v3.5.85）：只读，列出归属到本人的设备。不下发 enroll_hash / 厂商设备 id 等敏感字段。
+router.get('/user/devices', requireAuth, noPublic, (req, res) => {
+  const list = devices.byOwner.all(req.user.uid).map(d => ({
+    id: d.id, name: d.name, kind: d.kind, serial: d.serial, status: d.status,
+    enroll_status: d.enroll_status, lock_state: d.lock_state, transport: d.transport,
+    os_version: d.os_version, model: d.model, last_seen: d.last_seen,
+    subject_name: d.subject_name || null, note: d.note, created_at: d.created_at,
+  }));
+  res.json({ success: true, devices: list, kinds: DEVICE_KINDS });
+});
 router.post('/admin/devices', requireAuth, (req, res) => {
   const sys = isSysAdmin(req, 2);
   if (!sys && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权管理设备' });

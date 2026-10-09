@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.84.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.85**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.85 用户端「我的设备」（归属到本人的设备，只读）（用户反馈）
+
+三级版本。用户：「如果设备归属人，那么用户端也应该看到『我的设备』。」设备本就有 `owner_user_id`，之前只有管理端能看。
+
+- 后端 `GET /user/devices`（requireAuth + noPublic）：`devices.byOwner`（新 prepared：按 owner_user_id + LEFT JOIN oauth_subjects 取组织名，created_at DESC）。**字段白名单**下发（name/kind/serial/status/enroll_status/lock_state/transport/os_version/model/last_seen/subject_name/note/created_at），**不下发** `enroll_hash`（纳管 secret 哈希）/ `ext_device_id`（厂商设备 id）等敏感字段。
+- 前端用户端新增「我的设备」页（`ni-devices` / `page-devices` / `loadMyDevices`）：设备卡片列名称/状态(正常·停用·挂失 + 🔒已锁)/类型/纳管状态/机型·系统/序列号/所属组织/最近在线/备注。**只读**——纳管与远程操作仍只在管理端（设备管理 / MDM 面板）。
+- 导航项仅当名下有设备时点亮（`checkMyDevicesNav`，loadMe 里调，公共账号会话不显示）；加入 `USER_PAGES` + `bootToLastPage`（devices 入口需 ni-devices 可见）+ goto 分发（`loadMyDevices`）+ 页面标题映射。
+- 测试：node:sqlite 复刻 byOwner 8 项全过（按 owner 过滤、不含他人、JOIN 组织名、无组织 subject_name=null、created_at DESC、无主查不到、字段白名单不含 ext_device_id）；server(api/db) + dashboard 内联 JS（10600+ 行）语法通过。
+- ⚠️ 仅「看」，未开放用户自助操作（锁定/定位自己丢失的设备等）——那是独立一档（要给命令下发加 owner 自助鉴权 + 限非破坏命令），按需再上。
 
 ## v3.5.84.1 Android/Chromebook MDM 接入文档 + 修 Android 擦除映射（用户反馈）
 

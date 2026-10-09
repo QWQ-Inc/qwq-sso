@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.85 — 用户端「我的设备」（归属到本人的设备，只读）
+
+- 设备既然可归属到人，用户端就应能看到自己的设备。新增用户端「我的设备」页：列出 `owner_user_id` = 本人的设备（名称/类型/状态/纳管状态/机型/系统/序列号/所属组织/最近在线/备注）。
+- 只读——纳管与远程操作仍只在管理端。接口 `GET /user/devices`（requireAuth + noPublic），字段白名单下发，**不含** `enroll_hash` / `ext_device_id` 等敏感字段。
+- 导航项 `ni-devices` 仅当名下有设备时点亮（`checkMyDevicesNav`）；加入 USER_PAGES + bootToLastPage 守卫 + 页面标题映射；公共账号会话不显示。db.js `deviceStmts.byOwner`。
+- 测试：node:sqlite 复刻 byOwner 查询 8 项全过（按 owner 过滤、JOIN 组织名、created_at DESC 排序、字段白名单不含 ext_device_id）；server + dashboard 内联 JS 语法通过。
+
 ## v3.5.84.1 — Android/Chromebook MDM 接入文档 + 修 Android 擦除映射
 
 - 新增 [`MDM-接入指南.md`](MDM-接入指南.md)：Android（Android Management API）、Chromebook（Chrome Management API）两条通道的完整接入步骤——建 Google 服务账号、各自的 API 启用 / enterprise 绑定 / 域级委派、取 `ext_device_id`、填哪些环境变量、支持的命令矩阵、排错。
