@@ -3744,6 +3744,7 @@ function mergeGroupView(list) {
   // v3.5.92.3：辅助辨认字段——应用内姓名（三方同步源真实姓名）+ 组织内 UID + 来源，让管理员肉眼判断是否同一人
   const extNamesStmt = db.prepare("SELECT DISTINCT ext_name FROM dir_source_links WHERE user_id=? AND ext_name IS NOT NULL AND ext_name <> ''");
   const orgUidsStmt = db.prepare("SELECT org_uid, source FROM org_members WHERE user_id=? AND org_uid IS NOT NULL AND org_uid <> ''");
+  let contactStmt = null; try { contactStmt = db.prepare("SELECT kind, value FROM user_contacts WHERE user_id=?"); } catch (_) {}
   const show = x => x.uid_code || '#' + String(x.uid_seq).padStart(5, '0');
   const sorted = [...list].sort((a, b) => mergeKeepScore(b) - mergeKeepScore(a) || (a.uid_seq || 0) - (b.uid_seq || 0));
   const view = list.map(u => {
@@ -3751,13 +3752,19 @@ function mergeGroupView(list) {
     const err = userMerge.checkMerge({ id: '\0', name: '', status: 'active' }, [u]);
     const terr = userMerge.checkMerge(u, [{ id: '\0', name: '', status: 'active' }]);
     let pc = 0; try { pc = pkCnt.get(u.id).n; } catch (_) {}
-    let extNames = [], orgUids = [];
+    let extNames = [], orgUids = [], cEmails = [], cPhones = [];
     try { extNames = extNamesStmt.all(u.id).map(r => r.ext_name).filter(Boolean); } catch (_) {}
     try { orgUids = orgUidsStmt.all(u.id).map(r => r.org_uid).filter(Boolean); } catch (_) {}
+    // 多联系方式（含三方同步源灌入的手机/邮箱/企业邮箱）——排掉与主字段重复的，供肉眼对照
+    try { if (contactStmt) for (const c of contactStmt.all(u.id)) {
+      if (c.kind === 'email' && c.value && c.value !== (u.email || '')) cEmails.push(c.value);
+      else if (c.kind === 'phone' && c.value && c.value !== (u.phone || '')) cPhones.push(c.value);
+    } } catch (_) {}
     return { id: u.id, uid: show(u), name: u.name, email: u.email || null, phone: u.phone || null, status: u.status,
       admin: u.role === 'admin', has_pw: !!u.password_hash, kyc: !!u.kyc_verified, kyc_name: u.kyc_verified ? (u.kyc_name || '') : '',
       twofa: !!u.twofa_enabled, passkeys: pc, points: u.points || 0, orgs: orgCnt.get(u.id).n, bindings: bindCnt.get(u.id).n,
       ext_names: [...new Set(extNames)], org_uids: [...new Set(orgUids)],
+      contact_emails: [...new Set(cEmails)], contact_phones: [...new Set(cPhones)],
       created_at: u.created_at, can_be_source: !err, source_error: err || null, can_be_target: !terr, target_error: terr || null };
   });
   // 实名不同的人互相不能合并：两两比较

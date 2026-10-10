@@ -5360,6 +5360,7 @@ async function openSimilarUsers() {
         <input type="radio" name="sim-keep-${gi}" value="${esc(u.id)}" ${u.id === g.suggested ? 'checked' : ''} ${u.can_be_target ? '' : 'disabled'} style="margin-top:3px;">
         <span style="flex:1;min-width:0;"><b>${esc(u.name || '（无名）')}</b> <span style="color:var(--txd);font-size:11px;">${esc(u.uid)}</span> <span class="sim-tag" style="font-size:10px;"></span>
           <div style="font-size:11px;color:var(--txd);word-break:break-all;">${esc([u.email, u.phone].filter(Boolean).join(' · ') || '无邮箱 / 手机')}</div>
+          ${(u.contact_emails && u.contact_emails.length) || (u.contact_phones && u.contact_phones.length) ? `<div style="font-size:11px;color:var(--txd);word-break:break-all;">其他联系方式：<b style="color:var(--tx);">${[...(u.contact_phones||[]), ...(u.contact_emails||[])].map(esc).join('、')}</b></div>` : ''}
           ${(u.ext_names && u.ext_names.length) || (u.org_uids && u.org_uids.length) ? `<div style="font-size:11px;color:var(--txd);word-break:break-all;">${u.ext_names && u.ext_names.length ? '应用内姓名：<b style="color:var(--tx);">' + u.ext_names.map(esc).join('、') + '</b>' : ''}${(u.ext_names && u.ext_names.length) && (u.org_uids && u.org_uids.length) ? ' · ' : ''}${u.org_uids && u.org_uids.length ? '组织内 UID：' + u.org_uids.map(esc).join('、') : ''}</div>` : ''}
           <div style="font-size:11px;color:var(--tx);">${facts(u)}</div><div class="sim-err" style="font-size:11px;color:var(--err);"></div></span></label>`).join('')}
     </div>`;

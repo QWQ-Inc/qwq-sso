@@ -118,18 +118,28 @@ function listContacts(userId) {
  * 企微每个成员只有 1 个 mobile、1 个 email（个人）、1 个 biz_mail（企业邮箱）。
  */
 function importWecomContacts(userId, d, subjectId = null) {
+  importDirContacts(userId, d, subjectId, 'wecom');
+}
+
+/**
+ * 通用：从三方同步源（企业微信 / 飞书）导入成员联系方式进 user_contacts（静默跳过空/非法/超上限/重复）。
+ * 手机、个人邮箱（src）、企业邮箱（src+'_biz'）都收；这样这些值能被「疑似重复账号」的手机/邮箱线索用来辨认同一人。
+ * @param {object} d  { mobile, email, biz_mail }（任意字段可空）
+ * @param {string} src  来源前缀，如 'wecom' / 'feishu'
+ */
+function importDirContacts(userId, d, subjectId = null, src = 'sync') {
   if (!userId || !d) return;
   const res = [];
-  if (d.mobile)   res.push(['phone', d.mobile, 'wecom']);
-  if (d.email)    res.push(['email', d.email, 'wecom']);
-  if (d.biz_mail) res.push(['email', d.biz_mail, 'wecom_biz']);
-  res.forEach(([kind, val, src]) => {
-    try { addContact(userId, kind, val, src, subjectId); } catch (_) {}
+  if (d.mobile)   res.push(['phone', d.mobile, src]);
+  if (d.email)    res.push(['email', d.email, src]);
+  if (d.biz_mail && d.biz_mail !== d.email) res.push(['email', d.biz_mail, src + '_biz']);
+  res.forEach(([kind, val, s]) => {
+    try { addContact(userId, kind, val, s, subjectId); } catch (_) {}
   });
 }
 
 module.exports = {
   contactLimits, globalLimits,
   normPhone, normEmail, normValue,
-  addContact, updateContact, listContacts, importWecomContacts,
+  addContact, updateContact, listContacts, importWecomContacts, importDirContacts,
 };

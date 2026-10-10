@@ -1,7 +1,9 @@
 {
   "name": "unified-sso-system",
-  "version": "3.5.92.3",
+  "version": "3.5.92.4",
   "description": "统一登录系统 SSO - 多渠道登录 + 用户/管理后台",
+  "license": "MIT",
+  "author": "QWQ INC. & Hainan Xubai MediaNet Co., Ltd",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",

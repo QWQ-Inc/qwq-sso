@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.3**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.4**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.92.4 飞书同步也灌手机/邮箱/企业邮箱进 user_contacts（供疑似重复按联系方式辨认）（用户反馈）
+
+四级补丁。承接 v3.5.92.3，用户：「能拉回来手机号、邮箱、企业邮箱的三方，比如企业微信，比如飞书」——即这些能拿到联系方式的同步源，应把联系方式用于辨认疑似重复。
+- 🐛 根因：企业微信同步早有 `importWecomContacts`（v3.5.63/64）把 mobile/email/biz_mail 灌进 `user_contacts`，而 `findSimilarUsers` 的手机/邮箱线索正是读 `user_contacts`（v3.5.65）。**但飞书同步从来不灌 `user_contacts`**，且 `normMember` 把个人邮箱与企业邮箱合并成一个（`enterprise_email || email`）——于是飞书成员的手机/个人邮箱/企业邮箱对疑似重复识别全程不可见。
+- 修：
+  - `contacts.js`：抽出通用 `importDirContacts(userId, {mobile,email,biz_mail}, subjectId, src)`（手机→phone、个人邮箱→email(src)、企业邮箱→email(src+'_biz')，与主邮箱重复的跳过，静默去重/限额）；`importWecomContacts` 改为调它（src='wecom'，行为不变）。
+  - `dirsync-feishu.js`：`normMember` 把 `email_personal`（u.email）与 `biz_mail`（u.enterprise_email）分开留存，`email` 仍是主邮箱（企业优先，创建/匹配行为不变）；`syncFeishu` 每个成员（新建与既有，每次同步）调 `importDirContacts(..., 'feishu')` 灌 mobile/个人邮箱/企业邮箱。既有成员也会在下次同步补齐联系方式。手机同样去 +86（与企业微信一致，跨源同号能对上）。
+  - `mergeGroupView` 每账号补 `contact_emails`/`contact_phones`（`user_contacts` 里、排掉与主字段重复的）；前端合并弹窗多显示「其他联系方式：…」——企业邮箱常只在 user_contacts 里，摆出来供肉眼对照。
+- 效果：飞书（及企业微信）同步进来的成员，只要手机/邮箱/企业邮箱与别的账号相同，就会被「疑似重复账号」按手机/邮箱线索自动归到一组。⚠️ 企业微信「通讯录同步」Secret 受限（48009）时本就拿不到手机/邮箱——那是企微侧权限，非本系统；飞书自建应用通讯录权限正常即可拿到。
+- 测试：importDirContacts / normMember 邮箱拆分逻辑复刻验证（个人+企业+手机三者分别入库、仅企业邮箱、仅个人无手机各情形 tuple 正确、与主邮箱重复不重复入库）。contacts/dirsync-feishu/api.js + dashboard 内联 JS 语法通过。邮箱/手机线索归组逻辑 v3.5.65 已测、未动。真实飞书无凭据未端到端。
 
 ## v3.5.92.3 疑似重复账号用「应用内姓名」辨认 + 搜索覆盖应用内姓名/组织内 UID（用户反馈）
 

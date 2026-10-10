@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const { db, users, oauth, orgMembers, departments } = require('./db');
 const W = require('./dirsync-wecom');   // 共用 effectiveCfg（同步源配置解析）
+const { importDirContacts } = require('./contacts');   // v3.5.92.4：把成员手机/邮箱/企业邮箱灌进 user_contacts（供疑似重复辨认）
 
 const SRC = 'feishu';   // org_members.source
 const linkGet    = db.prepare('SELECT * FROM dir_source_links WHERE source_id=? AND ext_id=?');
@@ -157,10 +158,13 @@ async function fetchScopeTree(cfg) {
 function normMember(u, deptName) {
   const st = u.status || {};
   const mobile = String(u.mobile || '').trim().replace(/^\+86[-\s]?/, '');
+  const personal = String(u.email || '').trim().toLowerCase();
+  const corp = String(u.enterprise_email || '').trim().toLowerCase();
   return {
     userid: u.open_id, union_id: u.union_id || null, user_id: u.user_id || null, employee_no: u.employee_no || null,
     name: u.name || u.en_name || u.open_id,
-    email: String(u.enterprise_email || u.email || '').trim().toLowerCase(), mobile,
+    // 主邮箱（创建/匹配用，企业邮箱优先，行为不变）；个人邮箱 + 企业邮箱分别留存，供灌进 user_contacts
+    email: corp || personal, email_personal: personal || null, biz_mail: corp || null, mobile,
     department: (u.department_ids || []).map(id => deptName.get(id) || id),
     department_ids: u.department_ids || [],   // v3.5.68 保留原始部门 id 供归部门
     active: !(st.is_resigned || st.is_frozen || st.is_exited),
@@ -362,6 +366,8 @@ async function syncFeishu(source, subject, cfg, helpers, fetcher = fetchDirector
       linkUpsert.run(source.id, extId, user.id, (m.department || []).join(',') || null, name || null, m.union_id || null);
       if (corpUsers(cfg.corp_id, extId, { unionId: m.union_id, scope: sc }).some(u => u.id !== user.id)) out.duplicates = (out.duplicates || 0) + 1;
       for (const p of bindProviders) applyBind(user, m, p);
+      // v3.5.92.4：把飞书回传的手机/个人邮箱/企业邮箱灌进 user_contacts（新建与既有成员每次都灌，addContact 自动去重）——供「疑似重复账号」按手机/邮箱辨认同一人
+      try { importDirContacts(user.id, { mobile: m.mobile, email: m.email_personal, biz_mail: m.biz_mail }, subject.id, 'feishu'); } catch (_) {}
       seenUsers.add(user.id);
       // 组织内 UID：飞书工号（employee_no），没有就用飞书 user_id（应用开了「获取用户 user ID」权限才有）
       const want = m.employee_no || m.user_id || null;
