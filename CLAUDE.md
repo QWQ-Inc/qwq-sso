@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.2**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.3**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.92.3 疑似重复账号用「应用内姓名」辨认 + 搜索覆盖应用内姓名/组织内 UID（用户反馈）
+
+四级补丁。用户（两张截图）：Reid(00162，飞书，显示名 Reid) 和 吴治含(00137，企业微信) 实际是同一人，想合并很难、人多更难；**组织（三方同步源）内的 UID / 姓名 / 显示名 / 应用内姓名 等应作为辅助线索来辨认「疑似重复账号」**。
+- 🐛 根因：`findSimilarUsers` 的「姓名」桶只用 `users.name`（显示名），`dirname` 桶只把 `dir_source_links.ext_name`（应用内姓名）与 `org_members.org_uid` 互相比对——**从不拿 ext_name 去跟别的账号的显示名比**。Reid 显示名是英文「Reid」，但它飞书的应用内姓名是中文真名「吴治含」，与 吴治含 账号的显示名「吴治含」相同，却因分属两个不同的桶（`dirname|吴治含` vs `name|吴治含`）永远连不起来。
+- 修（api.js `findSimilarUsers`）：把**应用内姓名 ext_name 也并入「姓名」桶**（用同一套 `similarNameKey` 归一化，CJK/去括号）——于是「一个账号显示名是英文/昵称、另一个账号同步进来的中文真名相同」能辨认为疑似同人。v3.5.65 的 ext_name↔org_uid（dirname 桶）保留不动。线索标签：`name`→「姓名 / 应用内姓名相同」、`dirname`→「组织内 UID / 外部标识相同」。>8 人大桶仍跳过（防常见名误连）。
+- `mergeGroupView` 每个账号补 `ext_names`（应用内姓名列表）/ `org_uids`（组织内 UID 列表）；前端 `openSimilarUsers` 每人多显示一行「应用内姓名：… · 组织内 UID：…」，让管理员对照肉眼判断；引导文案同步。
+- 顺带 `GET /admin/users` 搜索也纳入**应用内姓名 + 组织内 UID**（三个分支 + org 聚焦分支都加 `id IN (SELECT user_id FROM dir_source_links WHERE ext_name LIKE ?)` / `org_members WHERE org_uid LIKE ?`）：搜中文真名「吴治含」能同时列出 吴治含 与 Reid 两个账号 → 勾选两个 → 合并。
+- ⚠️ 仍需两账号间有**共享字段**才能自动连（本例靠应用内姓名相同）；若飞书侧应用内姓名也只是英文，则无共享字段、只能人工合并——此时 UI 已把应用内姓名/组织内 UID 摆出来辅助判断。
+- 测试：node:sqlite 复刻——Reid(应用内姓名=吴治含) 与 吴治含(显示名=吴治含) 落入同一 `name|吴治含` 桶、张伟 不误连；搜「吴治含」同时命中两账号、搜组织内 UID「85dd133b」命中 Reid。api.js + dashboard 内联 JS 语法通过。
 
 ## v3.5.92.2 用户管理搜索补全 + 刷新菜单不再闪跳（用户反馈）
 

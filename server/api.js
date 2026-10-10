@@ -3741,6 +3741,9 @@ function mergeGroupView(list) {
   const orgCnt = db.prepare('SELECT COUNT(*) n FROM org_members WHERE user_id=?');
   const bindCnt = db.prepare('SELECT COUNT(*) n FROM user_oauth WHERE user_id=?');
   const pkCnt = db.prepare('SELECT COUNT(*) n FROM webauthn_credentials WHERE user_id=?');
+  // v3.5.92.3：辅助辨认字段——应用内姓名（三方同步源真实姓名）+ 组织内 UID + 来源，让管理员肉眼判断是否同一人
+  const extNamesStmt = db.prepare("SELECT DISTINCT ext_name FROM dir_source_links WHERE user_id=? AND ext_name IS NOT NULL AND ext_name <> ''");
+  const orgUidsStmt = db.prepare("SELECT org_uid, source FROM org_members WHERE user_id=? AND org_uid IS NOT NULL AND org_uid <> ''");
   const show = x => x.uid_code || '#' + String(x.uid_seq).padStart(5, '0');
   const sorted = [...list].sort((a, b) => mergeKeepScore(b) - mergeKeepScore(a) || (a.uid_seq || 0) - (b.uid_seq || 0));
   const view = list.map(u => {
@@ -3748,9 +3751,13 @@ function mergeGroupView(list) {
     const err = userMerge.checkMerge({ id: '\0', name: '', status: 'active' }, [u]);
     const terr = userMerge.checkMerge(u, [{ id: '\0', name: '', status: 'active' }]);
     let pc = 0; try { pc = pkCnt.get(u.id).n; } catch (_) {}
+    let extNames = [], orgUids = [];
+    try { extNames = extNamesStmt.all(u.id).map(r => r.ext_name).filter(Boolean); } catch (_) {}
+    try { orgUids = orgUidsStmt.all(u.id).map(r => r.org_uid).filter(Boolean); } catch (_) {}
     return { id: u.id, uid: show(u), name: u.name, email: u.email || null, phone: u.phone || null, status: u.status,
       admin: u.role === 'admin', has_pw: !!u.password_hash, kyc: !!u.kyc_verified, kyc_name: u.kyc_verified ? (u.kyc_name || '') : '',
       twofa: !!u.twofa_enabled, passkeys: pc, points: u.points || 0, orgs: orgCnt.get(u.id).n, bindings: bindCnt.get(u.id).n,
+      ext_names: [...new Set(extNames)], org_uids: [...new Set(orgUids)],
       created_at: u.created_at, can_be_source: !err, source_error: err || null, can_be_target: !terr, target_error: terr || null };
   });
   // 实名不同的人互相不能合并：两两比较
@@ -3765,7 +3772,7 @@ function mergeGroupView(list) {
 // 强线索：同一实名假名、同一平台 unionid（微信 / 飞书 union_id，含通讯录映射的 ext_union）、同一企业微信企业 + UserId；
 // 一般线索：姓名相同（NFKC、去空白、去掉结尾括号注记如「张三（企微）」）、邮箱 @ 前缀相同（≥4 位）。
 // 实名假名不同的两人绝不连在一起；被标记「不是同一人」的两两组合也不连。
-const SIMILAR_REASON = { kyc: '同一实名', union: '同一三方 unionid', corp: '企业微信同一 UserId', dirname: '外部通讯录姓名/UID 相同', name: '姓名相同', email: '邮箱相同', phone: '手机相同' };
+const SIMILAR_REASON = { kyc: '同一实名', union: '同一三方 unionid', corp: '企业微信同一 UserId', dirname: '组织内 UID / 外部标识相同', name: '姓名 / 应用内姓名相同', email: '邮箱相同', phone: '手机相同' };
 const SIMILAR_STRONG = new Set(['kyc', 'union', 'corp']);
 const pairKey = (x, y) => x < y ? [x, y] : [y, x];
 function similarNameKey(n) {
@@ -3800,6 +3807,9 @@ function findSimilarUsers() {
   const dirKey = s => { const k = String(s || '').normalize('NFKC').trim().toLowerCase(); return k.length >= 3 ? k : ''; };
   try { for (const l of db.prepare("SELECT user_id, ext_name FROM dir_source_links WHERE ext_name IS NOT NULL AND ext_name <> ''").all()) put('dirname', dirKey(l.ext_name), l.user_id); } catch (_) {}
   try { for (const m of db.prepare("SELECT user_id, org_uid FROM org_members WHERE org_uid IS NOT NULL AND org_uid <> ''").all()) put('dirname', dirKey(m.org_uid), m.user_id); } catch (_) {}
+  // v3.5.92.3：把「应用内姓名（三方同步源里的真实姓名）」也并入「姓名」线索——这样一个账号的显示名
+  // 是英文/昵称（如 feishu 的 Reid）、另一个账号同步进来的中文名（吴治含）相同时也能辨认为疑似同人。
+  try { for (const l of db.prepare("SELECT user_id, ext_name FROM dir_source_links WHERE ext_name IS NOT NULL AND ext_name <> ''").all()) put('name', similarNameKey(l.ext_name), l.user_id); } catch (_) {}
   for (const b of db.prepare("SELECT user_id, provider, union_id FROM user_oauth WHERE union_id IS NOT NULL AND union_id <> ''").all())
     put('union', String(b.provider).split(':')[0] + ':' + b.union_id, b.user_id);
   try { for (const l of db.prepare("SELECT user_id, ext_union FROM dir_source_links WHERE ext_union IS NOT NULL AND ext_union <> ''").all()) put('union', 'feishu:' + l.ext_union, l.user_id); } catch (_) {}
@@ -4162,21 +4172,24 @@ router.get('/admin/users', requireAdmin(3, { orgAdmin: true }), (req, res) => {
     // v3.5.92.2：聚焦某组织时也能搜索（在该组织成员范围内匹配 UID / 昵称 / 邮箱 / 手机 / 自定义 UID）
     const like = `%${qs}%`;
     rows = db.prepare(`SELECT u.* FROM users u JOIN org_members m ON m.user_id=u.id
-        WHERE m.subject_id=? AND u.is_public=0 AND (CAST(u.uid_seq AS TEXT) LIKE ? OR u.uid_code LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)
-        ORDER BY u.uid_seq`).all(org, like, like, like, like, like);
+        WHERE m.subject_id=? AND u.is_public=0 AND (CAST(u.uid_seq AS TEXT) LIKE ? OR u.uid_code LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?
+          OR u.id IN (SELECT user_id FROM dir_source_links WHERE ext_name LIKE ?) OR u.id IN (SELECT user_id FROM org_members WHERE org_uid LIKE ?))
+        ORDER BY u.uid_seq`).all(org, like, like, like, like, like, like, like);
   } else if (org) {
     // v3.5.74.4：顶栏「当前组织」聚焦某组织时，用户管理只列该组织成员
     rows = db.prepare('SELECT u.* FROM users u JOIN org_members m ON m.user_id=u.id WHERE m.subject_id=? AND u.is_public=0 ORDER BY u.uid_seq').all(org);
   } else if (qs) {
     // 支持 UID（纯数字或自定义 uid_code）、昵称、邮箱、手机、组织搜索
     const like = `%${qs}%`;
+    // 应用内姓名（三方同步源真实姓名）/ 组织内 UID 也纳入搜索：搜中文真名能同时找到显示名是英文/昵称的同一人账号
+    const extSub = "OR id IN (SELECT user_id FROM dir_source_links WHERE ext_name LIKE ?) OR id IN (SELECT user_id FROM org_members WHERE org_uid LIKE ?)";
     const isUid = /^\d+$/.test(qs);
     if (isUid) {
-      rows = db.prepare("SELECT * FROM users WHERE is_public=0 AND (uid_seq=? OR uid_code LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ?) ORDER BY uid_seq")
-        .all(parseInt(qs), like, like, like, like);
+      rows = db.prepare(`SELECT * FROM users WHERE is_public=0 AND (uid_seq=? OR uid_code LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ? ${extSub}) ORDER BY uid_seq`)
+        .all(parseInt(qs), like, like, like, like, like, like);
     } else {
-      rows = db.prepare("SELECT * FROM users WHERE is_public=0 AND (uid_code LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ? OR organization LIKE ?) ORDER BY uid_seq")
-        .all(like, like, like, like, like);
+      rows = db.prepare(`SELECT * FROM users WHERE is_public=0 AND (uid_code LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ? OR organization LIKE ? ${extSub}) ORDER BY uid_seq`)
+        .all(like, like, like, like, like, like, like);
     }
   } else if (status) {
     rows = users.findByStatus.all(status);

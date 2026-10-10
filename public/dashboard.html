@@ -5360,12 +5360,13 @@ async function openSimilarUsers() {
         <input type="radio" name="sim-keep-${gi}" value="${esc(u.id)}" ${u.id === g.suggested ? 'checked' : ''} ${u.can_be_target ? '' : 'disabled'} style="margin-top:3px;">
         <span style="flex:1;min-width:0;"><b>${esc(u.name || '（无名）')}</b> <span style="color:var(--txd);font-size:11px;">${esc(u.uid)}</span> <span class="sim-tag" style="font-size:10px;"></span>
           <div style="font-size:11px;color:var(--txd);word-break:break-all;">${esc([u.email, u.phone].filter(Boolean).join(' · ') || '无邮箱 / 手机')}</div>
+          ${(u.ext_names && u.ext_names.length) || (u.org_uids && u.org_uids.length) ? `<div style="font-size:11px;color:var(--txd);word-break:break-all;">${u.ext_names && u.ext_names.length ? '应用内姓名：<b style="color:var(--tx);">' + u.ext_names.map(esc).join('、') + '</b>' : ''}${(u.ext_names && u.ext_names.length) && (u.org_uids && u.org_uids.length) ? ' · ' : ''}${u.org_uids && u.org_uids.length ? '组织内 UID：' + u.org_uids.map(esc).join('、') : ''}</div>` : ''}
           <div style="font-size:11px;color:var(--tx);">${facts(u)}</div><div class="sim-err" style="font-size:11px;color:var(--err);"></div></span></label>`).join('')}
     </div>`;
   const ov = document.createElement('div'); ov.className = 'ui-dlg-mask';
   ov.innerHTML = `<div class="ui-dlg" style="max-width:640px;"><div class="ui-dlg-title">疑似重复账号（${groups.length} 组）</div>
     <div class="ui-dlg-msg" style="white-space:normal;">
-      <div style="font-size:12px;color:var(--txd);line-height:1.7;margin-bottom:8px;">按同一实名、同一三方 unionid、企业微信同一 UserId、姓名相同、邮箱前缀相同找出来的。线索强的组默认勾选，<b>姓名 / 邮箱前缀相同只是线索</b>，请逐组核对。每组选一个保留账号，其余并入后删除${data.undo_days ? `，${data.undo_days} 天内可在「注销与删除 → 账号合并记录」逐组撤销` : '（当前未开启撤销日志，合并后不能撤销）'}。${data.ignored ? `<br>已有 ${data.ignored} 对账号被标记为不是同一人，不再提示（<a href="javascript:void 0" id="sim-unignore">恢复提示</a>）。` : ''}</div>
+      <div style="font-size:12px;color:var(--txd);line-height:1.7;margin-bottom:8px;">按同一实名、同一三方 unionid、企业微信同一 UserId、<b>姓名 / 应用内姓名相同</b>（含三方同步源里的真实姓名）、组织内 UID / 外部标识相同、邮箱 / 手机相同找出来的。线索强的组默认勾选，<b>姓名类只是线索</b>，请对照每人的「应用内姓名 / 组织内 UID」逐组核对。每组选一个保留账号，其余并入后删除${data.undo_days ? `，${data.undo_days} 天内可在「注销与删除 → 账号合并记录」逐组撤销` : '（当前未开启撤销日志，合并后不能撤销）'}。${data.ignored ? `<br>已有 ${data.ignored} 对账号被标记为不是同一人，不再提示（<a href="javascript:void 0" id="sim-unignore">恢复提示</a>）。` : ''}</div>
       ${groups.length ? `<label style="display:block;font-size:12px;margin-bottom:6px;"><input type="checkbox" id="sim-all"> 全选</label>
       <div style="max-height:56vh;overflow:auto;">${groups.map(gHtml).join('')}</div>` : '<div style="padding:16px;text-align:center;color:var(--txd);">没有发现疑似重复的账号</div>'}
       <div id="sim-msg" style="font-size:12px;color:var(--err);margin-top:6px;"></div></div>
