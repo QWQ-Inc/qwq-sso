@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.2**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,23 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.92.2 用户管理搜索补全 + 刷新菜单不再闪跳（用户反馈）
+
+四级补丁。用户（用户管理页截图）：「显示搜索不到用户，无法快速勾选用户，刷新后左侧菜单会卡的直接刷新跳一下」。
+
+### ① 搜索补全（api.js + dashboard.html）
+- 后端 `GET /admin/users` 搜索原本只匹配 name/email/phone/organization（数字再加 uid_seq），**漏了 `uid_code`（对外展示的自定义 UID，如 EMP0004/STAFF11）**——按看到的 UID 搜根本搜不到。两个分支都补上 `uid_code LIKE`。
+- 🐛 **聚焦「当前组织」时搜索被静默丢弃**：`loadAdmUsers(q)` 原来 `org ? ?org=... : (q ? ?q=... )`——org 有值时 q 直接不带。改为 org 与 q 都带；后端加 `org && qs` 分支（在该组织成员范围内按 uid_seq/uid_code/name/email/phone 匹配，`CAST(uid_seq AS TEXT)`）。空态/计数文案改为优先显示「搜索结果 / 未找到匹配用户」。
+- 🐛 **失效的「当前组织」会让搜索永远被忽略**：组织被删/无权后 localStorage 的 `sso_admin_org` 仍是旧 id，下拉显示「全部」但 `_curAdminOrg()` 返回旧 id → 走 org 分支、q 被丢。`loadAdminOrgSelect` 加守卫：cur 不在 orgs 列表里就清掉（组织管理员回退到首个管辖组织）。
+- ⚠️ 「reid」这类确实没有匹配项的词仍返回空（正确）；补的是「按展示 UID 搜」「聚焦组织时搜」「失效组织卡住搜索」三种真实场景——顺带「快速勾选」也随搜索能用而解决（搜到→勾选→批量操作，选择跨搜索保留）。
+
+### ② 刷新菜单闪跳（dashboard.html）
+- 🐛 根因：HTML 默认 `page-home` + 用户端菜单可见；`loadMe()` 拉完 `/user/me` 才 `setTimeout(bootToLastPage,0)` 切到管理端 + 上次菜单。刷新时先闪一下用户端首页再跳到管理端用户管理——就是「卡一下 / 跳一下」。
+- 修：`<body>` 顶部加 `#boot-splash` 启动遮罩（居中转圈，z-index 99999，盖住整屏）；`bootToLastPage()` 末尾 `hideBootSplash()`（淡出移除）。loadMe 的 `!ok` 早退 + init 里 3.5 秒兜底都会撤遮罩，绝不会卡在转圈。于是刷新只看到一瞬转圈→直接落到正确的菜单，不再闪跳。
+
+### 测试
+- 新搜索 SQL node:sqlite 9 项全过（按姓名/自定义 UID(EMP)/手机片段/数字 UID/文本 00001 走 uid_code/公共账号排除/组织内搜索命中与不命中/reid 为空）。server/api.js + dashboard 内联 JS 语法通过。遮罩逻辑为纯前端时序（默认显示→boot 完成移除+三重兜底），靠代码审查。
 
 ## v3.5.92.1 组织弹窗加宽（高级配置不再是「窄页」）（用户反馈）
 

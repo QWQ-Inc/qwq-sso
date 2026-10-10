@@ -1065,7 +1065,7 @@ async function initWatermark() {
 }
 async function loadMe() {
   const { ok, data } = await api('GET', '/user/me');
-  if (!ok) return;
+  if (!ok) { if (typeof hideBootSplash === 'function') hideBootSplash(); return; }
   ME = data.user;
   _MEMO_ADMIN_LEVEL = Number.isInteger(data.memo_admin_level) ? data.memo_admin_level : 1;
   _KYC_USER_DELETE = !!data.kyc_user_delete;
@@ -1127,6 +1127,12 @@ async function loadMe() {
 </script>
 </head>
 <body>
+
+<!-- 启动遮罩（v3.5.92.2）：盖住「用户端默认页 → 恢复上次菜单」这一跳，避免刷新时左侧菜单闪一下 -->
+<div id="boot-splash" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#f4f5f7);display:flex;align-items:center;justify-content:center;">
+  <div style="width:30px;height:30px;border:3px solid rgba(120,130,145,.25);border-top-color:#3b82f6;border-radius:50%;animation:bootspin .7s linear infinite;"></div>
+</div>
+<style>@keyframes bootspin{to{transform:rotate(360deg)}}</style>
 
 <div class="app">
 
@@ -3475,6 +3481,10 @@ async function loadAdminOrgSelect() {
   if (isOrgAdmin && !_curAdminOrg() && orgs.length) {
     try { localStorage.setItem('sso_admin_org', orgs[0].id); } catch (_) {}
   }
+  // v3.5.92.2：清掉已失效的「当前组织」（组织被删/无权），否则下拉显示「全部」但 _curAdminOrg() 仍是旧 id，搜索会被静默忽略
+  if (_curAdminOrg() && !orgs.some(o => o.id === _curAdminOrg())) {
+    try { localStorage.setItem('sso_admin_org', isOrgAdmin && orgs.length ? orgs[0].id : ''); } catch (_) {}
+  }
   const cur = _curAdminOrg();
   box.innerHTML = `
     <label style="font-size:12px;color:var(--txd);white-space:nowrap;">当前组织</label>
@@ -3585,6 +3595,12 @@ function bootToLastPage() {
     // 普通用户 / 公共账号：默认 home，有有效记录则恢复
     setMode('user', target || 'home');
   }
+  hideBootSplash();
+}
+// 撤掉启动遮罩（露出已定好的正确菜单/页面，不再闪跳）
+function hideBootSplash() {
+  const s = document.getElementById('boot-splash');
+  if (s) { s.style.opacity = '0'; s.style.transition = 'opacity .18s'; setTimeout(() => s.remove(), 200); }
 }
 
 function _setNavLock(ni, locked, title) {
@@ -5160,19 +5176,23 @@ async function loadAdmStats() {
 
 async function loadAdmUsers(q) {
   const org = _curAdminOrg();
-  const url = org ? `/admin/users?org=${encodeURIComponent(org)}` : (q ? `/admin/users?q=${encodeURIComponent(q)}` : '/admin/users');
+  const qs = (q || '').trim();
+  const params = [];
+  if (org) params.push('org=' + encodeURIComponent(org));
+  if (qs)  params.push('q=' + encodeURIComponent(qs));
+  const url = '/admin/users' + (params.length ? '?' + params.join('&') : '');
   const { ok, data } = await api('GET', url);
   if (!ok) return;
   const list = document.getElementById('adm-user-list');
   if (!list) return;
   if (!data.users?.length) {
-    list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--txd);font-size:12px;">${org ? '该组织暂无成员' : (q ? '未找到匹配用户' : '暂无用户')}</div>`;
+    list.innerHTML = `<div style="padding:20px;text-align:center;color:var(--txd);font-size:12px;">${qs ? '未找到匹配用户' : (org ? '该组织暂无成员' : '暂无用户')}</div>`;
     document.getElementById('user-detail-panel').innerHTML = '';
     return;
   }
   _admUserRows = data.users;
   data.users.forEach(u => { if (_uSel.has(u.id)) _uSel.set(u.id, u); });
-  list.innerHTML = `<div class="detail-list-count" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="user-sel-all" title="全选当前列表" onclick="userSelAll(this.checked)" style="cursor:pointer;"> 共 ${data.users.length} 人${org ? '（该组织成员）' : (q ? '（搜索结果）' : '')}</div>` + data.users.map((u,i) => `
+  list.innerHTML = `<div class="detail-list-count" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="user-sel-all" title="全选当前列表" onclick="userSelAll(this.checked)" style="cursor:pointer;"> 共 ${data.users.length} 人${qs ? '（搜索结果）' : (org ? '（该组织成员）' : '')}</div>` + data.users.map((u,i) => `
     <div class="detail-list-item ${i===0?'active':''}" onclick="selectUserById(this,'${u.id}')" style="display:flex;gap:8px;align-items:flex-start;">
       ${u.is_public ? '<span style="width:13px;"></span>' : `<input type="checkbox" class="user-sel" data-id="${u.id}" ${_uSel.has(u.id) ? 'checked' : ''} onclick="event.stopPropagation();userSelToggle('${u.id}',this.checked)" style="margin-top:3px;cursor:pointer;">`}
       <div style="min-width:0;flex:1;"><div class="din">${esc(u.name||u.email||'—')}${u.group?`<span style="font-size:10px;font-weight:500;color:${u.group.color};margin-left:6px;">●${esc(u.group.name)}</span>`:''}</div>
@@ -11212,6 +11232,8 @@ const _origGoto = goto;
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
+  // 兜底：无论如何 3.5 秒后撤掉启动遮罩，避免卡在加载圈
+  setTimeout(() => { if (typeof hideBootSplash === 'function') hideBootSplash(); }, 3500);
 
   await loadMe();
   if (ME && ME.role === 'admin') {

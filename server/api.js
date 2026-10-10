@@ -4157,18 +4157,26 @@ router.get('/admin/users', requireAdmin(3, { orgAdmin: true }), (req, res) => {
   const { status, q, org } = req.query;
   if (!orgAdminCanOrg(req, org)) return res.status(403).json({ error: '无权查看该组织' });   // v3.5.76 组织管理员限本组织
   let rows;
-  if (org) {
+  const qs = (q || '').trim();
+  if (org && qs) {
+    // v3.5.92.2：聚焦某组织时也能搜索（在该组织成员范围内匹配 UID / 昵称 / 邮箱 / 手机 / 自定义 UID）
+    const like = `%${qs}%`;
+    rows = db.prepare(`SELECT u.* FROM users u JOIN org_members m ON m.user_id=u.id
+        WHERE m.subject_id=? AND u.is_public=0 AND (CAST(u.uid_seq AS TEXT) LIKE ? OR u.uid_code LIKE ? OR u.name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)
+        ORDER BY u.uid_seq`).all(org, like, like, like, like, like);
+  } else if (org) {
     // v3.5.74.4：顶栏「当前组织」聚焦某组织时，用户管理只列该组织成员
     rows = db.prepare('SELECT u.* FROM users u JOIN org_members m ON m.user_id=u.id WHERE m.subject_id=? AND u.is_public=0 ORDER BY u.uid_seq').all(org);
-  } else if (q) {
-    // 支持 UID（纯数字）、昵称、邮箱、手机、组织搜索
-    const isUid = /^\d+$/.test(q.trim());
+  } else if (qs) {
+    // 支持 UID（纯数字或自定义 uid_code）、昵称、邮箱、手机、组织搜索
+    const like = `%${qs}%`;
+    const isUid = /^\d+$/.test(qs);
     if (isUid) {
-      rows = db.prepare("SELECT * FROM users WHERE is_public=0 AND (uid_seq=? OR name LIKE ? OR email LIKE ? OR phone LIKE ?) ORDER BY uid_seq")
-        .all(parseInt(q), `%${q}%`, `%${q}%`, `%${q}%`);
+      rows = db.prepare("SELECT * FROM users WHERE is_public=0 AND (uid_seq=? OR uid_code LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ?) ORDER BY uid_seq")
+        .all(parseInt(qs), like, like, like, like);
     } else {
-      rows = db.prepare("SELECT * FROM users WHERE is_public=0 AND (name LIKE ? OR email LIKE ? OR phone LIKE ? OR organization LIKE ?) ORDER BY uid_seq")
-        .all(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+      rows = db.prepare("SELECT * FROM users WHERE is_public=0 AND (uid_code LIKE ? OR name LIKE ? OR email LIKE ? OR phone LIKE ? OR organization LIKE ?) ORDER BY uid_seq")
+        .all(like, like, like, like, like);
     }
   } else if (status) {
     rows = users.findByStatus.all(status);
