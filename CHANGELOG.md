@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.92.1 — 组织弹窗加宽（高级配置不再是「窄页」）
+
+- 🐛 v3.5.92 把高级配置做成分区表单后仍显得窄（用户反馈「为什么是这样的窄页」）。根因：组织弹窗 `.modal` 内联死卡 `max-width:420px`，分区表单的两列网格每列仅 ~180px，整体是一条又长又窄的竖条。
+- 修（纯前端）：弹窗宽度改 `width:min(96vw,880px)`；高级配置网格改 `repeat(auto-fill,minmax(230px,1fr))`（880px 下自动 2~3 列、窄屏回落 1 列）；顶部名称+文件夹并排两列；短信/邮件、KYC 两个凭证分区也改多列。窄屏 `@media(max-width:760px)` 规则仍把弹窗压到不溢出。后端与 feature_config 机制未改。
+- 测试：静态复刻弹窗浏览器实测——弹窗 880px 宽，各分区多列整齐，不再是竖条。
+
 ## v3.5.92 — 组织高级配置表单规范化 + iOS 我的设备（Apple 地图定位）
 
 - **组织弹窗高级配置规范化**：之前 MDM/水印/门禁/Wallet 三段挤成一堆只有 placeholder 的输入框（用户反馈「怪怪的」）。改成按元数据（`ORG_FEATURE_SECTIONS`）JS 渲染的**分区表单**：Apple MDM / Google 服务账号 / 水印 / 门禁 / Apple Wallet / Google Wallet 六个分区，每个字段有持久标签 + 说明 + 两列网格，证书类整行文本框。load/save 改为遍历元数据键。

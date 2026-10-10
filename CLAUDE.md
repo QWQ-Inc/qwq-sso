@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.92.1 组织弹窗加宽（高级配置不再是「窄页」）（用户反馈）
+
+四级补丁。用户（截图）：v3.5.92 把高级配置做成分区表单后，仍「怪怪的……为什么是这样的窄页」。
+- 🐛 根因：`subject-modal` 的 `.modal` 内联 `min-width:360px;max-width:420px` 把**整个组织弹窗**死死卡在 **420px** 宽。高级配置里的 `grid-template-columns:1fr 1fr` 在 420px 下每列仅 ~180px，所以无论怎么分区都是一条又长又窄的竖条、靠无限滚动看完——这就是「窄页」。
+- 修（纯前端 `dashboard.html`）：① 弹窗宽度改 `width:min(96vw,880px);max-width:96vw`，变成一张正经宽表单；② `renderOrgFeatureFields` 的网格从固定 `1fr 1fr` 改 `repeat(auto-fill,minmax(230px,1fr))`——在 880px 下自动排成 2~3 列，窄屏自动回落 1 列；字段标签字号 10px→11.5px；③ 顶部「主体名称 + 所在文件夹」改并排两列；④ 组织专属凭证（短信/邮件、KYC）两个 `<details>` 的输入也改 `auto-fill minmax(260px,1fr)` 多列（支付宝私钥 textarea `grid-column:1/-1` 整行）。既有 `@media(max-width:760px)` 的 `.modal` 窄屏规则仍把弹窗压到 `calc(100vw-28px)`，手机端不溢出。
+- 后端 / feature_config 机制 / load·save 的键表全未改，纯布局。
+- ⚠️ 测试：静态复刻弹窗 + renderOrgFeatureFields 浏览器实测——弹窗宽 880px、顶部字段并排、Apple MDM（Team ID + Key ID 一行 + .p8 整行）、Google（3 列）、水印（3 列）分区多列整齐，不再是竖条。
 
 ## v3.5.92 组织高级配置表单规范化 + iOS 我的设备（Apple 地图定位）（用户反馈）
 

@@ -3046,16 +3046,18 @@ async function loadMe() {
 </div>
 
 <div class="modal-mask" id="subject-modal">
-  <div class="modal" style="min-width:360px;max-width:420px;text-align:left;">
+  <div class="modal" style="width:min(96vw,880px);max-width:96vw;text-align:left;">
     <h3 id="subject-modal-title" style="margin-bottom:16px;">新建主体</h3>
     <input type="hidden" id="sm-id">
-    <div style="margin-bottom:10px;">
-      <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">主体名称（如「XX集团」「A公司」）</label>
-      <input id="subj-name" placeholder="主体名称" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
-    </div>
-    <div style="margin-bottom:10px;">
-      <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">所在文件夹（只用于在管理端归类，不影响登录）</label>
-      <select id="sm-folder" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);"></select>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;">
+      <div>
+        <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">主体名称（如「XX集团」「A公司」）</label>
+        <input id="subj-name" placeholder="主体名称" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;color:var(--txd);margin-bottom:4px;">所在文件夹（只用于在管理端归类，不影响登录）</label>
+        <select id="sm-folder" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);"></select>
+      </div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:6px;">
       <input type="checkbox" id="sm-enabled" checked> 启用（关闭则其下所有凭证的登录入口都隐藏）
@@ -3101,7 +3103,7 @@ async function loadMe() {
     <details style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
       <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">组织专属凭证（短信/邮件）· 可选</summary>
       <div style="font-size:11px;color:var(--txd);margin:8px 0;">该组织上下文发短信/邮件时用这套凭证，留空则回退全局「系统配置 → 消息分发」。</div>
-      <div style="display:grid;gap:8px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px 12px;">
         <input id="sm-msg-url" placeholder="QWQ_MESSAGE_URL（分发中心地址）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-msg-key" placeholder="QWQ_MESSAGE_KEY（密钥）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-msg-sms" placeholder="QWQ_MESSAGE_SMS_GROUP（短信通道组）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
@@ -3128,7 +3130,7 @@ async function loadMe() {
     <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
       <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">组织专属凭证（实名 / KYC）· 可选</summary>
       <div style="font-size:11px;color:var(--txd);margin:8px 0;">该组织成员发起实名认证时用这套凭证（按服务商填，只填你用的那家），留空则回退全局「系统配置 → 实名认证」。</div>
-      <div style="display:grid;gap:8px;">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px 12px;">
         <input id="sm-kyc-didit-key" placeholder="DIDIT_API_KEY（Didit）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-kyc-didit-wf" placeholder="DIDIT_WORKFLOW_ID（Didit）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-kyc-stripe" placeholder="STRIPE_SECRET_KEY（Stripe Identity）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
@@ -3137,7 +3139,7 @@ async function loadMe() {
         <input id="sm-kyc-volc-id" placeholder="VOLC_KYC_ACCESS_KEY_ID（火山引擎）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-kyc-volc-secret" placeholder="VOLC_KYC_ACCESS_KEY_SECRET（火山引擎）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
         <input id="sm-kyc-alipay-appid" placeholder="ALIPAY_APP_ID（支付宝实人）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <textarea id="sm-kyc-alipay-priv" placeholder="ALIPAY_PRIVATE_KEY（支付宝应用私钥，可裸串）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
+        <textarea id="sm-kyc-alipay-priv" placeholder="ALIPAY_PRIVATE_KEY（支付宝应用私钥，可裸串）" rows="2" style="grid-column:1/-1;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
       </div>
     </details>
 
@@ -9700,10 +9702,10 @@ function renderOrgFeatureFields() {
       const ctrl = (t === 'area')
         ? `<textarea id="sm-feat-${k}" rows="2" placeholder="${esc(h || '')}" style="${inp}resize:vertical;"></textarea>`
         : `<input id="sm-feat-${k}" placeholder="${esc(h || '')}" style="${inp}">`;
-      return `<div style="${full}"><label style="display:block;font-size:10px;color:var(--txd);margin-bottom:3px;">${esc(l)}</label>${ctrl}</div>`;
+      return `<div style="${full}"><label style="display:block;font-size:11.5px;color:var(--txd);margin-bottom:3px;">${esc(l)}</label>${ctrl}</div>`;
     }).join('');
-    return `<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:var(--txt);margin-bottom:6px;padding-bottom:4px;border-bottom:1px dashed var(--bd);">${esc(sec.title)}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;">${fields}</div></div>`;
+    return `<div style="margin-top:14px;"><div style="font-size:12px;font-weight:700;color:var(--txt);margin-bottom:8px;padding-bottom:4px;border-bottom:1px dashed var(--bd);">${esc(sec.title)}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 14px;">${fields}</div></div>`;
   }).join('');
 }
 function openSubjectModal(subj) {
