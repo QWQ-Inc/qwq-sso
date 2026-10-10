@@ -347,6 +347,19 @@ final class APIClient {
         return (j["doors"] as? [[String: Any]]) ?? []
     }
 
+    /// 我的设备（归属到本人的，v3.5.92）
+    func userDevices(token: String) async throws -> [[String: Any]] {
+        let j = try await getJSON("/api/user/devices", token: token)
+        return (j["devices"] as? [[String: Any]]) ?? []
+    }
+    /// 对自己的设备下发自助命令（lock / locate）
+    @discardableResult
+    func deviceSelfCommand(_ id: String, type: String, message: String? = nil, token: String) async throws -> [String: Any] {
+        var payload: [String: Any] = [:]
+        if let m = message, !m.isEmpty { payload["message"] = m }
+        return try await sendBody("POST", "/api/user/devices/\(id)/commands", body: ["type": type, "payload": payload], token: token)
+    }
+
     /// 通用请求（v3.5.30 应用中心管理工具用）：任意方法 + 可选 JSON body
     func request(_ method: String, _ path: String, body: [String: Any]? = nil, token: String) async throws -> [String: Any] {
         try await sendBody(method, path, body: body, token: token)

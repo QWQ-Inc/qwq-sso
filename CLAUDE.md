@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.91**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,30 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.92 组织高级配置表单规范化 + iOS 我的设备（Apple 地图定位）（用户反馈）
+
+三级版本。用户（截图）：组织弹窗里的按组织配置「看怪怪的，做个规范页面」+「iOS App 的我的设备做个 map，接入 Apple Map」。
+
+### 组织高级配置规范化（dashboard.html）
+- v3.5.89~91 往组织弹窗加的 MDM/水印/门禁/Wallet 三个折叠区是一堆**只有 placeholder、无标签、挤在一起**的 monospace 输入框 → 难读。
+- 重做：三段合成一个「⚙️ 本组织高级配置」折叠区，内含 `<div id="sm-feat-container">`，由 JS `renderOrgFeatureFields()` 按 `ORG_FEATURE_SECTIONS` 元数据渲染**分区表单**——6 个分区（📱Apple MDM / 🔑Google 服务账号 / 💧水印 / 🚪门禁 / 🍎Apple Wallet / 🔵Google Wallet），每分区有标题 + 虚线分隔，每字段**持久标签**（字段名）+ placeholder（说明）+ 两列网格，PEM/密钥类 `grid-column:1/-1` 整行 textarea。
+- `ORG_FEATURE_KEYS` 从元数据 flatMap 得出；openSubjectModal 先 `renderOrgFeatureFields()` 再按 ORG_FEATURE_KEYS 回填（密钥 ••••）；saveSubject 按 ORG_FEATURE_KEYS 收集。后端 feature_config 机制不变。
+- 浏览器实测渲染整齐（分区标题 + 标签 + 两列网格）。
+
+### iOS「我的设备」+ Apple 地图（ios/）
+- `MeTabView` 功能区加「我的设备」入口。新 `MyDevicesView.swift`：拉 `/api/user/devices`（v3.5.85/86 的接口），设备卡片显示名称/状态/纳管/机型/序列号/组织/最近在线；`can_self_manage` 的出「🔒锁定 / 📍定位」按钮（复用 `/api/user/devices/:id/commands`，lock 可 alert 填留言）。
+- **Apple 地图**：定位结果 JSON 带 lat/lng 时，卡片出地图入口 → `DeviceMapView`（MapKit `Map(coordinateRegion:annotationItems:)` + `MapMarker` 红针 + 「在地图 App 中打开」`MKMapItem.openInMaps`）。无坐标则显示主机名/IP 文本。
+- `APIClient` 加 `userDevices(token)` / `deviceSelfCommand(id,type,message,token)`。iOS 最低 16，用 iOS 16 Map API。
+- ⚠️ 本机无 Swift 工具链，靠 GitHub Actions 云编译验证。
+
+### agent 定位加公网 IP 粗定位（tools/mdm-agent/agent.js）
+- 电脑无 GPS → locate 原来只回主机名/内网 IP，地图上没坐标可显示。现 locate best-effort 查 `http://ip-api.com/json`（免费无密钥，4 秒超时）拿 lat/lon/city/region，回报进结果 JSON，供 App 地图显示。失败/超时则只回本地信息（try/catch）。新 `ipGeo()` 助手。
+- ⚠️ 仅公网 IP 城市级精度，非精确 GPS；会出网到 ip-api.com（文档已注明）。真机 GPS 需移动设备 MDM 的定位能力（iOS 丢失模式等，未接）。
+
+### 测试
+- 组织高级配置表单：静态服务起 public/ + 浏览器注入渲染器截图实测——分区标题/字段标签/两列网格/整行证书框，整齐。
+- agent 真实测试 8 项回归全过（locate 加 IP 定位后仍回主机名/platform）。iOS Swift 靠 CI 云编译。
 
 ## v3.5.91 Google Wallet 访客码 + Wallet（Apple+Google）按组织（用户反馈）
 

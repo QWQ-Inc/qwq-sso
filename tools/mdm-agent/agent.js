@@ -104,6 +104,19 @@ async function runFirst(cands) {
 function spawnDetached(cmd, cmdArgs) {
   try { const c = spawn(cmd, cmdArgs, { detached: true, stdio: 'ignore' }); c.unref(); return true; } catch (_) { return false; }
 }
+// 公网 IP 粗定位（best-effort，供 locate 用）：ip-api.com 免费无密钥，城市级精度。4 秒超时，失败返回 null。
+function ipGeo() {
+  return new Promise((resolve) => {
+    try {
+      const req = http.get('http://ip-api.com/json/?fields=status,lat,lon,city,regionName,query', { timeout: 4000 }, (res) => {
+        let buf = ''; res.on('data', d => buf += d);
+        res.on('end', () => { try { resolve(JSON.parse(buf)); } catch (_) { resolve(null); } });
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+    } catch (_) { resolve(null); }
+  });
+}
 
 // ── 命令执行 handlers（v3.5.83.1：Windows / macOS / Linux 真实动作）──
 // 每个返回 { ok:boolean, result:string }
@@ -130,11 +143,17 @@ const handlers = {
     const ok = spawnDetached('sh', ['-c', 'sleep 6; shutdown -r now']);
     return { ok, result: ok ? '已排程：约 6 秒后重启（需足够权限，否则重启会失败）' : '无法排程重启' };
   },
-  // 定位：回报主机名 + 内网 IPv4（无 GPS 的电脑只能到这个粒度；要公网 IP 可自行加一次出网查询）
+  // 定位：主机名 + 内网 IPv4 + 平台；再 best-effort 用公网 IP 粗定位（城市级，供 App 在地图上显示坐标）。
+  // ⚠️ 电脑无 GPS，只能到公网 IP 的城市级精度；查询会出网到 ip-api.com（免费、无密钥），失败则只回本地信息。
   async locate() {
     const nets = os.networkInterfaces();
     const ips = Object.values(nets).flat().filter(n => n && n.family === 'IPv4' && !n.internal).map(n => n.address);
-    return { ok: true, result: JSON.stringify({ host: os.hostname(), ips, platform: PLATFORM }) };
+    const out = { host: os.hostname(), ips, platform: PLATFORM };
+    try {
+      const geo = await ipGeo();
+      if (geo && geo.status === 'success') { out.lat = geo.lat; out.lng = geo.lon; out.city = geo.city; out.region = geo.regionName; out.public_ip = geo.query; out.geo_source = 'ip'; }
+    } catch (_) {}
+    return { ok: true, result: JSON.stringify(out) };
   },
   // 擦除：桌面系统没有干净的「用户态一条命令出厂擦除」。双重门禁：--allow-wipe 开 + 由操作者自备擦除命令 MDM_WIPE_CMD。
   //   都满足才真跑那条命令；否则演练。故意不内置 rm -rf / 格式化这类命令——远程队列里自动跑它等于给整批机器埋雷。

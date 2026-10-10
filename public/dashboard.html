@@ -3142,53 +3142,9 @@ async function loadMe() {
     </details>
 
     <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
-      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">MDM 厂商凭据（本组织）· 可选</summary>
-      <div style="font-size:11px;color:var(--txd);margin:8px 0;">本组织的设备（iPhone/Chromebook/Android）用这套凭据纳管，各组织用自己的 Apple Business Manager / Google 企业。留空则回退全局「系统配置 → MDM 设备纳管」。密钥显示为 •••• 表示已配置，留空=不改。</div>
-      <div style="display:grid;gap:8px;">
-        <input id="sm-feat-MDM_APNS_TEAM_ID" placeholder="MDM_APNS_TEAM_ID（Apple Team ID）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-MDM_APNS_KEY_ID" placeholder="MDM_APNS_KEY_ID（Apple APNs Key ID）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <textarea id="sm-feat-MDM_APNS_KEY" placeholder="MDM_APNS_KEY（.p8 内容）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
-        <input id="sm-feat-MDM_APNS_TOPIC" placeholder="MDM_APNS_TOPIC（MDM 推送主题）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-GOOGLE_SA_CLIENT_EMAIL" placeholder="GOOGLE_SA_CLIENT_EMAIL（Google 服务账号邮箱）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <textarea id="sm-feat-GOOGLE_SA_PRIVATE_KEY" placeholder="GOOGLE_SA_PRIVATE_KEY（服务账号私钥）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
-        <input id="sm-feat-GOOGLE_ADMIN_SUBJECT" placeholder="GOOGLE_ADMIN_SUBJECT（Chrome 域级委派管理员）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-GOOGLE_CUSTOMER_ID" placeholder="GOOGLE_CUSTOMER_ID（留空 my_customer）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-ANDROID_ENTERPRISE_NAME" placeholder="ANDROID_ENTERPRISE_NAME（enterprises/LC…）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-      </div>
-    </details>
-
-    <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
-      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">水印 + 门禁（本组织）· 可选</summary>
-      <div style="font-size:11px;color:var(--txd);margin:8px 0;">本组织成员看到的页面水印、门禁主码有效期。留空=回退全局默认。</div>
-      <div style="display:grid;gap:8px;">
-        <input id="sm-feat-WATERMARK_ENABLED" placeholder="WATERMARK_ENABLED（on/off，留空=全局）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-WATERMARK_TEXT" placeholder="WATERMARK_TEXT（如 {name} {uid} 本组织）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-WATERMARK_SCOPE" placeholder="WATERMARK_SCOPE（dashboard/all/逗号分隔页面）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <input id="sm-feat-WATERMARK_OPACITY" placeholder="OPACITY 0.01~1" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-          <input id="sm-feat-WATERMARK_ANGLE" placeholder="ANGLE -90~90" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-          <input id="sm-feat-WATERMARK_SIZE" placeholder="SIZE 8~48" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-          <input id="sm-feat-WATERMARK_GAP" placeholder="GAP 60~600" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        </div>
-        <input id="sm-feat-WATERMARK_COLOR" placeholder="COLOR #RRGGBB" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-ACCESS_QR_TTL" placeholder="ACCESS_QR_TTL 门禁主码有效期秒 15~600（留空=全局）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-      </div>
-    </details>
-
-    <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
-      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">Wallet 卡片（本组织）· 可选</summary>
-      <div style="font-size:11px;color:var(--txd);margin:8px 0;">本组织的访客通行码用自己的 Apple/Google 钱包证书与品牌。Google Wallet 复用上面 MDM 的 Google 服务账号 + 下面的 Issuer ID。留空=回退全局。证书显示 •••• 表示已配、留空不改。</div>
-      <div style="display:grid;gap:8px;">
-        <input id="sm-feat-APPLE_PASS_TYPE_ID" placeholder="APPLE_PASS_TYPE_ID（pass.xxx）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-APPLE_TEAM_ID" placeholder="APPLE_TEAM_ID" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <textarea id="sm-feat-APPLE_PASS_CERT" placeholder="APPLE_PASS_CERT（Pass 证书 PEM）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
-        <textarea id="sm-feat-APPLE_PASS_KEY" placeholder="APPLE_PASS_KEY（Pass 私钥 PEM）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
-        <input id="sm-feat-APPLE_PASS_KEY_PASSWORD" placeholder="APPLE_PASS_KEY_PASSWORD（私钥密码，可空）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <textarea id="sm-feat-APPLE_WWDR_CERT" placeholder="APPLE_WWDR_CERT（WWDR 中间证书 PEM）" rows="2" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;resize:vertical;"></textarea>
-        <input id="sm-feat-PKPASS_ORG_NAME" placeholder="PKPASS_ORG_NAME（卡片组织名）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-PKPASS_BG_COLOR" placeholder="PKPASS_BG_COLOR（rgb(r,g,b)）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <input id="sm-feat-GOOGLE_WALLET_ISSUER_ID" placeholder="GOOGLE_WALLET_ISSUER_ID（Google 钱包 Issuer ID）" style="box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;">
-      </div>
+      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">⚙️ 本组织高级配置（MDM / 水印 / 门禁 / Wallet）· 可选</summary>
+      <div style="font-size:11px;color:var(--txd);margin:8px 0 4px;">这些功能默认用全局「系统配置」。在这里填，本组织就用自己的一套；留空＝回退全局。密钥显示 •••• 表示已配置、留空不改。</div>
+      <div id="sm-feat-container"></div>
     </details>
 
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
@@ -9692,6 +9648,64 @@ async function memoViewAtt(id, aid, mime, filename) {
 }
 
 // ── 主体（组织）弹窗 ──
+// 本组织高级配置（MDM/水印/门禁/Wallet）字段元数据 → 规范的分区表单（v3.5.92）
+const ORG_FEATURE_SECTIONS = [
+  { title: '📱 Apple MDM（iPhone / iPad）', fields: [
+    ['MDM_APNS_TEAM_ID', 'Apple Team ID', '10 位'],
+    ['MDM_APNS_KEY_ID', 'APNs Key ID', '.p8 密钥的 Key ID'],
+    ['MDM_APNS_KEY', 'APNs 密钥 (.p8)', '.p8 文件内容', 'area'],
+    ['MDM_APNS_TOPIC', 'MDM 推送主题', 'com.apple.mgmt.External.xxx'],
+  ]},
+  { title: '🔑 Google 服务账号（Chromebook / Android 共用）', fields: [
+    ['GOOGLE_SA_CLIENT_EMAIL', '服务账号邮箱', 'xxx@yyy.iam.gserviceaccount.com'],
+    ['GOOGLE_SA_PRIVATE_KEY', '服务账号私钥', 'JSON 里的 private_key', 'area'],
+    ['GOOGLE_ADMIN_SUBJECT', 'Chrome 域级委派管理员', 'admin@domain（Chromebook 用）'],
+    ['GOOGLE_CUSTOMER_ID', 'Chrome Customer ID', '留空 my_customer'],
+    ['ANDROID_ENTERPRISE_NAME', 'Android Enterprise 名', 'enterprises/LC…'],
+  ]},
+  { title: '💧 水印', fields: [
+    ['WATERMARK_ENABLED', '启用', 'on / off'],
+    ['WATERMARK_TEXT', '水印文本', '{name} {uid} 本组织'],
+    ['WATERMARK_SCOPE', '显示范围', 'dashboard / all / 逗号分隔'],
+    ['WATERMARK_OPACITY', '透明度', '0.01~1'],
+    ['WATERMARK_ANGLE', '角度', '-90~90'],
+    ['WATERMARK_SIZE', '字号', '8~48'],
+    ['WATERMARK_GAP', '间距', '60~600'],
+    ['WATERMARK_COLOR', '颜色', '#RRGGBB'],
+  ]},
+  { title: '🚪 门禁', fields: [
+    ['ACCESS_QR_TTL', '主码有效期（秒）', '15~600'],
+  ]},
+  { title: '🍎 Apple Wallet', fields: [
+    ['APPLE_PASS_TYPE_ID', 'Pass Type ID', 'pass.xxx'],
+    ['APPLE_TEAM_ID', 'Team ID', ''],
+    ['APPLE_PASS_CERT', 'Pass 证书 (PEM)', '-----BEGIN CERTIFICATE-----', 'area'],
+    ['APPLE_PASS_KEY', 'Pass 私钥 (PEM)', '-----BEGIN PRIVATE KEY-----', 'area'],
+    ['APPLE_PASS_KEY_PASSWORD', '私钥密码', '可空'],
+    ['APPLE_WWDR_CERT', 'WWDR 中间证书 (PEM)', 'Apple WWDR', 'area'],
+    ['PKPASS_ORG_NAME', '卡片组织名', ''],
+    ['PKPASS_BG_COLOR', '卡片背景色', 'rgb(r,g,b)'],
+  ]},
+  { title: '🔵 Google Wallet', fields: [
+    ['GOOGLE_WALLET_ISSUER_ID', 'Issuer ID', 'Google Pay & Wallet Console'],
+  ]},
+];
+const ORG_FEATURE_KEYS = ORG_FEATURE_SECTIONS.flatMap(s => s.fields.map(f => f[0]));
+function renderOrgFeatureFields() {
+  const box = document.getElementById('sm-feat-container'); if (!box) return;
+  const inp = 'box-sizing:border-box;width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:5px;font-size:12px;background:var(--sf);color:var(--tx);font-family:monospace;';
+  box.innerHTML = ORG_FEATURE_SECTIONS.map(sec => {
+    const fields = sec.fields.map(([k, l, h, t]) => {
+      const full = (t === 'area') ? 'grid-column:1/-1;' : '';
+      const ctrl = (t === 'area')
+        ? `<textarea id="sm-feat-${k}" rows="2" placeholder="${esc(h || '')}" style="${inp}resize:vertical;"></textarea>`
+        : `<input id="sm-feat-${k}" placeholder="${esc(h || '')}" style="${inp}">`;
+      return `<div style="${full}"><label style="display:block;font-size:10px;color:var(--txd);margin-bottom:3px;">${esc(l)}</label>${ctrl}</div>`;
+    }).join('');
+    return `<div style="margin-top:12px;"><div style="font-size:11px;font-weight:700;color:var(--txt);margin-bottom:6px;padding-bottom:4px;border-bottom:1px dashed var(--bd);">${esc(sec.title)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;">${fields}</div></div>`;
+  }).join('');
+}
 function openSubjectModal(subj) {
   const editing = !!(subj && subj.id);
   document.getElementById('subject-modal-title').textContent = editing ? '编辑主体' : '新建主体';
@@ -9722,10 +9736,10 @@ function openSubjectModal(subj) {
   document.getElementById('sm-kyc-volc-secret').value   = kc.VOLC_KYC_ACCESS_KEY_SECRET || '';
   document.getElementById('sm-kyc-alipay-appid').value  = kc.ALIPAY_APP_ID || '';
   document.getElementById('sm-kyc-alipay-priv').value   = kc.ALIPAY_PRIVATE_KEY || '';
-  // MDM 厂商凭据（本组织，v3.5.89）：密钥已配回填为 ••••••••
+  // 本组织高级配置（MDM/水印/门禁/Wallet，v3.5.89~91）：按元数据渲染规范表单，密钥已配回填 ••••••••
+  renderOrgFeatureFields();
   const fc = (editing && subj.feature_config) || {};
-  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL','APPLE_PASS_TYPE_ID','APPLE_TEAM_ID','APPLE_PASS_CERT','APPLE_PASS_KEY','APPLE_PASS_KEY_PASSWORD','APPLE_WWDR_CERT','PKPASS_ORG_NAME','PKPASS_BG_COLOR','GOOGLE_WALLET_ISSUER_ID']
-    .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) el.value = fc[k] || ''; });
+  ORG_FEATURE_KEYS.forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) el.value = fc[k] || ''; });
   document.getElementById('sm-direct').checked   = editing ? !!subj.allow_direct_login : false;
   document.getElementById('sm-members-open').checked = editing ? !!subj.members_open : false;
   document.getElementById('sm-indsec').checked = editing ? !!subj.independent_security : false;
@@ -9759,10 +9773,9 @@ async function saveSubject() {
   putK('ALIYUN_KYC_ACCESS_KEY_ID','sm-kyc-aliyun-id'); putK('ALIYUN_KYC_ACCESS_KEY_SECRET','sm-kyc-aliyun-secret');
   putK('VOLC_KYC_ACCESS_KEY_ID','sm-kyc-volc-id'); putK('VOLC_KYC_ACCESS_KEY_SECRET','sm-kyc-volc-secret');
   putK('ALIPAY_APP_ID','sm-kyc-alipay-appid'); putK('ALIPAY_PRIVATE_KEY','sm-kyc-alipay-priv');
-  // MDM 厂商凭据（本组织，v3.5.89）：提交非空字段（•••• 打码串由后端识别为「不改」，空=清除覆盖）
+  // 本组织高级配置提交（•••• 打码串后端识别为「不改」，空=清除覆盖回退全局）
   const feature_config = {};
-  ['MDM_APNS_TEAM_ID','MDM_APNS_KEY_ID','MDM_APNS_KEY','MDM_APNS_TOPIC','GOOGLE_SA_CLIENT_EMAIL','GOOGLE_SA_PRIVATE_KEY','GOOGLE_ADMIN_SUBJECT','GOOGLE_CUSTOMER_ID','ANDROID_ENTERPRISE_NAME','WATERMARK_ENABLED','WATERMARK_TEXT','WATERMARK_SCOPE','WATERMARK_OPACITY','WATERMARK_ANGLE','WATERMARK_SIZE','WATERMARK_GAP','WATERMARK_COLOR','ACCESS_QR_TTL','APPLE_PASS_TYPE_ID','APPLE_TEAM_ID','APPLE_PASS_CERT','APPLE_PASS_KEY','APPLE_PASS_KEY_PASSWORD','APPLE_WWDR_CERT','PKPASS_ORG_NAME','PKPASS_BG_COLOR','GOOGLE_WALLET_ISSUER_ID']
-    .forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) { const v = (el.value||'').trim(); feature_config[k] = v; } });
+  ORG_FEATURE_KEYS.forEach(k => { const el = document.getElementById('sm-feat-' + k); if (el) feature_config[k] = (el.value || '').trim(); });
   const allow_direct_login = document.getElementById('sm-direct').checked;
   const members_open = document.getElementById('sm-members-open').checked;
   const independent_security = document.getElementById('sm-indsec').checked;

@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.92 — 组织高级配置表单规范化 + iOS 我的设备（Apple 地图定位）
+
+- **组织弹窗高级配置规范化**：之前 MDM/水印/门禁/Wallet 三段挤成一堆只有 placeholder 的输入框（用户反馈「怪怪的」）。改成按元数据（`ORG_FEATURE_SECTIONS`）JS 渲染的**分区表单**：Apple MDM / Google 服务账号 / 水印 / 门禁 / Apple Wallet / Google Wallet 六个分区，每个字段有持久标签 + 说明 + 两列网格，证书类整行文本框。load/save 改为遍历元数据键。
+- **iOS「我的设备」**：MeTab 新增入口。`MyDevicesView`（归属本人的设备列表 + 自助锁定/定位，复用 `/user/devices` + `/user/devices/:id/commands`）；定位结果带坐标时 `DeviceMapView` 用 **MapKit（Apple 地图）** 显示红色定位针 + 「在地图 App 中打开」。`APIClient` 加 userDevices / deviceSelfCommand。
+- **agent 定位加公网 IP 粗定位**：参考 agent 的 locate best-effort 查 ip-api.com（免费无密钥，城市级），回报 lat/lng/city，供 App 地图显示。失败则只回主机名/IP。⚠️ 电脑无 GPS，仅城市级精度。
+- 测试：组织高级配置表单浏览器实测渲染（分区+标签整齐）；agent 真实测试 8 项回归全过。iOS 靠 GitHub Actions 云编译验证。
+
 ## v3.5.91 — Google Wallet 访客码 + Wallet（Apple+Google）按组织
 
 - **Google Wallet 新通道**：访客通行码可「添加到 Google 钱包」。新 `server/google-wallet.js`（零依赖）——复用 MDM 的 Google 服务账号（GOOGLE_SA_*）+ `GOOGLE_WALLET_ISSUER_ID`，RS256 签「Save to Wallet」JWT（内联 generic class+object，条码=访客码），`https://pay.google.com/gp/v/save/<jwt>`。接口 `GET /api/public/pass/:code/google-wallet`（302 跳保存链接）；pass.html 加「添加到 Google 钱包」按钮。
