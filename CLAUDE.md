@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.96**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.97**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.97 打印接入 Phase 1（打印机纳入设备管理 + 打印代理管线）（用户反馈）
+
+三级版本。用户提议把打印机接入设备管理,让组织内受管理成员把资料发到组织打印机直接打印。设计见 `打印接入-设计.md`（用户已确认 §8：Office 支持、Win/Mac/Linux/Chromebook、水印/配额走组织管理员规则[Phase 2]、IPP 以后接）。本版做 **Phase 1 核心管线（打印代理主线，后端+代理+网页；iOS 与 水印/配额/IPP 归 Phase 2）**。
+- **数据(db.js)**：`DEVICE_KINDS` 加 `printer`/`print_agent`（打印机/代理都进设备台账，按组织归属，复用认领 claimed）。`devices.print_queues`（代理上报的可见系统队列 JSON）。新表 `printer_config`（device_id/transport[agent|ipp]/agent_id/queue_name/ipp_url/color/duplex/default_media）+ `print_jobs`（含 data BLOB、copies/duplex/color/media、status pending|printing|done|failed|canceled）。`printerStmts`/`printJobStmts`,导出 printers/printJobs。
+- **接口(api.js)**：`DEVICE_KINDS_GENERIC`（通用设备弹窗排除打印机类）。管理端 `GET /admin/printers`（打印机+代理+上报队列）、`POST /admin/print-agents`（登记代理→enroll secret 一次性+checkin URL）、`POST/PATCH /admin/printers`（建/改打印机+printer_config）、`GET /admin/print-jobs`。用户端(noPublic)：`GET /user/printers`（我所在组织的可用打印机）、`POST /user/print-jobs`（express.raw 传文件,validateAttachment 白名单+大小+日限,建 pending BLOB）、`GET /user/print-jobs`、`cancel`。**打印代理协议(公开,enroll secret 鉴权,同 mdm-agent)**：`POST /api/print/checkin`（上报队列+返回本代理打印机的 pending 任务,派发即标 printing 防重打）、`POST /api/print/file`（校验代理归属→下发字节 no-store）、`POST /api/print/result`（done/failed→清 BLOB）。过期文档每小时 purge（保留记录）。env `PRINT_MAX_MB`/`PRINT_DAILY_LIMIT`/`PRINT_JOB_RETAIN_HOURS`。
+- **参考代理**：`tools/print-agent/`（零依赖,跨平台）——列队列（lpstat/Get-Printer）、轮询拉任务、下载、打印（mac/Linux `lp -d -n -o sides/media/ColorModel`；Windows SumatraPDF；Office→PDF via soffice）、回报。README + 说明 Chromebook 走 Linux 代理/IPP。
+- **前端**：用户「我的设备」加「🖨️ 打印」卡（列我的打印机 + 发去打印弹窗[文件/份数/双面/彩色] + 我的打印任务状态/取消）；管理端设备页加「打印机/打印代理」卡（登记代理拿凭据、登记/编辑/删打印机、看代理上报队列）；DEVICE_KIND_LABEL + 系统配置加打印 env。
+- 测试：打印任务管线 node:sqlite 复刻全过（pendingForAgent 按代理归属+队列、派发标 printing 防重、file 代理归属校验、result 清 data、cancel 属主、purgeOld 参数化 interval）；server(db/api/init) + dashboard 内联 JS + print-agent 语法通过。
+- ⚠️ 真机打印无法联调（无打印机）。**Phase 2**：打印触发规则引擎（类别→水印/审批,组织管理员设定）、配额、直连 IPP、iOS 发打印、Chromebook 指南。
 
 ## v3.5.96 设备认领（下发需确认 / 领取码）+「我的设备」入口常显（用户反馈）
 

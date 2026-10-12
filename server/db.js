@@ -337,6 +337,35 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_totp_vault_items_user ON totp_vaul
 // claim_status: claimed(已认领/可用) | pending(待用户确认) | unclaimed(有领取码,等人用码认领)。存量设备默认 claimed(不打断)。
 try { db.exec("ALTER TABLE devices ADD COLUMN claim_status TEXT NOT NULL DEFAULT 'claimed'"); } catch(_) {}
 try { db.exec('ALTER TABLE devices ADD COLUMN claim_code TEXT'); } catch(_) {}
+// 打印接入（v3.5.97，Phase 1）：打印机作设备一种(kind=printer),打印代理机 kind=print_agent(复用 enroll_hash 鉴权)。
+try { db.exec('ALTER TABLE devices ADD COLUMN print_queues TEXT'); } catch(_) {}   // print_agent 上报的可见系统打印队列(JSON),供管理端映射
+try { db.exec(`CREATE TABLE IF NOT EXISTS printer_config (
+  device_id     TEXT PRIMARY KEY,           -- devices.id (kind='printer')
+  transport     TEXT NOT NULL DEFAULT 'agent', -- 'agent' | 'ipp'
+  agent_id      TEXT,                         -- transport=agent：负责的 print_agent 设备 id
+  queue_name    TEXT,                         -- 代理机上的系统打印队列名
+  ipp_url       TEXT,                         -- transport=ipp：ipp://host:631/ipp/print（Phase 2 实现）
+  color         INTEGER NOT NULL DEFAULT 1,
+  duplex        INTEGER NOT NULL DEFAULT 0,
+  default_media TEXT DEFAULT 'A4'
+)`); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS print_jobs (
+  id         TEXT PRIMARY KEY,
+  printer_id TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  subject_id TEXT,
+  file_name  TEXT, mime TEXT, size INTEGER, data BLOB,
+  copies     INTEGER NOT NULL DEFAULT 1,
+  duplex     INTEGER NOT NULL DEFAULT 0,
+  color      INTEGER NOT NULL DEFAULT 1,
+  media      TEXT DEFAULT 'A4',
+  status     TEXT NOT NULL DEFAULT 'pending',  -- pending|printing|done|failed|canceled
+  result     TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_printer ON print_jobs(printer_id, status)'); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_user ON print_jobs(user_id)'); } catch(_) {}
 try { db.exec("ALTER TABLE shop_goods ADD COLUMN redeem_mode TEXT NOT NULL DEFAULT 'code'"); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN allow_instant INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN redirect_url TEXT'); } catch(_) {}
@@ -1151,6 +1180,34 @@ const twofaStmts = {
   countCodes:  db.prepare('SELECT COUNT(*) AS n FROM twofa_recovery_codes WHERE user_id=? AND used=0'),
 };
 
+// 打印接入（v3.5.97）
+const printerStmts = {
+  cfgGet:    db.prepare('SELECT * FROM printer_config WHERE device_id=?'),
+  cfgUpsert: db.prepare(`INSERT INTO printer_config (device_id,transport,agent_id,queue_name,ipp_url,color,duplex,default_media)
+                         VALUES (@device_id,@transport,@agent_id,@queue_name,@ipp_url,@color,@duplex,@default_media)
+                         ON CONFLICT(device_id) DO UPDATE SET transport=@transport,agent_id=@agent_id,queue_name=@queue_name,ipp_url=@ipp_url,color=@color,duplex=@duplex,default_media=@default_media`),
+  cfgRemove: db.prepare('DELETE FROM printer_config WHERE device_id=?'),
+  setQueues: db.prepare("UPDATE devices SET print_queues=?, last_seen=datetime('now'), updated_at=datetime('now') WHERE id=?"),
+};
+const printJobStmts = {
+  insert:    db.prepare(`INSERT INTO print_jobs (id,printer_id,user_id,subject_id,file_name,mime,size,data,copies,duplex,color,media)
+                         VALUES (@id,@printer_id,@user_id,@subject_id,@file_name,@mime,@size,@data,@copies,@duplex,@color,@media)`),
+  get:       db.prepare('SELECT id,printer_id,user_id,subject_id,file_name,mime,size,copies,duplex,color,media,status,result,created_at FROM print_jobs WHERE id=?'),
+  fileOf:    db.prepare('SELECT data,mime,file_name,printer_id,status FROM print_jobs WHERE id=?'),
+  byUser:    db.prepare('SELECT j.id,j.printer_id,j.file_name,j.copies,j.status,j.result,j.created_at,d.name AS printer_name FROM print_jobs j LEFT JOIN devices d ON d.id=j.printer_id WHERE j.user_id=? ORDER BY j.created_at DESC LIMIT 100'),
+  byPrinter: db.prepare('SELECT id,user_id,file_name,copies,status,result,created_at FROM print_jobs WHERE printer_id=? ORDER BY created_at DESC LIMIT 200'),
+  // 某代理机负责的所有打印机的待打印任务
+  pendingForAgent: db.prepare(`SELECT j.id,j.file_name,j.mime,j.copies,j.duplex,j.color,j.media,pc.queue_name
+    FROM print_jobs j JOIN printer_config pc ON pc.device_id=j.printer_id
+    WHERE pc.agent_id=? AND pc.transport='agent' AND j.status='pending' ORDER BY j.created_at LIMIT 20`),
+  setStatus: db.prepare("UPDATE print_jobs SET status=?, result=COALESCE(?,result), updated_at=datetime('now') WHERE id=?"),
+  clearData: db.prepare("UPDATE print_jobs SET data=NULL WHERE id=?"),
+  cancel:    db.prepare("UPDATE print_jobs SET status='canceled', updated_at=datetime('now') WHERE id=? AND user_id=? AND status='pending'"),
+  countUserDay: db.prepare("SELECT COUNT(*) n FROM print_jobs WHERE user_id=? AND created_at >= datetime('now','-1 day')"),
+  removeByPrinter: db.prepare('DELETE FROM print_jobs WHERE printer_id=?'),
+  purgeOld:  db.prepare("UPDATE print_jobs SET data=NULL WHERE data IS NOT NULL AND created_at < datetime('now', ?)"),
+};
+
 // 应用内 TOTP 保管库（v3.5.95）：服务器只存密文
 const totpVaultStmts = {
   get:        db.prepare('SELECT * FROM totp_vault WHERE user_id=?'),
@@ -1925,6 +1982,8 @@ module.exports = {
   twofa: twofaStmts,
   loginApprovals: loginApprovalStmts,
   totpVault: totpVaultStmts,
+  printers: printerStmts,
+  printJobs: printJobStmts,
   webauthn: webauthnStmts,
   announcements: announcementStmts,
   documents: documentStmts,

@@ -1749,6 +1749,14 @@ async function loadMe() {
 
       <!-- ▸ 我的设备 -->
       <div class="page" id="page-devices">
+        <div class="card" id="my-print-card" style="display:none;">
+          <div class="card-header"><h3>🖨️ 打印</h3></div>
+          <div class="card-body">
+            <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">把资料发到你所在组织的打印机直接打印。支持 PDF / 图片 / Office 文档。</div>
+            <div id="my-printers"></div>
+            <div style="margin-top:14px;"><div style="font-size:12px;font-weight:600;color:var(--txt);margin-bottom:6px;">我的打印任务</div><div id="my-print-jobs" style="font-size:12px;color:var(--txd);">—</div></div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-header"><h3>我的设备</h3></div>
           <div class="card-body">
@@ -2622,6 +2630,20 @@ async function loadMe() {
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
             💡 登记 + 台账：Apple / Google / Microsoft 设备、自有协议门禁机 / 读卡器。可归属用户或组织（组织管理员只管本组织设备）；
             门禁机 / 读卡器可关联「门禁管理」里的门。在线设备可经开放 API <code>POST /v1/devices/{id}/heartbeat</code>（scope device:read）上报心跳。
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>🖨️ 打印机 / 打印代理</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn" style="font-size:11px;" onclick="openPrintAgentModal()">+ 登记打印代理</button>
+              <button class="btn primary" style="font-size:11px;" onclick="openPrinterModal()">+ 登记打印机</button>
+              <button class="btn" style="font-size:11px;" onclick="loadPrinters()">刷新</button>
+            </div>
+          </div>
+          <div class="card-body"><div id="printer-admin"><div style="color:var(--txd);">加载中…</div></div></div>
+          <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
+            💡 打印机纳入设备管理、按组织归属。局域网/USB/本地打印机需在组织内一台机器跑**打印代理**（<code>tools/print-agent</code>，像 MDM 代理那样轮询拉任务打印）；网络打印机可选直连 IPP（规划中）。组织成员在「我的设备 → 打印」里发资料打印。
           </div>
         </div>
       </div>
@@ -3712,7 +3734,7 @@ function goto(page) {
   if(page === 'adm-oauth') { loadOauthSubjects(); }
   if(page === 'adm-api-logs') { loadAdmApiLogs(); }
   if(page === 'adm-audit') { loadAuditChain(); }
-  if(page === 'adm-devices') loadDevices('adm');
+  if(page === 'adm-devices') { loadDevices('adm'); loadPrinters(); }
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
   if(page === 'adm-limited') loadLimitedAdmins();
@@ -3739,7 +3761,7 @@ function goto(page) {
   if(page === 'access') loadMyAccess();
   if(page === 'orgadmin') loadMyOrgs();
   if(page === 'verify') initVerifyScan();
-  if(page === 'devices') loadMyDevices();
+  if(page === 'devices') { loadMyDevices(); loadMyPrinters(); }
   if(page === 'adm-access') loadAccessAdmin();
   if(page === 'adm-verify') loadVerifyAdmin();
   if(page === 'adm-about') loadVersionInfo();
@@ -7913,7 +7935,7 @@ async function showAccessQr(doorId, doorName) {
 }
 
 // ── 管理端：设备管理（v3.5.21）──
-const DEVICE_KIND_LABEL = { apple:'Apple 设备', google:'Google 设备', microsoft:'Microsoft 设备', access_controller:'门禁机', card_reader:'读卡器' };
+const DEVICE_KIND_LABEL = { apple:'Apple 设备', google:'Google 设备', microsoft:'Microsoft 设备', access_controller:'门禁机', card_reader:'读卡器', printer:'🖨️ 打印机', print_agent:'🖧 打印代理' };
 const DEVICE_STATUS_LABEL = { active:'正常', disabled:'停用', lost:'丢失' };
 let _devCache = { devices: [], orgs: [], doors: [], kinds: [] };
 // ctx：'adm' = 管理端「设备管理」页；'org' = 用户端「我的组织」页（组织管理员入口，v3.5.25）。两处共用一份缓存/弹窗。
@@ -8048,6 +8070,92 @@ async function genDeviceClaimCode(id) {
   if (!ok) { showToast(data?.error || '生成失败'); return; }
   await uiAlert('领取码：' + data.code + '\n\n把它发给用户,在「我的设备」里输入即可认领获得使用权。', { title: '领取码已生成' });
   loadDevices(_devCtx);
+}
+// ── 打印机 / 打印代理（管理端，v3.5.97）──
+let _printerCache = { printers: [], agents: [], orgs: [] };
+async function loadPrinters() {
+  const box = document.getElementById('printer-admin'); if (!box) return;
+  const org = _curAdminOrg ? _curAdminOrg() : '';
+  const { ok, data } = await api('GET', '/admin/printers' + (org ? '?org=' + encodeURIComponent(org) : ''));
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
+  _printerCache = { printers: data.printers || [], agents: data.agents || [], orgs: data.orgs || [] };
+  const agentsHtml = _printerCache.agents.map(a => {
+    const on = a.last_seen ? ('在线 ' + esc(a.last_seen)) : '从未 check-in';
+    return `<div style="padding:6px 0;border-bottom:1px dashed var(--bd);"><b>🖧 ${esc(a.name)}</b> <span style="font-size:11px;color:var(--txd);">· ${esc(a.subject_name || '')} · ${on}</span>
+      ${(a.queues && a.queues.length) ? `<div style="font-size:11px;color:var(--txd);">可见队列：${a.queues.map(esc).join('、')}</div>` : '<div style="font-size:11px;color:var(--txd);">（尚未上报队列，跑起 print-agent 后自动出现）</div>'}</div>`;
+  }).join('') || '<div style="color:var(--txd);font-size:12px;">还没有打印代理。先「登记打印代理」拿 secret 去跑 tools/print-agent。</div>';
+  const printersHtml = _printerCache.printers.map(p => {
+    const agentName = (_printerCache.agents.find(a => a.id === p.agent_id) || {}).name || p.agent_id || '';
+    const via = p.transport === 'ipp' ? ('IPP ' + esc(p.ipp_url || '')) : ('代理「' + esc(agentName) + '」队列 ' + esc(p.queue_name || ''));
+    return `<div style="border:1px solid var(--bd);border-radius:7px;padding:9px;margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+      <div><b>🖨️ ${esc(p.name)}</b> <span style="font-size:11px;color:var(--txd);">· ${esc(p.subject_name || '')} · ${p.status === 'active' ? '可用' : esc(p.status)}</span>
+        <div style="font-size:11px;color:var(--txd);">${via} · ${p.color ? '彩色' : '黑白'}${p.duplex ? ' · 双面' : ''} · ${esc(p.default_media || 'A4')}</div></div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn" style="font-size:11px;" onclick="openPrinterModal('${esc(p.id)}')">编辑</button>
+        <button class="btn" style="font-size:11px;color:var(--err);" onclick="delPrinter('${esc(p.id)}','${esc(p.name)}')">删除</button>
+      </div></div>`;
+  }).join('') || '<div style="color:var(--txd);font-size:12px;margin-top:8px;">还没有打印机。</div>';
+  box.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px;">打印代理机</div>${agentsHtml}
+    <div style="font-size:12px;font-weight:600;margin:12px 0 4px;">打印机</div>${printersHtml}`;
+}
+function _printerOrgOpts(sel) { return _printerCache.orgs.map(o => `<option value="${esc(o.id)}" ${o.id === sel ? 'selected' : ''}>${esc(o.name)}</option>`).join(''); }
+function openPrintAgentModal() {
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:320px;max-width:420px;text-align:left;">
+    <h3 style="margin-bottom:12px;">登记打印代理</h3>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">名称<input id="pa-name" value="打印代理" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label>
+    <label style="font-size:12px;color:var(--txd);display:block;">所属组织<select id="pa-org" style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">${_printerOrgOpts()}</select></label>
+    <div id="pa-err" style="color:var(--err);font-size:12px;min-height:16px;margin-top:8px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;"><button class="btn" onclick="this.closest('.modal-mask').remove()">取消</button><button class="btn primary" id="pa-go">创建并取凭据</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#pa-go').onclick = async () => {
+    const { ok, data } = await api('POST', '/admin/print-agents', { name: ov.querySelector('#pa-name').value.trim(), subject_id: ov.querySelector('#pa-org').value });
+    if (!ok) { ov.querySelector('#pa-err').textContent = data?.error || '失败'; return; }
+    ov.remove();
+    await uiAlert(`代理设备 id：${data.id}\nenroll secret：${data.secret}\ncheck-in 地址：${data.checkin_url}\n\n在组织内一台机器上跑：\nnode agent.js --base <域名> --device ${data.id} --secret ${data.secret}\n\n⚠️ secret 只显示这一次,请保存。`, { title: '打印代理凭据' });
+    loadPrinters();
+  };
+}
+function openPrinterModal(id) {
+  const p = id ? _printerCache.printers.find(x => x.id === id) : null;
+  const agentOpts = _printerCache.agents.map(a => `<option value="${esc(a.id)}" ${p && p.agent_id === a.id ? 'selected' : ''}>${esc(a.name)}（${esc(a.subject_name || '')}）</option>`).join('');
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);font-size:13px;';
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:340px;max-width:440px;text-align:left;">
+    <h3 style="margin-bottom:12px;">${p ? '编辑打印机' : '登记打印机'}</h3>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">名称<input id="pm-name" value="${p ? esc(p.name) : ''}" style="${inp}"></label>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">所属组织<select id="pm-org" ${p ? 'disabled' : ''} style="${inp}">${_printerOrgOpts(p ? p.subject_id : '')}</select></label>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">传输方式<select id="pm-transport" onchange="_pmToggle()" style="${inp}"><option value="agent" ${!p || p.transport === 'agent' ? 'selected' : ''}>打印代理（局域网/USB）</option><option value="ipp" ${p && p.transport === 'ipp' ? 'selected' : ''}>直连 IPP（网络打印机，规划中）</option></select></label>
+    <div id="pm-agent-box">
+      <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">打印代理<select id="pm-agent" style="${inp}">${agentOpts || '<option value="">（先登记打印代理）</option>'}</select></label>
+      <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">队列名（代理机上）<input id="pm-queue" value="${p ? esc(p.queue_name || '') : ''}" placeholder="如 HP_LaserJet" style="${inp}"></label>
+    </div>
+    <div id="pm-ipp-box" style="display:none;"><label style="font-size:12px;color:var(--txd);display:block;margin-bottom:8px;">IPP 地址<input id="pm-ipp" value="${p ? esc(p.ipp_url || '') : ''}" placeholder="ipp://192.168.1.50:631/ipp/print" style="${inp}"></label></div>
+    <div style="display:flex;gap:14px;font-size:13px;margin-bottom:8px;"><label><input type="checkbox" id="pm-color" ${!p || p.color ? 'checked' : ''}> 彩色</label><label><input type="checkbox" id="pm-duplex" ${p && p.duplex ? 'checked' : ''}> 支持双面</label><label>纸张 <input id="pm-media" value="${p ? esc(p.default_media || 'A4') : 'A4'}" style="width:60px;padding:3px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label></div>
+    <div id="pm-err" style="color:var(--err);font-size:12px;min-height:16px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;"><button class="btn" onclick="this.closest('.modal-mask').remove()">取消</button><button class="btn primary" id="pm-go">保存</button></div></div>`;
+  document.body.appendChild(ov);
+  _pmToggle();
+  ov.querySelector('#pm-go').onclick = async () => {
+    const body = { name: ov.querySelector('#pm-name').value.trim(), subject_id: ov.querySelector('#pm-org').value,
+      transport: ov.querySelector('#pm-transport').value, agent_id: ov.querySelector('#pm-agent')?.value || '',
+      queue_name: ov.querySelector('#pm-queue')?.value.trim() || '', ipp_url: ov.querySelector('#pm-ipp')?.value.trim() || '',
+      color: ov.querySelector('#pm-color').checked, duplex: ov.querySelector('#pm-duplex').checked, default_media: ov.querySelector('#pm-media').value.trim() || 'A4' };
+    const { ok, data } = p ? await api('PATCH', '/admin/printers/' + id, body) : await api('POST', '/admin/printers', body);
+    if (!ok) { ov.querySelector('#pm-err').textContent = data?.error || '失败'; return; }
+    ov.remove(); showToast('已保存'); loadPrinters();
+  };
+}
+function _pmToggle() {
+  const t = document.getElementById('pm-transport')?.value;
+  const ab = document.getElementById('pm-agent-box'), ib = document.getElementById('pm-ipp-box');
+  if (ab) ab.style.display = t === 'agent' ? '' : 'none';
+  if (ib) ib.style.display = t === 'ipp' ? '' : 'none';
+}
+async function delPrinter(id, name) {
+  if (!await uiConfirm(`删除打印机「${name || id}」？其待打印任务也会清除。`)) return;
+  const { ok, data } = await api('DELETE', '/admin/devices/' + id);
+  if (ok) { showToast('已删除'); loadPrinters(); } else showToast(data?.error || '删除失败');
 }
 async function delDevice(id, name, ctx) {
   if (ctx) _devCtx = ctx;
@@ -9297,6 +9405,69 @@ async function claimByCode() {
   if (!ok) { showToast(data?.error || '认领失败'); return; }
   if (el) el.value = '';
   showToast('✓ 已认领' + (data.name ? '「' + data.name + '」' : '')); loadMyDevices();
+}
+// ── 打印（v3.5.97）──
+let _myPrinters = [];
+async function loadMyPrinters() {
+  const card = document.getElementById('my-print-card'); if (!card) return;
+  const { ok, data } = await api('GET', '/user/printers');
+  _myPrinters = (ok && data.printers) || [];
+  if (!_myPrinters.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  document.getElementById('my-printers').innerHTML = _myPrinters.map(p => `
+    <div style="border:1px solid var(--bd);border-radius:8px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+      <div><b>${esc(p.name)}</b>${p.subject_name ? ` <span style="font-size:11px;color:var(--txd);">· ${esc(p.subject_name)}</span>` : ''}
+        <div style="font-size:11px;color:var(--txd);">${p.color ? '彩色' : '黑白'} · ${p.duplex ? '可双面' : '单面'} · ${esc(p.default_media || 'A4')}</div></div>
+      <button class="btn primary" style="font-size:12px;" onclick="openPrintSend('${esc(p.id)}')">发去打印</button>
+    </div>`).join('');
+  loadMyPrintJobs();
+}
+async function loadMyPrintJobs() {
+  const box = document.getElementById('my-print-jobs'); if (!box) return;
+  const { ok, data } = await api('GET', '/user/print-jobs'); const jobs = (ok && data.jobs) || [];
+  if (!jobs.length) { box.innerHTML = '<span style="color:var(--txd);">暂无</span>'; return; }
+  const ST = { pending: '排队中', printing: '打印中', done: '✅ 已完成', failed: '❌ 失败', canceled: '已取消' };
+  box.innerHTML = jobs.map(j => `<div style="padding:5px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+    <span>${esc(j.file_name || '文件')} → ${esc(j.printer_name || '')}${j.copies > 1 ? ' ×' + j.copies : ''}</span>
+    <span>${ST[j.status] || j.status}${j.status === 'failed' && j.result ? ' <span style="color:var(--txd);">(' + esc(j.result) + ')</span>' : ''}${j.status === 'pending' ? ` <a href="javascript:void 0" onclick="cancelPrintJob('${j.id}')" style="color:var(--err);">取消</a>` : ''}</span></div>`).join('');
+}
+function openPrintSend(id) {
+  const p = _myPrinters.find(x => x.id === id); if (!p) return;
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:320px;max-width:400px;text-align:left;">
+    <h3 style="margin-bottom:12px;">发去打印 · ${esc(p.name)}</h3>
+    <input type="file" id="pr-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx" style="width:100%;font-size:13px;margin-bottom:10px;">
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px;">
+      <label>份数 <input id="pr-copies" type="number" min="1" max="99" value="1" style="width:60px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label>
+      ${p.duplex ? '<label><input type="checkbox" id="pr-duplex"> 双面</label>' : ''}
+      ${p.color ? '<label><input type="checkbox" id="pr-color" checked> 彩色</label>' : '<span style="color:var(--txd);">黑白打印机</span>'}
+    </div>
+    <div id="pr-err" style="color:var(--err);font-size:12px;min-height:16px;margin-top:8px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+      <button class="btn" id="pr-cancel">取消</button><button class="btn primary" id="pr-go">打印</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#pr-cancel').onclick = () => ov.remove();
+  ov.querySelector('#pr-go').onclick = async () => {
+    const f = ov.querySelector('#pr-file').files[0];
+    if (!f) { ov.querySelector('#pr-err').textContent = '请选择文件'; return; }
+    const copies = ov.querySelector('#pr-copies').value || 1;
+    const duplex = ov.querySelector('#pr-duplex')?.checked ? 1 : 0;
+    const color = ov.querySelector('#pr-color') ? (ov.querySelector('#pr-color').checked ? 1 : 0) : 0;
+    const btn = ov.querySelector('#pr-go'); btn.disabled = true; btn.textContent = '发送中…';
+    try {
+      const qs = new URLSearchParams({ printer: id, filename: f.name, copies, duplex, color });
+      const buf = await f.arrayBuffer();
+      const r = await fetch('/api/user/print-jobs?' + qs, { method: 'POST', headers: { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/octet-stream' }, body: buf });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error || '发送失败');
+      ov.remove(); showToast('✓ 已发送打印'); loadMyPrintJobs();
+    } catch (e) { ov.querySelector('#pr-err').textContent = e.message; btn.disabled = false; btn.textContent = '打印'; }
+  };
+}
+async function cancelPrintJob(id) {
+  const { ok, data } = await api('POST', '/user/print-jobs/' + id + '/cancel', {});
+  if (!ok) { showToast(data?.error || '取消失败'); return; }
+  showToast('已取消'); loadMyPrintJobs();
 }
 // ── 管理端 ──
 async function loadVerifyAdmin() { loadVerifyFields(); loadVerifiers(); }
@@ -11781,6 +11952,9 @@ const ENV_GROUPS = [
       { key: 'MEMO_MAX_ATTACH_MB', label: '单附件上限（MB）', desc: '单个附件的大小上限，默认 5，硬顶 12', required: false, secret: false, placeholder: '5', value: '' },
       { key: 'MEMO_ADMIN_LEVEL', label: '备忘录管理最低等级', desc: '哪一级（含）以上管理员能查看/管理全部用户的备忘录。默认 1 = 仅超级管理员；填 2 = Lv.1/Lv.2 都可。范围 1~9', required: false, secret: false, placeholder: '1', value: '' },
       { key: 'DEVICES_SELF_ENABLED', label: '用户端「我的设备」', desc: '默认开。开着时用户端常显「我的设备」入口（没分到设备也能进去输领取码认领）；填 off 关闭则对所有人隐藏该入口。', required: false, secret: false, placeholder: 'on', value: '' },
+      { key: 'PRINT_MAX_MB', label: '打印单文件上限(MB)', desc: '发去打印的单文件大小上限，默认 20，硬顶 50。', required: false, secret: false, placeholder: '20', value: '' },
+      { key: 'PRINT_DAILY_LIMIT', label: '每人每日打印次数', desc: '平台级每人每天最多发多少个打印任务，默认 0 = 不限（按组织/类别的精细配额在后续版本）。', required: false, secret: false, placeholder: '0', value: '' },
+      { key: 'PRINT_JOB_RETAIN_HOURS', label: '打印文档保留(小时)', desc: '打印任务的文档本体在服务端保留多久后清除（记录保留），默认 24。', required: false, secret: false, placeholder: '24', value: '' },
     ]
   },
   {

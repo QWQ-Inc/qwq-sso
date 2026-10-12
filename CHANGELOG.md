@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.97 — 打印接入 Phase 1（打印机纳入设备管理 + 打印代理管线）
+
+- 打印机现在是设备管理的一种，按组织归属。组织成员可在「我的设备 → 🖨️ 打印」里把资料（PDF/图片/Office）发到组织的打印机直接打印，并看任务状态。
+- 云端够不到局域网/USB 打印机，靠**打印代理**（`tools/print-agent`，和 MDM 代理一样在组织内机器上轮询拉任务打印）。管理端「设备管理 → 打印机/打印代理」登记代理（拿一次性凭据）与打印机（选代理+队列名）。
+- 打印后端：mac/Linux 走 CUPS `lp`；Windows 用 SumatraPDF；Office 经 LibreOffice 转 PDF。
+- 文档端到端：上传校验（白名单+大小+每日次数）、BLOB 存储、打印完/过期清本体。env `PRINT_MAX_MB`/`PRINT_DAILY_LIMIT`/`PRINT_JOB_RETAIN_HOURS`。
+- 设计见 `打印接入-设计.md`。⚠️ Phase 2：打印规则引擎（类别→水印/审批）、配额、直连 IPP、iOS、Chromebook。真机打印需现场验证。
+
 ## v3.5.96 — 设备认领（下发需确认 / 领取码）+「我的设备」入口常显
 
 - 「我的设备」入口现在常显（没分到设备也能进去输领取码认领）；管理员可用 `DEVICES_SELF_ENABLED=off` 对所有人隐藏。

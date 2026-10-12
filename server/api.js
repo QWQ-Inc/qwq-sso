@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, totpVault, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, totpVault, printers, printJobs, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
 const mdmApple = require('./mdm-apple');
 const plist = require('./plist');
@@ -5108,7 +5108,9 @@ router.get('/admin/audit/trace/:code', requireAdmin(3), (req, res) => {
 // 设备管理（v3.5.21）：登记 + 台账。kind=apple|google|microsoft|access_controller|card_reader。
 // 归属：用户 / 组织都可；门禁机/读卡器可关联现有门禁(access_doors)。系统管理员管全部，组织管理员管本组织设备。
 // ══════════════════════════════════════════
-const DEVICE_KINDS = ['apple', 'google', 'microsoft', 'access_controller', 'card_reader'];
+const DEVICE_KINDS = ['apple', 'google', 'microsoft', 'access_controller', 'card_reader', 'printer', 'print_agent'];
+// 打印机/打印代理不走通用设备弹窗创建（需 printer_config），用专门的打印机接口。通用登记弹窗里排除它们。
+const DEVICE_KINDS_GENERIC = ['apple', 'google', 'microsoft', 'access_controller', 'card_reader'];
 const DEVICE_STATUS = ['active', 'disabled', 'lost'];
 function canManageDevice(req, dev, write = true) {
   if (isSysAdmin(req, write ? 2 : 3)) return true;
@@ -5161,7 +5163,7 @@ router.get('/admin/devices', requireAuth, (req, res) => {
                    : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
   const doors = access.allDoors.all().map(d => ({ id: d.id, name: d.name }));
   const envE = org ? orgEnvGetter(org) : undefined;   // v3.5.89 聚焦某组织时按该组织的覆盖显示凭据是否已配
-  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS, can_all: sys, mdm_transport: mdm.transportConfigured(envE), transports: mdm.transportsMeta(envE), org_focus: org || null });
+  res.json({ success: true, devices: list, orgs, doors, kinds: DEVICE_KINDS_GENERIC, can_all: sys, mdm_transport: mdm.transportConfigured(envE), transports: mdm.transportsMeta(envE), org_focus: org || null });
 });
 // 用户端「我的设备」（v3.5.85）：只读，列出归属到本人的设备。不下发 enroll_hash / 厂商设备 id 等敏感字段。
 // 自助命令：设备 owner 本人只能对自己的设备下发【非破坏性】命令（锁定 / 定位）。擦除/退役/重启等仍只管理员。
@@ -5269,9 +5271,187 @@ router.delete('/admin/devices/:id', requireAuth, (req, res) => {
   if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
   deviceCommands.removeByDevice.run(dev.id);
   deviceProfiles.removeByDevice.run(dev.id);
+  if (dev.kind === 'printer') { printers.cfgRemove.run(dev.id); printJobs.removeByPrinter.run(dev.id); }   // v3.5.97
   devices.remove.run(dev.id);
   res.json({ success: true });
 });
+
+// ══════════════════════════════════════════
+// 打印接入（v3.5.97，Phase 1）：打印机(kind=printer) + 打印代理(kind=print_agent) + 打印任务管线
+// 权限沿用设备：系统管理员 或 该设备所属组织的组织管理员（canManageDevice / canManageOrg）
+// ══════════════════════════════════════════
+const PRINT_TRANSPORTS = ['agent', 'ipp'];
+function printMaxBytes() { const mb = parseFloat(process.env.PRINT_MAX_MB); const v = Number.isFinite(mb) && mb > 0 ? mb : 20; return Math.min(v, 50) * 1024 * 1024; }
+function printDailyLimit() { const n = parseInt(process.env.PRINT_DAILY_LIMIT, 10); return Number.isInteger(n) && n >= 0 ? n : 0; }   // 0=不限
+function printerView(d) {
+  const cfg = printers.cfgGet.get(d.id) || {};
+  return { id: d.id, name: d.name, subject_id: d.subject_id, subject_name: d.subject_name || null, status: d.status,
+    transport: cfg.transport || 'agent', agent_id: cfg.agent_id || null, queue_name: cfg.queue_name || '', ipp_url: cfg.ipp_url || '',
+    color: !!cfg.color, duplex: !!cfg.duplex, default_media: cfg.default_media || 'A4', note: d.note || '' };
+}
+// 管理范围内的设备（系统管理员=全部/聚焦组织；组织管理员=其管辖组织）
+function scopedDeviceRows(req, org) {
+  if (isSysAdmin(req, 3)) return org ? devices.bySubjects.all(JSON.stringify([org])) : devices.all.all();
+  const my = myManagedOrgs(req).map(o => o.id);
+  const want = org && my.includes(org) ? [org] : my;
+  return want.length ? devices.bySubjects.all(JSON.stringify(want)) : [];
+}
+
+// 列打印机 + 打印代理（管理端）
+router.get('/admin/printers', requireAuth, (req, res) => {
+  if (!isSysAdmin(req, 3) && !myManagedOrgs(req).length) return res.status(403).json({ error: '无权管理' });
+  const org = String(req.query?.org || '').trim();
+  const rows = scopedDeviceRows(req, org);
+  const list = rows.filter(d => d.kind === 'printer').map(printerView);
+  const agents = rows.filter(d => d.kind === 'print_agent').map(d => {
+    let queues = []; try { queues = JSON.parse(d.print_queues || '[]'); } catch (_) {}
+    return { id: d.id, name: d.name, subject_id: d.subject_id, subject_name: d.subject_name || null, enroll_status: d.enroll_status, last_seen: d.last_seen, queues };
+  });
+  const orgs = isSysAdmin(req, 3) ? oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name })) : myManagedOrgs(req).map(s => ({ id: s.id, name: s.name }));
+  res.json({ success: true, printers: list, agents, orgs });
+});
+
+// 登记打印代理机 → 返回 enroll secret（仅此一次）+ check-in 地址
+router.post('/admin/print-agents', requireAuth, (req, res) => {
+  const subject_id = String(req.body?.subject_id || '').trim();
+  if (!subject_id || !oauthSubjects.get.get(subject_id)) return res.status(400).json({ error: '请选择所属组织' });
+  if (!isSysAdmin(req, 2) && !canManageOrg(req, subject_id)) return res.status(403).json({ error: '只能在你管理的组织里登记' });
+  const id = uuidv4();
+  devices.insert.run({ id, name: String(req.body?.name || '打印代理').slice(0, 80), kind: 'print_agent', serial: '', owner_user_id: null, subject_id, door_id: null, status: 'active', tags: '', note: '' });
+  const { secret, hash } = mdm.genEnrollSecret();
+  devices.setEnroll.run('pending', hash, id);
+  audit('print.agent_registered', { subject: id, actor: actorOf(req), detail: { subject_id } });
+  res.json({ success: true, id, secret, checkin_url: thisBaseUrl(req) + '/api/print/checkin' });
+});
+
+// 登记打印机（= 设备 kind=printer + printer_config）
+router.post('/admin/printers', requireAuth, (req, res) => {
+  const b = req.body || {};
+  const subject_id = String(b.subject_id || '').trim();
+  if (!subject_id || !oauthSubjects.get.get(subject_id)) return res.status(400).json({ error: '请选择所属组织' });
+  if (!isSysAdmin(req, 2) && !canManageOrg(req, subject_id)) return res.status(403).json({ error: '只能在你管理的组织里登记' });
+  const transport = PRINT_TRANSPORTS.includes(b.transport) ? b.transport : 'agent';
+  if (transport === 'agent') {
+    const a = b.agent_id ? devices.get.get(String(b.agent_id)) : null;
+    if (!a || a.kind !== 'print_agent' || a.subject_id !== subject_id) return res.status(400).json({ error: '请选择本组织的打印代理' });
+    if (!String(b.queue_name || '').trim()) return res.status(400).json({ error: '请填代理机上的打印队列名' });
+  } else if (!/^ipps?:\/\//i.test(String(b.ipp_url || ''))) return res.status(400).json({ error: 'IPP 地址无效（ipp:// 或 ipps://）' });
+  const id = uuidv4();
+  devices.insert.run({ id, name: String(b.name || '打印机').slice(0, 80), kind: 'printer', serial: '', owner_user_id: null, subject_id, door_id: null, status: 'active', tags: '', note: String(b.note || '').slice(0, 500) });
+  printers.cfgUpsert.run({ device_id: id, transport, agent_id: transport === 'agent' ? String(b.agent_id) : null, queue_name: transport === 'agent' ? String(b.queue_name).trim() : null, ipp_url: transport === 'ipp' ? String(b.ipp_url).trim() : null, color: b.color === false ? 0 : 1, duplex: b.duplex ? 1 : 0, default_media: String(b.default_media || 'A4').slice(0, 16) });
+  res.json({ success: true, id });
+});
+router.patch('/admin/printers/:id', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev || dev.kind !== 'printer') return res.status(404).json({ error: '打印机不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理' });
+  const b = req.body || {};
+  if (b.name != null || b.status != null || b.note != null) {
+    devices.update.run({ id: dev.id, name: String(b.name != null ? b.name : dev.name).slice(0, 80), kind: 'printer', serial: dev.serial || '', owner_user_id: dev.owner_user_id, subject_id: dev.subject_id, door_id: null, status: DEVICE_STATUS.includes(b.status) ? b.status : dev.status, tags: dev.tags || '', note: String(b.note != null ? b.note : (dev.note || '')).slice(0, 500) });
+  }
+  const cfg = printers.cfgGet.get(dev.id) || { transport: 'agent' };
+  const transport = PRINT_TRANSPORTS.includes(b.transport) ? b.transport : cfg.transport;
+  printers.cfgUpsert.run({ device_id: dev.id, transport,
+    agent_id: transport === 'agent' ? String(b.agent_id || cfg.agent_id || '') || null : null,
+    queue_name: transport === 'agent' ? String(b.queue_name != null ? b.queue_name : (cfg.queue_name || '')).trim() : null,
+    ipp_url: transport === 'ipp' ? String(b.ipp_url != null ? b.ipp_url : (cfg.ipp_url || '')).trim() : null,
+    color: b.color != null ? (b.color ? 1 : 0) : (cfg.color ? 1 : 0), duplex: b.duplex != null ? (b.duplex ? 1 : 0) : (cfg.duplex ? 1 : 0),
+    default_media: String(b.default_media != null ? b.default_media : (cfg.default_media || 'A4')).slice(0, 16) });
+  res.json({ success: true });
+});
+router.get('/admin/print-jobs', requireAuth, (req, res) => {
+  const pr = devices.get.get(String(req.query?.printer || ''));
+  if (!pr || pr.kind !== 'printer') return res.status(404).json({ error: '打印机不存在' });
+  if (!canManageDevice(req, pr)) return res.status(403).json({ error: '无权查看' });
+  res.json({ success: true, jobs: printJobs.byPrinter.all(pr.id) });
+});
+
+// ── 用户端：发去打印 ──
+router.get('/user/printers', requireAuth, noPublic, (req, res) => {
+  if (!devicesSelfEnabled()) return res.json({ success: true, printers: [] });
+  const myOrgs = (orgMembers.ofUser.all(req.user.uid) || []).map(m => m.subject_id);
+  if (!myOrgs.length) return res.json({ success: true, printers: [] });
+  const rows = devices.bySubjects.all(JSON.stringify(myOrgs)).filter(d => d.kind === 'printer' && d.status === 'active');
+  const list = rows.map(d => { const v = printerView(d); return { id: v.id, name: v.name, subject_name: v.subject_name, color: v.color, duplex: v.duplex, default_media: v.default_media }; });
+  res.json({ success: true, printers: list });
+});
+router.post('/user/print-jobs', requireAuth, noPublic, express.raw({ type: () => true, limit: printMaxBytes() + 4096 }), (req, res) => {
+  const printer = devices.get.get(String(req.query?.printer || ''));
+  if (!printer || printer.kind !== 'printer' || printer.status !== 'active') return res.status(404).json({ error: '打印机不存在或不可用' });
+  // 必须是该打印机所属组织的成员
+  if (!printer.subject_id || !orgMembers.get.get(printer.subject_id, req.user.uid)) return res.status(403).json({ error: '你不是该打印机所属组织的成员' });
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: '空文件' });
+  if (buf.length > printMaxBytes()) return res.status(413).json({ error: '文件过大' });
+  const filename = String(req.query?.filename || 'document').slice(0, 128);
+  const v = validateAttachment(filename, buf);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const limit = printDailyLimit();
+  if (limit && printJobs.countUserDay.get(req.user.uid).n >= limit) return res.status(429).json({ error: '今日打印次数已达上限' });
+  const cfg = printers.cfgGet.get(printer.id) || {};
+  const id = uuidv4();
+  printJobs.insert.run({ id, printer_id: printer.id, user_id: req.user.uid, subject_id: printer.subject_id,
+    file_name: filename, mime: v.mime, size: buf.length, data: buf,
+    copies: Math.max(1, Math.min(99, parseInt(req.query?.copies) || 1)),
+    duplex: (req.query?.duplex === '1' && cfg.duplex) ? 1 : 0,
+    color: (req.query?.color === '0' || !cfg.color) ? 0 : 1,
+    media: String(req.query?.media || cfg.default_media || 'A4').slice(0, 16) });
+  audit('print.job', { subject: printer.id, actor: 'user:' + req.user.uid, detail: { printer: printer.name, file: filename, size: buf.length, mime: v.mime } });
+  res.json({ success: true, id });
+});
+router.get('/user/print-jobs', requireAuth, noPublic, (req, res) => {
+  res.json({ success: true, jobs: printJobs.byUser.all(req.user.uid) });
+});
+router.post('/user/print-jobs/:id/cancel', requireAuth, noPublic, (req, res) => {
+  const r = printJobs.cancel.run(req.params.id, req.user.uid);
+  if (!r.changes) return res.status(400).json({ error: '任务不存在或已不能取消' });
+  res.json({ success: true });
+});
+
+// ── 打印代理协议（公开，用 enroll secret 鉴权）──
+function printAgentDev(req) {
+  const id = String(req.body?.device_id || '');
+  const secret = String(req.body?.secret || '');
+  const dev = id ? devices.get.get(id) : null;
+  if (!dev || dev.kind !== 'print_agent' || !dev.enroll_hash || !mdm.verifySecret(secret, dev.enroll_hash)) return null;
+  return dev;
+}
+router.post('/print/checkin', express.json(), (req, res) => {
+  const agent = printAgentDev(req);
+  if (!agent) return res.status(401).json({ error: 'unauthorized' });
+  if (Array.isArray(req.body.queues)) printers.setQueues.run(JSON.stringify(req.body.queues.slice(0, 100).map(q => String(q).slice(0, 128))), agent.id);
+  else devices.touch.run(agent.id);
+  if (agent.enroll_status !== 'enrolled') devices.setEnrollStatus.run('enrolled', agent.id);
+  const jobs = printJobs.pendingForAgent.all(agent.id);
+  jobs.forEach(j => printJobs.setStatus.run('printing', null, j.id));   // 派发即标 printing,避免重复打印
+  res.json({ success: true, jobs });
+});
+router.post('/print/file', express.json(), (req, res) => {
+  const agent = printAgentDev(req);
+  if (!agent) return res.status(401).json({ error: 'unauthorized' });
+  const row = printJobs.fileOf.get(String(req.body.job_id || ''));
+  if (!row || !row.data) return res.status(404).json({ error: 'not found' });
+  const cfg = printers.cfgGet.get(row.printer_id);
+  if (!cfg || cfg.agent_id !== agent.id) return res.status(403).json({ error: 'forbidden' });
+  res.setHeader('Content-Type', row.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(row.file_name || 'document') + '"');
+  res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(row.data);
+});
+router.post('/print/result', express.json(), (req, res) => {
+  const agent = printAgentDev(req);
+  if (!agent) return res.status(401).json({ error: 'unauthorized' });
+  const row = printJobs.get.get(String(req.body.job_id || ''));
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const cfg = printers.cfgGet.get(row.printer_id);
+  if (!cfg || cfg.agent_id !== agent.id) return res.status(403).json({ error: 'forbidden' });
+  const status = req.body.status === 'done' ? 'done' : 'failed';
+  printJobs.setStatus.run(status, String(req.body.detail || '').slice(0, 300), row.id);
+  printJobs.clearData.run(row.id);   // 打印完清掉文档本体
+  res.json({ success: true });
+});
+// 过期任务清文档本体（保留记录）
+setInterval(() => { try { printJobs.purgeOld.run('-' + (parseInt(process.env.PRINT_JOB_RETAIN_HOURS) || 24) + ' hours'); } catch (_) {} }, 3600e3).unref();
 
 // ══════════════════════════════════════════
 // MDM 设备纳管（v3.5.82）：命令下发 / 纳管 / 配置描述文件 / 设备代理 check-in
