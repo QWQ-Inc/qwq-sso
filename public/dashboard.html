@@ -8000,6 +8000,14 @@ function openDeviceModal(dev, ctx) {
         <label style="font-size:12px;color:var(--txd);">标签（逗号分隔）<input id="dev-tags" style="${inp}" value="${editing?esc(dev.tags||''):''}"></label>
       </div>
       <label style="font-size:12px;color:var(--txd);display:block;margin-top:10px;">备注<textarea id="dev-note" rows="2" style="${inp}resize:vertical;">${editing?esc(dev.note||''):''}</textarea></label>
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bd);">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt);"><input type="checkbox" id="dev-require-claim" checked> 下发给用户后需对方确认认领才生效（不勾=直接生效）</label>
+        ${editing ? `<div style="font-size:12px;color:var(--txd);margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          当前认领：<b style="color:${dev.claim_status==='pending'?'#b8730a':dev.claim_status==='unclaimed'?'#8a5a00':'#1a7f37'};">${dev.claim_status==='pending'?'待用户确认':dev.claim_status==='unclaimed'?'待用码认领':'已认领'}</b>
+          <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="genDeviceClaimCode('${esc(dev.id)}')">🎫 生成领取码</button>
+          ${dev.claim_code?`<code style="user-select:all;background:var(--bg);padding:1px 6px;border-radius:4px;">${esc(dev.claim_code)}</code>`:''}
+        </div><div style="font-size:11px;color:var(--txd);margin-top:4px;">生成领取码会清空当前所有者,把这串码发给用户,谁输入谁获得使用权。</div>` : ''}
+      </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
         <button class="btn" onclick="document.getElementById('device-modal').classList.remove('show')">取消</button>
         <button class="btn primary" onclick="saveDevice()">保存</button>
@@ -8025,10 +8033,21 @@ async function saveDevice() {
     door_id: document.getElementById('dev-door').value,
     tags: document.getElementById('dev-tags').value.trim(),
     note: document.getElementById('dev-note').value.trim(),
+    immediate: !document.getElementById('dev-require-claim')?.checked,   // v3.5.96：勾了「需确认」→ immediate=false
   };
   const { ok, data } = id ? await api('PATCH', '/admin/devices/' + id, body) : await api('POST', '/admin/devices', body);
-  if (ok) { document.getElementById('device-modal').classList.remove('show'); showToast('已保存'); loadDevices(_devCtx); }
-  else showToast('保存失败：' + (data?.error || '未知错误'));
+  if (ok) {
+    document.getElementById('device-modal').classList.remove('show');
+    showToast(data && data.claim_status === 'pending' ? '已下发,等用户确认认领' : '已保存');
+    loadDevices(_devCtx);
+  } else showToast('保存失败：' + (data?.error || '未知错误'));
+}
+async function genDeviceClaimCode(id) {
+  if (!await uiConfirm('生成领取码会清空该设备当前所有者,改为「待用码认领」。继续?')) return;
+  const { ok, data } = await api('POST', '/admin/devices/' + id + '/claim-code', {});
+  if (!ok) { showToast(data?.error || '生成失败'); return; }
+  await uiAlert('领取码：' + data.code + '\n\n把它发给用户,在「我的设备」里输入即可认领获得使用权。', { title: '领取码已生成' });
+  loadDevices(_devCtx);
 }
 async function delDevice(id, name, ctx) {
   if (ctx) _devCtx = ctx;
@@ -9194,9 +9213,9 @@ const _MYDEV_STATUS = { active:'正常', disabled:'已停用', lost:'已挂失' 
 async function checkMyDevicesNav() {
   try {
     const { ok, data } = await api('GET', '/user/devices');
-    if (ok && (data.devices || []).length) {
-      const el = document.getElementById('ni-devices'); if (el) el.style.display = '';
-    }
+    // v3.5.96：功能开着就常显入口(没设备也能进去输领取码认领);管理员关了则隐藏
+    const show = ok && (data.devices_self !== false || (data.devices || []).length);
+    if (show) { const el = document.getElementById('ni-devices'); if (el) el.style.display = ''; }
   } catch (_) {}
 }
 async function loadMyDevices() {
@@ -9204,10 +9223,20 @@ async function loadMyDevices() {
   const { ok, data } = await api('GET', '/user/devices');
   if (!ok) { box.innerHTML = '<div style="color:var(--err);padding:12px;">加载失败</div>'; return; }
   const list = data.devices || [];
-  if (!list.length) { box.innerHTML = '<div style="color:var(--txd);padding:20px;text-align:center;">名下还没有设备</div>'; return; }
-  box.innerHTML = list.map(d => {
+  // 领取码认领框（v3.5.96）——常显,没设备也能用码认领
+  const claimBox = `<div style="border:1px dashed var(--bd);border-radius:8px;padding:12px;margin-bottom:12px;background:var(--sf2);">
+      <div style="font-size:12.5px;font-weight:600;color:var(--txt);margin-bottom:6px;">🎫 用领取码认领设备</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <input id="claim-code-input" placeholder="输入管理员给的领取码" style="flex:1;min-width:160px;padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:13px;background:var(--sf);color:var(--tx);text-transform:uppercase;">
+        <button class="btn primary" style="font-size:12px;" onclick="claimByCode()">认领</button>
+      </div>
+      <div style="font-size:11px;color:var(--txd);margin-top:5px;">认领后该设备归到你名下、放开使用。</div>
+    </div>`;
+  if (!list.length) { box.innerHTML = claimBox + '<div style="color:var(--txd);padding:16px;text-align:center;">名下还没有设备。有领取码可在上方认领,或等管理员下发后在这里确认。</div>'; return; }
+  box.innerHTML = claimBox + list.map(d => {
     const online = d.last_seen ? d.last_seen : '从未';
     const locked = d.lock_state === 'locked';
+    const pending = (d.claim_status || 'claimed') === 'pending';
     const stColor = d.status === 'active' ? '#1a7f37' : 'var(--err)';
     let locHtml = '';
     if (d.last_locate && d.last_locate.result) {
@@ -9215,14 +9244,17 @@ async function loadMyDevices() {
       try { const j = JSON.parse(d.last_locate.result); txt = [j.host, (j.ips||[]).join('/')].filter(Boolean).join(' · '); } catch(_) {}
       locHtml = `<br><span style="color:var(--ac);">📍 最近定位：${esc(txt)} <span style="color:var(--txd);font-size:10px;">(${esc(d.last_locate.at||'')})</span></span>`;
     }
-    const actions = d.can_self_manage ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+    const actions = pending ? `<div style="margin-top:8px;padding:8px 10px;background:#fff7e6;border:1px solid #ffe0a3;border-radius:7px;">
+        <div style="font-size:12px;color:#8a5a00;margin-bottom:6px;">⏳ 管理员已下发这台设备,待你确认认领后才放开使用。</div>
+        <button class="btn primary" style="font-size:12px;" onclick="claimDevice('${d.id}')">确认认领</button>
+      </div>` : (d.can_self_manage ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
         <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','lock')">🔒 锁定</button>
         <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','locate')">📍 定位</button>
         <span style="font-size:10px;color:var(--txd);align-self:center;">丢失时可远程锁定/定位；擦除等需联系管理员</span>
-      </div>` : (d.enroll_status==='unenrolled' || !d.enroll_status ? '<div style="margin-top:6px;font-size:10px;color:var(--txd);">未纳管，暂不能远程操作</div>' : '');
-    return `<div style="border:1px solid var(--bd);border-radius:8px;padding:12px;margin-bottom:10px;">
+      </div>` : (d.enroll_status==='unenrolled' || !d.enroll_status ? '<div style="margin-top:6px;font-size:10px;color:var(--txd);">未纳管，暂不能远程操作</div>' : ''));
+    return `<div style="border:1px solid ${pending?'#ffe0a3':'var(--bd)'};border-radius:8px;padding:12px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-        <b style="color:var(--txt);">${esc(d.name)}</b>
+        <b style="color:var(--txt);">${esc(d.name)}${pending?' <span style="font-size:11px;color:#b8730a;font-weight:500;">· 待认领</span>':''}</b>
         <span style="font-size:11px;color:${stColor};">${esc(_MYDEV_STATUS[d.status]||d.status)}${locked?' · 🔒 已锁定':''}</span>
       </div>
       <div style="font-size:12px;color:var(--txd);margin-top:6px;line-height:1.7;">
@@ -9250,6 +9282,21 @@ async function myDevCmd(id, type) {
     transport_not_configured:'已排队（该设备通道待管理员配置）', unsupported_command:'该设备不支持此命令' };
   showToast(type==='locate' ? '已请求定位，设备回报后在此显示' : (R[data.reason] || '已下发'));
   setTimeout(loadMyDevices, 1200);
+}
+async function claimDevice(id) {
+  if (!await uiConfirm('确认认领这台设备?认领后它归到你名下、放开使用。')) return;
+  const { ok, data } = await api('POST', '/user/devices/' + id + '/claim', {});
+  if (!ok) { showToast(data?.error || '认领失败'); return; }
+  showToast('✓ 已认领'); loadMyDevices();
+}
+async function claimByCode() {
+  const el = document.getElementById('claim-code-input');
+  const code = (el?.value || '').trim();
+  if (!code) { showToast('请输入领取码'); return; }
+  const { ok, data } = await api('POST', '/user/devices/claim-code', { code });
+  if (!ok) { showToast(data?.error || '认领失败'); return; }
+  if (el) el.value = '';
+  showToast('✓ 已认领' + (data.name ? '「' + data.name + '」' : '')); loadMyDevices();
 }
 // ── 管理端 ──
 async function loadVerifyAdmin() { loadVerifyFields(); loadVerifiers(); }
@@ -11733,6 +11780,7 @@ const ENV_GROUPS = [
       { key: 'MEMO_LINK_DOMAINS', label: '外链白名单域', desc: '逗号分隔的允许域名/后缀（子域自动匹配），如 corp.local,intra.example.com。默认留空 = 备忘录里不允许任何外部链接（站内相对链接始终可用）', required: false, secret: false, placeholder: 'corp.local,intra.example.com', value: '' },
       { key: 'MEMO_MAX_ATTACH_MB', label: '单附件上限（MB）', desc: '单个附件的大小上限，默认 5，硬顶 12', required: false, secret: false, placeholder: '5', value: '' },
       { key: 'MEMO_ADMIN_LEVEL', label: '备忘录管理最低等级', desc: '哪一级（含）以上管理员能查看/管理全部用户的备忘录。默认 1 = 仅超级管理员；填 2 = Lv.1/Lv.2 都可。范围 1~9', required: false, secret: false, placeholder: '1', value: '' },
+      { key: 'DEVICES_SELF_ENABLED', label: '用户端「我的设备」', desc: '默认开。开着时用户端常显「我的设备」入口（没分到设备也能进去输领取码认领）；填 off 关闭则对所有人隐藏该入口。', required: false, secret: false, placeholder: 'on', value: '' },
     ]
   },
   {

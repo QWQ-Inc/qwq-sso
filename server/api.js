@@ -2503,6 +2503,17 @@ function memoAdminLevel() {
   const n = parseInt(process.env.MEMO_ADMIN_LEVEL, 10);
   return (Number.isInteger(n) && n >= 1 && n <= 9) ? n : 1;
 }
+// 用户端「我的设备」功能开关（v3.5.96，默认开）：开着就常显入口(没设备也能进去输领取码认领);管理员可关。
+function devicesSelfEnabled() {
+  const v = String(process.env.DEVICES_SELF_ENABLED || '').trim().toLowerCase();
+  return !['off', '0', 'false', 'no', 'none', '关', '关闭'].includes(v);
+}
+// 设备领取码（v3.5.96）：8 位,去掉易混字符 0/O/1/I
+function genClaimCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = ''; for (let i = 0; i < 8; i++) s += A[Math.floor(Math.random() * A.length)];
+  return s;
+}
 function canMemoAdmin(user) {
   return !!user && user.role === 'admin' && (user.adminLevel || 99) <= memoAdminLevel();
 }
@@ -3650,7 +3661,7 @@ router.get('/user/me', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const oauthBinds = oauth.findByUser.all(user.id);
-  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), limited_admin: !!limitedAdminOf(user), org_admin: !!(oauthSubjects.managedBy.all(user.id) || []).length });
+  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), devices_self: devicesSelfEnabled(), limited_admin: !!limitedAdminOf(user), org_admin: !!(oauthSubjects.managedBy.all(user.id) || []).length });
 });
 
 router.post('/user/profile', requireAuth, noPublic, (req, res) => {
@@ -5157,22 +5168,47 @@ router.get('/admin/devices', requireAuth, (req, res) => {
 const SELF_SERVICE_CMDS = ['lock', 'locate'];
 router.get('/user/devices', requireAuth, noPublic, (req, res) => {
   const list = devices.byOwner.all(req.user.uid).map(d => {
-    const loc = (d.enroll_status === 'enrolled' || d.enroll_status === 'pending') ? deviceCommands.lastAckedByType.get(d.id, 'locate') : null;
+    const claimed = (d.claim_status || 'claimed') === 'claimed';
+    const loc = (claimed && (d.enroll_status === 'enrolled' || d.enroll_status === 'pending')) ? deviceCommands.lastAckedByType.get(d.id, 'locate') : null;
     return {
       id: d.id, name: d.name, kind: d.kind, serial: d.serial, status: d.status,
       enroll_status: d.enroll_status, lock_state: d.lock_state, transport: d.transport,
       os_version: d.os_version, model: d.model, last_seen: d.last_seen,
       subject_name: d.subject_name || null, note: d.note, created_at: d.created_at,
-      // 自助操作仅对已纳管/待纳管、非退役设备开放
-      can_self_manage: (d.enroll_status === 'enrolled' || d.enroll_status === 'pending') && d.status !== 'disabled',
+      claim_status: d.claim_status || 'claimed',   // v3.5.96：pending=待你确认认领
+      // 自助操作仅对【已认领】且已纳管/待纳管、非退役设备开放
+      can_self_manage: claimed && (d.enroll_status === 'enrolled' || d.enroll_status === 'pending') && d.status !== 'disabled',
       last_locate: loc ? { result: loc.result, at: loc.acked_at } : null,
     };
   });
-  res.json({ success: true, devices: list, kinds: DEVICE_KINDS, self_commands: SELF_SERVICE_CMDS });
+  res.json({ success: true, devices: list, kinds: DEVICE_KINDS, self_commands: SELF_SERVICE_CMDS, devices_self: devicesSelfEnabled() });
+});
+
+// 认领：确认管理员下发给自己的待认领设备（v3.5.96）
+router.post('/user/devices/:id/claim', requireAuth, noPublic, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev || dev.owner_user_id !== req.user.uid) return res.status(404).json({ error: '设备不存在或不属于你' });
+  if ((dev.claim_status || 'claimed') !== 'pending') return res.status(400).json({ error: '该设备无需认领' });
+  devices.confirmClaim.run(dev.id, req.user.uid);
+  audit('device.claimed', { subject: dev.serial || dev.id, actor: 'user:' + req.user.uid, detail: { device: dev.id, name: dev.name, via: 'confirm' } });
+  res.json({ success: true });
+});
+
+// 用领取码认领设备 / 获得使用权（v3.5.96）
+router.post('/user/devices/claim-code', requireAuth, noPublic, (req, res) => {
+  const code = String(req.body?.code || '').trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: '请输入领取码' });
+  const dev = devices.byClaimCode.get(code);
+  if (!dev) return res.status(404).json({ error: '领取码无效或已被使用' });
+  const r = devices.claimByCode.run(req.user.uid, dev.id, code);
+  if (!r.changes) return res.status(409).json({ error: '领取失败，请重试' });
+  audit('device.claimed', { subject: dev.serial || dev.id, actor: 'user:' + req.user.uid, detail: { device: dev.id, name: dev.name, via: 'code' } });
+  res.json({ success: true, name: dev.name });
 });
 router.post('/user/devices/:id/commands', requireAuth, noPublic, async (req, res) => {
   const dev = devices.get.get(req.params.id);
   if (!dev || dev.owner_user_id !== req.user.uid) return res.status(404).json({ error: '设备不存在或不属于你' });
+  if ((dev.claim_status || 'claimed') !== 'claimed') return res.status(400).json({ error: '请先认领该设备' });   // v3.5.96
   const type = String(req.body?.type || '');
   if (!SELF_SERVICE_CMDS.includes(type)) return res.status(403).json({ error: '该命令仅管理员可下发；你只能锁定或定位自己的设备' });
   if (dev.enroll_status !== 'enrolled' && dev.enroll_status !== 'pending') return res.status(400).json({ error: '设备未纳管，无法下发命令' });
@@ -5195,7 +5231,10 @@ router.post('/admin/devices', requireAuth, (req, res) => {
   if (r.error) return res.status(400).json({ error: r.error });
   const id = uuidv4();
   devices.insert.run({ id, ...r.val });
-  res.json({ success: true, id });
+  // v3.5.96：下发给用户的设备默认进「待认领」,要用户确认(除非管理员勾了「直接生效」)。
+  const immediate = req.body.immediate === true || req.body.immediate === 1;
+  if (r.val.owner_user_id && !immediate) devices.setClaim.run('pending', id);
+  res.json({ success: true, id, claim_status: (r.val.owner_user_id && !immediate) ? 'pending' : 'claimed' });
 });
 router.patch('/admin/devices/:id', requireAuth, (req, res) => {
   const dev = devices.get.get(req.params.id);
@@ -5205,7 +5244,24 @@ router.patch('/admin/devices/:id', requireAuth, (req, res) => {
   if (r.error) return res.status(400).json({ error: r.error });
   // 组织管理员不能把设备移出自己管理的组织范围（resolveDeviceFields 已校验目标组织）
   devices.update.run({ id: dev.id, ...r.val });
+  // v3.5.96：所有者变了才动认领态(改备注等不影响已认领)。换了新所有者 → 待认领(除非直接生效);移除所有者 → 清为 claimed。
+  const immediate = req.body.immediate === true || req.body.immediate === 1;
+  if (r.val.owner_user_id !== dev.owner_user_id) {
+    if (r.val.owner_user_id && !immediate) devices.setClaim.run('pending', dev.id);
+    else devices.setClaim.run('claimed', dev.id);
+  }
   res.json({ success: true });
+});
+// 生成领取码（v3.5.96）：设备变为「待用码认领」,清空原所有者,谁输对码谁获得使用权。
+router.post('/admin/devices/:id/claim-code', requireAuth, (req, res) => {
+  const dev = devices.get.get(req.params.id);
+  if (!dev) return res.status(404).json({ error: '设备不存在' });
+  if (!canManageDevice(req, dev)) return res.status(403).json({ error: '无权管理该设备' });
+  let code;
+  do { code = genClaimCode(); } while (devices.byClaimCode.get(code));
+  devices.setClaimCode.run(code, dev.id);
+  audit('device.claim_code', { subject: dev.serial || dev.id, actor: actorOf(req), detail: { device: dev.id, name: dev.name } });
+  res.json({ success: true, code });
 });
 router.delete('/admin/devices/:id', requireAuth, (req, res) => {
   const dev = devices.get.get(req.params.id);

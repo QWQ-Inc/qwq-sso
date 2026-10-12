@@ -1,9 +1,9 @@
-# QWQ SSO — 统一登录系统 v3.5.95
+# QWQ SSO — 统一登录系统 v3.5.96
 
 > 多渠道登录 · 用户/管理控制台 · 积分商城 · KYC 实名认证 · 开放 API · OIDC 身份提供方
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.5.95-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
+[![Version](https://img.shields.io/badge/version-3.5.96-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen.svg)](https://nodejs.org)
 
 ---
@@ -90,8 +90,7 @@ npm start
 
 ### Zeabur 一键部署
 
-<!-- 发布模板后把 TEMPLATE_CODE 换成 `npx zeabur template create` 返回的模板代码 -->
-[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/TEMPLATE_CODE)
+[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/9GA34G)
 
 点击上方按钮从 Zeabur 模板市场一键部署（自动随机生成 `JWT_SECRET`/`SESSION_SECRET`、挂载持久化数据卷）。部署完成后访问 `https://你的域名/setup` 完成初始化向导（创建超级管理员）。
 

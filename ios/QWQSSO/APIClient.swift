@@ -350,6 +350,18 @@ final class APIClient {
         _ = try await sendBody("DELETE", "/api/user/vault", body: nil, token: token)
     }
 
+    // 设备认领（v3.5.96）
+    @discardableResult
+    func claimDevice(_ id: String, token: String) async throws -> Bool {
+        _ = try await postJSON("/api/user/devices/\(id)/claim", body: [:], token: token)
+        return true
+    }
+    @discardableResult
+    func claimDeviceByCode(_ code: String, token: String) async throws -> String {
+        let j = try await postJSON("/api/user/devices/claim-code", body: ["code": code], token: token)
+        return (j["name"] as? String) ?? ""
+    }
+
     // ── 关于 / 许可协议 ──
     /// 公开法律文档（key=terms|privacy）→ (title, html, link)
     func publicDocument(key: String) async throws -> (title: String, html: String, link: String) {

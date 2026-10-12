@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.95**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.96**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.96 设备认领（下发需确认 / 领取码）+「我的设备」入口常显（用户反馈）
+
+三级版本。用户:① 没分到设备也该显示「我的设备」入口(除非管理员关了该功能);② 管理员「下发」设备 ≠ 直接生效,应**用户确认认领**后才放开使用;或用户输**领取码**认领/获得使用权。
+- **功能开关**：`DEVICES_SELF_ENABLED`(env,默认开)。`devicesSelfEnabled()`;`/user/me` 与 `/user/devices` 回 `devices_self`。网页 `checkMyDevicesNav` 改为「开着就常显入口(没设备也显示,用来输码认领);关了对所有人隐藏」。init.js ENV_KEYS + 系统配置「系统与页脚」加该项。
+- **数据(db.js)**：`devices.claim_status`(claimed|pending|unclaimed,默认 claimed=存量不打断) + `claim_code`;`deviceStmts` 加 setClaim/setClaimCode/byClaimCode/confirmClaim/claimByCode。
+- **认领流程(api.js)**：管理端 POST/PATCH 下发设备带 `immediate`(默认 false=需确认)——给用户设了 owner 且非 immediate → `claim_status='pending'`;PATCH 只在 owner 变化时动认领态(改备注不影响已认领)。`POST /admin/devices/:id/claim-code` 生成 8 位领取码(清 owner,转 unclaimed)。用户端:`POST /user/devices/:id/claim`(确认本人的 pending)、`POST /user/devices/claim-code {code}`(对码认领→成为 owner+claimed,码一次性)。`/user/devices` 回 `claim_status`,`can_self_manage` 要求 claimed;`/user/devices/:id/commands` 加 claimed 门(未认领不能锁定/定位)。审计 device.claimed/claim_code。
+- **前端**：网页「我的设备」加领取码框(常显) + pending 设备黄条「确认认领」按钮;管理端设备弹窗加「需对方确认认领」勾选(默认勾) + 当前认领态 + 「生成领取码」。iOS MyDevicesView 加领取码框 + pending「确认认领」;APIClient 加 claimDevice/claimDeviceByCode。
+- 测试：认领流 node:sqlite 复刻全过(存量 claimed、下发 pending、属主校验、确认一次性、生成码清 owner、错码/对码/码复用);server + dashboard 内联 JS 语法通过。iOS 靠 CI。
 
 ## v3.5.95 应用内 TOTP 保管库（端到端口令加密）（用户反馈·App 2FA 三部曲 C）
 

@@ -333,6 +333,10 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS totp_vault_items (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_totp_vault_items_user ON totp_vault_items(user_id)'); } catch(_) {}
+// 设备认领（v3.5.96）：管理员下发 ≠ 直接生效,用户确认认领(或输领取码)后才放开使用。
+// claim_status: claimed(已认领/可用) | pending(待用户确认) | unclaimed(有领取码,等人用码认领)。存量设备默认 claimed(不打断)。
+try { db.exec("ALTER TABLE devices ADD COLUMN claim_status TEXT NOT NULL DEFAULT 'claimed'"); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN claim_code TEXT'); } catch(_) {}
 try { db.exec("ALTER TABLE shop_goods ADD COLUMN redeem_mode TEXT NOT NULL DEFAULT 'code'"); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN allow_instant INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN redirect_url TEXT'); } catch(_) {}
@@ -1739,6 +1743,12 @@ const deviceStmts = {
   setStatus: db.prepare("UPDATE devices SET status=?, updated_at=datetime('now') WHERE id=?"),
   touch: db.prepare("UPDATE devices SET last_seen=datetime('now') WHERE id=?"),
   remove: db.prepare('DELETE FROM devices WHERE id=?'),
+  // 认领（v3.5.96）
+  setClaim:     db.prepare("UPDATE devices SET claim_status=?, updated_at=datetime('now') WHERE id=?"),
+  setClaimCode: db.prepare("UPDATE devices SET claim_code=?, claim_status='unclaimed', owner_user_id=NULL, updated_at=datetime('now') WHERE id=?"),
+  byClaimCode:  db.prepare("SELECT * FROM devices WHERE claim_code=? AND claim_status='unclaimed'"),
+  confirmClaim: db.prepare("UPDATE devices SET claim_status='claimed', updated_at=datetime('now') WHERE id=? AND owner_user_id=? AND claim_status='pending'"),
+  claimByCode:  db.prepare("UPDATE devices SET owner_user_id=?, claim_status='claimed', claim_code=NULL, updated_at=datetime('now') WHERE id=? AND claim_status='unclaimed' AND claim_code=?"),
   // MDM（v3.5.82）
   setEnroll:   db.prepare("UPDATE devices SET enroll_status=?, enroll_hash=?, updated_at=datetime('now') WHERE id=?"),
   setEnrollStatus: db.prepare("UPDATE devices SET enroll_status=?, updated_at=datetime('now') WHERE id=?"),

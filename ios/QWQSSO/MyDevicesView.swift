@@ -11,6 +11,7 @@ struct MyDevicesView: View {
     @State private var toast: String?
     @State private var lockSheetId: String?
     @State private var lockMessage = ""
+    @State private var claimCode = ""
 
     private let kindLabel: [String: String] = [
         "apple": "🍎 Apple", "google": "🤖 Google/Android", "microsoft": "🪟 Microsoft",
@@ -23,8 +24,17 @@ struct MyDevicesView: View {
 
     var body: some View {
         List {
+            Section {
+                HStack {
+                    TextField("输入领取码认领设备", text: $claimCode)
+                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    Button("认领") { claimByCode() }
+                        .disabled(claimCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: { Text("🎫 用领取码认领") } footer: { Text("认领后设备归到你名下、放开使用。") }
+
             if devices.isEmpty && !loading {
-                Text("名下还没有设备").foregroundColor(.secondary)
+                Text("名下还没有设备。有领取码可在上方认领,或等管理员下发后在这里确认。").foregroundColor(.secondary)
             }
             ForEach(devices.indices, id: \.self) { i in
                 deviceCard(devices[i])
@@ -55,10 +65,12 @@ struct MyDevicesView: View {
         let status = (d["status"] as? String) ?? "active"
         let locked = (d["lock_state"] as? String) == "locked"
         let canManage = (d["can_self_manage"] as? Bool) ?? false
+        let pending = ((d["claim_status"] as? String) ?? "claimed") == "pending"
         let coord = locateCoord(d)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(name).font(.headline)
+                if pending { Text("· 待认领").font(.caption).foregroundColor(.orange) }
                 Spacer()
                 Text(statusLabel[status] ?? status).font(.caption)
                     .foregroundColor(status == "active" ? .green : .red)
@@ -76,7 +88,11 @@ struct MyDevicesView: View {
                 locateSummary(r, coord: coord, at: loc["at"] as? String)
             }
 
-            if canManage {
+            if pending {
+                Text("管理员已下发这台设备,确认认领后才放开使用。").font(.caption2).foregroundColor(.secondary)
+                Button { claim(id) } label: { Label("确认认领", systemImage: "checkmark.circle.fill") }
+                    .buttonStyle(.borderedProminent).controlSize(.small).padding(.top, 2)
+            } else if canManage {
                 HStack(spacing: 10) {
                     Button { lockSheetId = id } label: { Label("锁定", systemImage: "lock.fill") }
                         .buttonStyle(.bordered).controlSize(.small)
@@ -169,6 +185,23 @@ struct MyDevicesView: View {
         case "transport_not_configured": return "已排队（该设备通道待管理员配置）"
         case "unsupported_command": return "该设备不支持此命令"
         default: return "已下发"
+        }
+    }
+    private func claim(_ id: String) {
+        busyId = id
+        Task {
+            do { try await state.api().claimDevice(id, token: state.token)
+                 await MainActor.run { toast = "已认领"; busyId = nil }; await load() }
+            catch { await MainActor.run { toast = "认领失败"; busyId = nil } }
+        }
+    }
+    private func claimByCode() {
+        let code = claimCode.trimmingCharacters(in: .whitespaces)
+        guard !code.isEmpty else { return }
+        Task {
+            do { let n = try await state.api().claimDeviceByCode(code, token: state.token)
+                 await MainActor.run { toast = "已认领" + (n.isEmpty ? "" : "「\(n)」"); claimCode = "" }; await load() }
+            catch { await MainActor.run { toast = (error as? APIError)?.message ?? "认领失败" } }
         }
     }
     private func load() async {
