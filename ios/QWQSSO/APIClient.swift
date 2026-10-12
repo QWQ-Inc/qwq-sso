@@ -19,6 +19,7 @@ final class APIClient {
     func getJSON(_ path: String, token: String? = nil) async throws -> [String: Any] {
         var req = URLRequest(url: try makeURL(path))
         req.httpMethod = "GET"
+        req.setValue("ios", forHTTPHeaderField: "X-QWQ-Client")   // 让后端用 APP_JWT_EXPIRES_IN 签发登录态（v3.5.93）
         if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
         return try await send(req)
     }
@@ -27,6 +28,7 @@ final class APIClient {
         var req = URLRequest(url: try makeURL(path))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("ios", forHTTPHeaderField: "X-QWQ-Client")   // App 登录态时长单独设（v3.5.93）
         if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await send(req)
@@ -369,6 +371,7 @@ final class APIClient {
     private func sendBody(_ method: String, _ path: String, body: [String: Any]?, token: String?) async throws -> [String: Any] {
         var req = URLRequest(url: try makeURL(path))
         req.httpMethod = method
+        req.setValue("ios", forHTTPHeaderField: "X-QWQ-Client")
         if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
         if let b = body { req.setValue("application/json", forHTTPHeaderField: "Content-Type"); req.httpBody = try JSONSerialization.data(withJSONObject: b) }
         return try await send(req)

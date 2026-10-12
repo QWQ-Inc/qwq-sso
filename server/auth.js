@@ -28,8 +28,21 @@ function getSecret() {
   return process.env.JWT_SECRET || 'dev-secret-CHANGE-IN-PRODUCTION';
 }
 
-function signToken(payload) {
-  let expiresIn = process.env.JWT_EXPIRES_IN || '7d';
+// App 登录态时长单独设（v3.5.93）：原生 App 的请求带 X-QWQ-Client 标记，
+// 命中且配了 APP_JWT_EXPIRES_IN 时用它，否则回退全局 JWT_EXPIRES_IN。
+function appExpiresIn(req) {
+  try {
+    const c = String((req.get && req.get('X-QWQ-Client')) || req.headers?.['x-qwq-client'] || (req.body && req.body.client) || '').toLowerCase();
+    if (c === 'app' || c === 'ios' || c === 'android') {
+      const v = String(process.env.APP_JWT_EXPIRES_IN || '').trim();
+      if (v) return v;
+    }
+  } catch (_) {}
+  return undefined;   // undefined → signToken 回退全局
+}
+
+function signToken(payload, opts = {}) {
+  let expiresIn = opts.expiresIn || process.env.JWT_EXPIRES_IN || '7d';
   // 验证 expiresIn 格式：数字（秒）或带单位字符串（7d, 24h, 3600s 等）
   // 如果是纯数字且 <= 60，说明可能配置错了（单位混淆），强制用 7d
   //
@@ -194,4 +207,4 @@ function requireApiKey(scope) {
   };
 }
 
-module.exports = { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, ipMatches, ipAllowed };
+module.exports = { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, ipMatches, ipAllowed, appExpiresIn };

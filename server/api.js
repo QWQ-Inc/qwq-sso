@@ -15,7 +15,7 @@ const contactUtil = require('./contacts');
 const wmBurn = require('./watermark-burn');
 wmBurn.prefetchFont();   // 开了「导出加水印」就在启动时把中文字体备好
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
-const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey } = require('./auth');
+const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, appExpiresIn } = require('./auth');
 const totp = require('./twofa');
 const { subjectGateError } = require('./org-policy');
 // 短信与邮件统一走 QWQ Message 分发中心（v3.3.3 起不再直连服务商）
@@ -295,7 +295,7 @@ function finishLogin(res, user, req, method, extra = {}) {
     return res.json({ success: true, twofa_required: true, twofa_token });
   }
   logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method, ip: req.ip, ua });
-  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) });
+  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
   return res.json({ success: true, token, user: safeUser(user), mustSetup2fa: mustSetup2fa(user), org, org_scoped: orgScoped });
 }
 
@@ -497,7 +497,7 @@ router.post('/2fa/login-verify', (req, res) => {
   logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: (data.method || '账号密码') + (viaRecovery ? '+恢复码' : '+2FA'), ip: req.ip, ua: req.headers['user-agent'] });
   // org-scoped 登录（v3.5.20）：从中间态令牌把 org/org_scoped 带进正式 token
   const org = data.org || null, orgScoped = !!data.org_scoped;
-  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) });
+  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
   const remaining = twofa.countCodes.get(user.id).n;
   res.json({ success: true, token, user: safeUser(user), recoveryCodesLeft: remaining, org, org_scoped: orgScoped });
 });

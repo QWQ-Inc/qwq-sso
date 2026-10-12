@@ -11668,6 +11668,7 @@ const ENV_GROUPS = [
     vars: [
       { key: 'JWT_SECRET',        label: 'JWT 密钥',         desc: '用于签发 Token 的随机密钥，建议 64 位以上随机字符串', required: false,  secret: true,  placeholder: '',  value: '' },
       { key: 'JWT_EXPIRES_IN',    label: 'Token 有效期',      desc: '如 7d、24h、3600（秒）',                             required: false,  secret: false, placeholder: '7d', value: '' },
+      { key: 'APP_JWT_EXPIRES_IN',label: 'App Token 有效期',   desc: '原生 App 登录态单独设（如 30d、12h）；留空=与网页相同',  required: false,  secret: false, placeholder: '留空=同网页', value: '' },
       { key: 'SESSION_SECRET',    label: 'Session 密钥',      desc: '用于加密 Session 的随机字符串',                      required: false,  secret: true,  placeholder: '',   value: '' },
       { key: 'SMS_CODE_EXPIRE',   label: '短信码有效期(秒)',   desc: '短信验证码的过期秒数，默认 300 秒',                  required: false, secret: false, placeholder: '300', value: '' },
       { key: 'EMAIL_CODE_EXPIRE', label: '邮箱码有效期(秒)',   desc: '邮箱验证码的过期秒数，默认 600 秒',                  required: false, secret: false, placeholder: '600', value: '' },

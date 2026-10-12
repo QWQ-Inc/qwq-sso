@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.93 — App 登录态时长单独设（APP_JWT_EXPIRES_IN）
+
+- 原生 App 的登录态有效期现在可独立于网页设定：配 `APP_JWT_EXPIRES_IN`（如 30d），App 登录就用它，网页仍用 `JWT_EXPIRES_IN`；留空=两者相同。
+- 机制：App 请求带 `X-QWQ-Client: ios` 头，后端 `signToken` 据此选时长；接入密码/验证码登录、2FA 二段、Passkey 登录三处（第三方 OAuth 经浏览器回调仍用全局时长）。系统配置「系统与页脚」可填。
+- 这是用户要的「App 2FA 三部曲」第一步（A）；下一步 B 审批式 2FA、C 应用内 TOTP 保管库。
+- 测试：时长选择 + 防呆逻辑复刻验证；语法校验通过。
+
 ## v3.5.92.4 — 飞书同步也灌手机/邮箱/企业邮箱进 user_contacts（供疑似重复辨认）
 
 - 企业微信同步早已把手机/邮箱/企业邮箱灌进 user_contacts、疑似重复按手机/邮箱辨认也读它；但**飞书同步从不灌**、且个人邮箱与企业邮箱被合并成一个。现在飞书同步也把 mobile/个人邮箱/企业邮箱分别灌进 user_contacts（抽出通用 `importDirContacts`），既有成员下次同步补齐。

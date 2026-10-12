@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.92.4**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.93**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.93 App 登录态时长单独设（APP_JWT_EXPIRES_IN）（用户反馈·App 2FA 三部曲 A）
+
+三级版本。用户要三件：A 登录态时长单独设、B App 审批式 2FA、C 应用内 TOTP 保管库（端到端口令加密）——分版本做，本版是 A（打底）。
+- 后端：`auth.js` `signToken(payload, opts={})` 加 `opts.expiresIn` 覆盖（防呆逻辑照旧作用在最终值上，APP 时长填错 ≤60 秒也会强制 7d）；新 `appExpiresIn(req)`——请求带 `X-QWQ-Client: app/ios/android`（或 body `client`）且配了 `APP_JWT_EXPIRES_IN` 就返回它，否则 undefined → 回退全局 `JWT_EXPIRES_IN`。导出 `appExpiresIn`。
+- 接入**原生 App 走的登录签发点**：`finishLogin`（密码/验证码登录）、`/2fa/login-verify`、passkey 登录三处传 `{ expiresIn: appExpiresIn(req) }`。⚠️ 第三方 OAuth 登录（oauth.js loginSuccess，经浏览器回调、拿不到 App 头）仍用全局时长——App 内三方走系统 Safari，暂不单独计，后续可用 state/session 标记补。
+- iOS `APIClient`：getJSON/postJSON/sendBody 都带 `X-QWQ-Client: ios` 头。
+- init.js ENV_KEYS + 系统配置「系统与页脚」加 `APP_JWT_EXPIRES_IN`（Token 有效期下方，留空=同网页）。
+- 测试：expiresIn 选择 + 防呆逻辑复刻 5 项通过（未配回退全局、配 30d 用 30d、body client 也认、网页无头回退、30 秒越界强制 7d、未知 client 不认）。server 三文件语法通过。
+- ⚠️ 下一步：B App 审批式 2FA、C 应用内 TOTP 保管库（端到端口令加密，服务器只存密文）。
 
 ## v3.5.92.4 飞书同步也灌手机/邮箱/企业邮箱进 user_contacts（供疑似重复按联系方式辨认）（用户反馈）
 
