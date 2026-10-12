@@ -328,6 +328,28 @@ final class APIClient {
         _ = try await postJSON("/api/user/2fa/disable", body: ["code": code], token: token)
     }
 
+    // ── 应用内 TOTP 保管库（v3.5.95，端到端加密;服务器只收/发密文）──
+    func getVault(token: String) async throws -> [String: Any] {
+        try await getJSON("/api/user/vault", token: token)
+    }
+    func vaultInit(kdfSalt: String, verifier: String, kdfIter: Int, token: String) async throws {
+        _ = try await postJSON("/api/user/vault/init", body: ["kdf_salt": kdfSalt, "verifier": verifier, "kdf_iter": kdfIter], token: token)
+    }
+    func vaultReset(kdfSalt: String, verifier: String, kdfIter: Int, token: String) async throws {
+        _ = try await postJSON("/api/user/vault/reset", body: ["kdf_salt": kdfSalt, "verifier": verifier, "kdf_iter": kdfIter], token: token)
+    }
+    @discardableResult
+    func vaultAddItem(label: String, issuer: String, enc: String, token: String) async throws -> String {
+        let j = try await postJSON("/api/user/vault/items", body: ["label": label, "issuer": issuer, "enc": enc], token: token)
+        return (j["id"] as? String) ?? ""
+    }
+    func vaultDeleteItem(_ id: String, token: String) async throws {
+        _ = try await sendBody("DELETE", "/api/user/vault/items/\(id)", body: nil, token: token)
+    }
+    func vaultDeleteAll(token: String) async throws {
+        _ = try await sendBody("DELETE", "/api/user/vault", body: nil, token: token)
+    }
+
     // ── 关于 / 许可协议 ──
     /// 公开法律文档（key=terms|privacy）→ (title, html, link)
     func publicDocument(key: String) async throws -> (title: String, html: String, link: String) {

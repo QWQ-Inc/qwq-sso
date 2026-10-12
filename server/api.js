@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, totpVault, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
 const mdmApple = require('./mdm-apple');
 const plist = require('./plist');
@@ -569,6 +569,78 @@ router.post('/user/2fa/approvals/:id', requireAuth, noPublic, (req, res) => {
   const action = String(req.body.action || '').toLowerCase();
   if (action !== 'approve' && action !== 'deny') return res.status(400).json({ error: '参数错误' });
   loginApprovals.setStatus.run(action === 'approve' ? 'approved' : 'denied', row.id);
+  res.json({ success: true });
+});
+
+// ── 应用内 TOTP 保管库（v3.5.95，端到端口令加密）──
+// 服务器只存密文:kdf_salt/verifier/enc 都是 App 用保管库口令派生密钥加密后的产物,服务端永远拿不到明文。
+const _b64re = /^[A-Za-z0-9+/_=-]+$/;
+const isB64 = (s, max) => typeof s === 'string' && s.length > 0 && s.length <= max && _b64re.test(s);
+const VAULT_MAX_ITEMS = 500;
+
+router.get('/user/vault', requireAuth, noPublic, (req, res) => {
+  const meta = totpVault.get.get(req.user.uid);
+  if (!meta) return res.json({ success: true, has_vault: false, items: [] });
+  const items = totpVault.items.all(req.user.uid).map(r => ({ id: r.id, label: r.label || '', issuer: r.issuer || '', enc: r.enc, created_at: r.created_at }));
+  res.json({ success: true, has_vault: true, kdf_salt: meta.kdf_salt, verifier: meta.verifier, kdf_iter: meta.kdf_iter, items });
+});
+
+// 首次建库:写 salt + verifier（口令本身不上传）
+router.post('/user/vault/init', requireAuth, noPublic, (req, res) => {
+  if (totpVault.get.get(req.user.uid)) return res.status(409).json({ error: '保管库已存在' });
+  const { kdf_salt, verifier } = req.body;
+  const iter = Math.max(100000, Math.min(1000000, parseInt(req.body.kdf_iter) || 210000));
+  if (!isB64(kdf_salt, 128) || !isB64(verifier, 512)) return res.status(400).json({ error: '参数无效' });
+  totpVault.init.run({ user_id: req.user.uid, kdf_salt, verifier, kdf_iter: iter });
+  res.json({ success: true });
+});
+
+// 重置（忘记口令):清空所有条目 + 换新 salt/verifier。⚠️ 原有 2FA 不可恢复(端到端)。
+router.post('/user/vault/reset', requireAuth, noPublic, (req, res) => {
+  const { kdf_salt, verifier } = req.body;
+  const iter = Math.max(100000, Math.min(1000000, parseInt(req.body.kdf_iter) || 210000));
+  if (!isB64(kdf_salt, 128) || !isB64(verifier, 512)) return res.status(400).json({ error: '参数无效' });
+  const tx = db.transaction(() => {
+    totpVault.itemsDrop.run(req.user.uid);
+    if (totpVault.get.get(req.user.uid)) totpVault.reset.run({ user_id: req.user.uid, kdf_salt, verifier, kdf_iter: iter });
+    else totpVault.init.run({ user_id: req.user.uid, kdf_salt, verifier, kdf_iter: iter });
+  });
+  tx();
+  res.json({ success: true });
+});
+
+// 删库(连条目)
+router.delete('/user/vault', requireAuth, noPublic, (req, res) => {
+  const tx = db.transaction(() => { totpVault.itemsDrop.run(req.user.uid); totpVault.drop.run(req.user.uid); });
+  tx();
+  res.json({ success: true });
+});
+
+// 加一条 2FA（enc=端到端加密的种子/参数;label/issuer 明文供显示）
+router.post('/user/vault/items', requireAuth, noPublic, (req, res) => {
+  if (!totpVault.get.get(req.user.uid)) return res.status(400).json({ error: '请先初始化保管库' });
+  if (totpVault.itemCount.get(req.user.uid).n >= VAULT_MAX_ITEMS) return res.status(400).json({ error: '保管库条目已达上限' });
+  const { label, issuer, enc } = req.body;
+  if (!isB64(enc, 4096)) return res.status(400).json({ error: '密文无效' });
+  const id = uuidv4();
+  totpVault.itemInsert.run({ id, user_id: req.user.uid, label: String(label || '').slice(0, 128), issuer: String(issuer || '').slice(0, 128), enc, sort_order: totpVault.itemCount.get(req.user.uid).n });
+  res.json({ success: true, id });
+});
+
+// 改名(仅明文 label/issuer;种子要改就删了重加)
+router.patch('/user/vault/items/:id', requireAuth, noPublic, (req, res) => {
+  const row = totpVault.itemGet.get(req.params.id, req.user.uid);
+  if (!row) return res.status(404).json({ error: '条目不存在' });
+  totpVault.itemUpdate.run({ id: row.id, user_id: req.user.uid,
+    label: req.body.label != null ? String(req.body.label).slice(0, 128) : row.label,
+    issuer: req.body.issuer != null ? String(req.body.issuer).slice(0, 128) : row.issuer });
+  res.json({ success: true });
+});
+
+router.delete('/user/vault/items/:id', requireAuth, noPublic, (req, res) => {
+  const row = totpVault.itemGet.get(req.params.id, req.user.uid);
+  if (!row) return res.status(404).json({ error: '条目不存在' });
+  totpVault.itemDelete.run(row.id, req.user.uid);
   res.json({ success: true });
 });
 

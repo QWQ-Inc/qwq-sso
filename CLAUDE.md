@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.94**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.95**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.95 应用内 TOTP 保管库（端到端口令加密）（用户反馈·App 2FA 三部曲 C）
+
+三级版本。三部曲收尾 C：把 QWQ App 做成**云同步的验证器(类似 Authy)**——导入别的网站的 2FA(otpauth://),本机出 6 位滚动码,种子端到端加密后才上传,**服务器只存密文、永远拿不到明文种子/口令**,跨设备靠 SSO 账号同步。
+- **密钥存储模型(用户选的,端到端口令加密)**：保管库口令在 App 本地 PBKDF2-HMAC-SHA256(210k 迭代)派生密钥 → AES-GCM 加密每条种子;服务器存 `kdf_salt`+`verifier`(用派生密钥加密的已知串,校验口令对错)+ 各条 `enc`(密文)。label/issuer 用明文存(否则没解锁列表什么都看不到;只有种子 E2E)。⚠️ 口令忘了=库里 2FA 不可恢复(E2E 固有),UI 明确警示 + 每条可「复制备份链接(otpauth)」迁出。
+- **数据(db.js)**：`totp_vault(user_id PK,kdf_salt,verifier,kdf_iter,...)` + `totp_vault_items(id,user_id,label,issuer,enc,sort_order,created_at)` + 索引;`totpVaultStmts`,导出 `totpVault`。
+- **接口(api.js,requireAuth+noPublic,只收/发 base64 密文,服务端不解密)**：`GET /user/vault`(元数据+条目密文)、`POST /user/vault/init`(建库)、`POST /user/vault/reset`(忘口令:清条目+换 salt/verifier)、`DELETE /user/vault`、`POST /user/vault/items`(加,≤500)、`PATCH /user/vault/items/:id`(改明文名)、`DELETE /user/vault/items/:id`。校验 base64/长度。
+- **iOS(全新)**：`VaultCrypto.swift`——PBKDF2(CommonCrypto,UInt8→Int8 重绑)+ AES-GCM(CryptoKit)+ verifier + TOTP 出码引擎(base32 解码/HMAC-SHA1·256·512/动态截断,RFC6238)+ otpauth 解析与还原。`VaultView.swift`——建库/解锁/滚动码列表(倒计时环、点按复制、长按复制码/备份链接、左滑删)+ `AddTOTPSheet`(扫码复用 ScannerView 或粘贴 otpauth/base32)。APIClient 加 getVault/vaultInit/vaultReset/vaultAddItem/vaultDeleteItem/vaultDeleteAll。MeTab「功能」加入口。
+- 测试：保管库 store 逻辑 node:sqlite 复刻(建库/加条目只存密文/属主隔离/删/reset 清空换盐);**TOTP 算法用 RFC 6238 官方向量 Node 复刻 4 组全对**(T=59/1111111109/1111111111 的 8 位 + 6 位);server(db/api) 语法通过。⚠️ iOS Swift 靠 GitHub Actions 云编译 + 装包验证;真机加解密/出码未端到端。
+- 至此 App 2FA 三部曲 A(登录态时长 v3.5.93)/B(App 审批 v3.5.94)/C(TOTP 保管库 v3.5.95)全部完成。
 
 ## v3.5.94 App 审批式 2FA（登录时手机 App 点批准）（用户反馈·App 2FA 三部曲 B）
 

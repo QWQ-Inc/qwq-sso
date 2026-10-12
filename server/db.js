@@ -312,6 +312,27 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS login_approvals (
   decided_at  TEXT
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_login_appr_user ON login_approvals(user_id, status)'); } catch(_) {}
+// 应用内 TOTP 保管库（v3.5.95，端到端口令加密）：服务器只存密文,永远拿不到明文种子/口令。
+// vault 元数据:kdf_salt(口令派生盐) + verifier(用派生密钥加密的已知串,用于校验口令是否正确)。
+try { db.exec(`CREATE TABLE IF NOT EXISTS totp_vault (
+  user_id    TEXT PRIMARY KEY,
+  kdf_salt   TEXT NOT NULL,
+  verifier   TEXT NOT NULL,
+  kdf_iter   INTEGER NOT NULL DEFAULT 210000,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+// 每条 2FA:label/issuer 明文(供列表显示),enc=端到端加密的种子/参数(iv:密文:tag,base64)。
+try { db.exec(`CREATE TABLE IF NOT EXISTS totp_vault_items (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  label      TEXT,
+  issuer     TEXT,
+  enc        TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_totp_vault_items_user ON totp_vault_items(user_id)'); } catch(_) {}
 try { db.exec("ALTER TABLE shop_goods ADD COLUMN redeem_mode TEXT NOT NULL DEFAULT 'code'"); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN allow_instant INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN redirect_url TEXT'); } catch(_) {}
@@ -1126,6 +1147,21 @@ const twofaStmts = {
   countCodes:  db.prepare('SELECT COUNT(*) AS n FROM twofa_recovery_codes WHERE user_id=? AND used=0'),
 };
 
+// 应用内 TOTP 保管库（v3.5.95）：服务器只存密文
+const totpVaultStmts = {
+  get:        db.prepare('SELECT * FROM totp_vault WHERE user_id=?'),
+  init:       db.prepare("INSERT INTO totp_vault (user_id,kdf_salt,verifier,kdf_iter) VALUES (@user_id,@kdf_salt,@verifier,@kdf_iter)"),
+  reset:      db.prepare("UPDATE totp_vault SET kdf_salt=@kdf_salt,verifier=@verifier,kdf_iter=@kdf_iter,updated_at=datetime('now') WHERE user_id=@user_id"),
+  drop:       db.prepare('DELETE FROM totp_vault WHERE user_id=?'),
+  items:      db.prepare('SELECT * FROM totp_vault_items WHERE user_id=? ORDER BY sort_order, created_at'),
+  itemGet:    db.prepare('SELECT * FROM totp_vault_items WHERE id=? AND user_id=?'),
+  itemInsert: db.prepare("INSERT INTO totp_vault_items (id,user_id,label,issuer,enc,sort_order) VALUES (@id,@user_id,@label,@issuer,@enc,@sort_order)"),
+  itemUpdate: db.prepare("UPDATE totp_vault_items SET label=@label, issuer=@issuer WHERE id=@id AND user_id=@user_id"),
+  itemDelete: db.prepare('DELETE FROM totp_vault_items WHERE id=? AND user_id=?'),
+  itemsDrop:  db.prepare('DELETE FROM totp_vault_items WHERE user_id=?'),
+  itemCount:  db.prepare('SELECT COUNT(*) AS n FROM totp_vault_items WHERE user_id=?'),
+};
+
 // App 审批式 2FA（v3.5.94）：登录审批请求
 const loginApprovalStmts = {
   insert:       db.prepare("INSERT INTO login_approvals (id,user_id,status,method,ip,ua,expires_at) VALUES (@id,@user_id,'pending',@method,@ip,@ua,@expires_at)"),
@@ -1878,6 +1914,7 @@ module.exports = {
   idp: idpStmts,
   twofa: twofaStmts,
   loginApprovals: loginApprovalStmts,
+  totpVault: totpVaultStmts,
   webauthn: webauthnStmts,
   announcements: announcementStmts,
   documents: documentStmts,

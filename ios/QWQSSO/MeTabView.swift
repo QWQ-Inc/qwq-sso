@@ -64,6 +64,7 @@ struct MeTabView: View {
                 }
 
                 Section("功能") {
+                    NavigationLink { VaultView() } label: { Label("验证器 / 2FA 保管库", systemImage: "key.horizontal") }
                     NavigationLink { MyDevicesView() } label: { Label("我的设备", systemImage: "laptopcomputer.and.iphone") }
                     NavigationLink { ScannerView(onResult: handleScan) } label: { Label("扫一扫", systemImage: "qrcode.viewfinder") }
                     NavigationLink { LoginLogsView() } label: { Label("登录日志", systemImage: "list.bullet.rectangle") }

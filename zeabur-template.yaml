@@ -33,8 +33,12 @@ spec:
       icon: https://raw.githubusercontent.com/QWQ-Inc/qwq-sso/main/public/favicon.ico
       spec:
         source:
-          # GitHub 仓库的数字 ID（QWQ-Inc/qwq-sso）。换成 fork 后的仓库需改这里。
-          repoID: 1280195499
+          # 公开仓库直接用 ARBITRARY_GIT + HTTPS 地址，无需在仓库安装 Zeabur GitHub App。
+          # 若想改用 GitHub 集成（自动随推送重建），换成：
+          #   source: GITHUB
+          #   repo: 1280195499   # QWQ-Inc/qwq-sso 的数字 ID，需先在组织里装 Zeabur GitHub App
+          source: ARBITRARY_GIT
+          gitURL: https://github.com/QWQ-Inc/qwq-sso.git
           branch: main
         ports:
           - id: web
