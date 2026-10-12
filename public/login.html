@@ -1747,7 +1747,7 @@
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
       try { localStorage.setItem('sso_current_org', org); localStorage.setItem('sso_org_scoped', d.org_scoped ? '1' : ''); } catch (_) {}
       const ov = document.getElementById('org-login-ov'); if (ov) ov.remove();
-      if (d.twofa_required) return show2faLogin(d.twofa_token);
+      if (d.twofa_required) return show2faLogin(d.twofa_token, d.app_approval);
       redirect(d.token, d.user);
     } catch (e) { olTip('error', e.message || '登录失败'); }
   }
@@ -1796,7 +1796,7 @@
       const d = await r.json(); if (!r.ok) throw new Error(d.error);
       // 个人登录：清掉组织上下文与 org-scoped 锁（dashboard 读 sso_current_org / sso_org_scoped）
       try { localStorage.removeItem('sso_current_org'); localStorage.removeItem('sso_org_scoped'); } catch(_) {}
-      if (d.twofa_required) return show2faLogin(d.twofa_token);   // 开了 2FA → 进二段
+      if (d.twofa_required) return show2faLogin(d.twofa_token, d.app_approval);   // 开了 2FA → 进二段
       redirect(d.token, d.user);
     } catch(e) { showTip('login','error',e.message||'登录失败'); }
   }
@@ -1888,26 +1888,63 @@
   }
 
   // ── 2FA 登录第二步：动态浮层（避免改动主表单）──
-  function show2faLogin(twofaToken) {
-    let useRecovery = false;
+  function show2faLogin(twofaToken, appApproval) {
+    let useRecovery = false, pollTimer = null;
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
     ov.innerHTML = `
       <div style="background:#fff;border-radius:14px;max-width:360px;width:100%;padding:26px 24px;box-shadow:0 8px 40px rgba(0,0,0,.2);">
         <div style="font-size:16px;font-weight:700;color:#1D1D1F;margin-bottom:4px;">两步验证</div>
-        <div id="tfa-desc" style="font-size:12.5px;color:#86868B;margin-bottom:16px;">请输入身份验证器 App 里的 6 位动态验证码</div>
-        <input id="tfa-code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码"
-          style="width:100%;height:42px;font-size:18px;letter-spacing:6px;text-align:center;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-family:monospace;" maxlength="20"/>
-        <div id="tfa-err" style="color:#FF3B30;font-size:12px;margin-top:8px;min-height:16px;"></div>
-        <button id="tfa-ok" style="width:100%;height:42px;margin-top:8px;border:none;border-radius:9px;background:#5A8A00;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">验证并登录</button>
-        <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:12px;">
-          <a id="tfa-toggle" href="javascript:void 0" style="color:#5A8A00;">用恢复码登录</a>
-          <a id="tfa-cancel" href="javascript:void 0" style="color:#86868B;">取消</a>
+        <div id="tfa-appwait" style="display:${appApproval ? 'block' : 'none'};margin-bottom:14px;">
+          <div style="display:flex;align-items:center;gap:10px;padding:12px;background:#F2F7E8;border:1px solid #D7E8B8;border-radius:10px;">
+            <div style="width:20px;height:20px;border:3px solid rgba(90,138,0,.25);border-top-color:#5A8A00;border-radius:50%;animation:tfaspin .7s linear infinite;flex-shrink:0;"></div>
+            <div style="font-size:12.5px;color:#4a6a00;line-height:1.5;">已向你的手机 App 发送登录请求,<b>在 App 上点「批准」</b>即可登录。</div>
+          </div>
+          <div id="tfa-appmsg" style="font-size:12px;color:#FF3B30;margin-top:6px;min-height:0;"></div>
+          <div style="text-align:center;margin-top:10px;"><a id="tfa-usecode" href="javascript:void 0" style="color:#5A8A00;font-size:12.5px;">改用验证码 / 恢复码</a></div>
+        </div>
+        <div id="tfa-codebox" style="display:${appApproval ? 'none' : 'block'};">
+          <div id="tfa-desc" style="font-size:12.5px;color:#86868B;margin-bottom:16px;">请输入身份验证器 App 里的 6 位动态验证码</div>
+          <input id="tfa-code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码"
+            style="width:100%;height:42px;font-size:18px;letter-spacing:6px;text-align:center;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-family:monospace;" maxlength="20"/>
+          <div id="tfa-err" style="color:#FF3B30;font-size:12px;margin-top:8px;min-height:16px;"></div>
+          <button id="tfa-ok" style="width:100%;height:42px;margin-top:8px;border:none;border-radius:9px;background:#5A8A00;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">验证并登录</button>
+          <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:12px;">
+            <a id="tfa-toggle" href="javascript:void 0" style="color:#5A8A00;">用恢复码登录</a>
+            <a id="tfa-cancel" href="javascript:void 0" style="color:#86868B;">取消</a>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(ov);
+    if (!document.getElementById('tfa-spin-style')) { const s = document.createElement('style'); s.id = 'tfa-spin-style'; s.textContent = '@keyframes tfaspin{to{transform:rotate(360deg)}}'; document.head.appendChild(s); }
     const codeEl = ov.querySelector('#tfa-code'), errEl = ov.querySelector('#tfa-err');
-    codeEl.focus();
+    const close = () => { if (pollTimer) clearInterval(pollTimer); ov.remove(); };
+
+    // App 审批:轮询状态,批准即换 token
+    if (appApproval) {
+      pollTimer = setInterval(async () => {
+        try {
+          const r = await fetch('/api/2fa/approval-status', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ twofa_token: twofaToken }) });
+          const d = await r.json();
+          if (d.status === 'approved') {
+            clearInterval(pollTimer); pollTimer = null;
+            const vr = await fetch('/api/2fa/login-verify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ twofa_token: twofaToken, approval: true }) });
+            const vd = await vr.json(); if (!vr.ok) throw new Error(vd.error);
+            close(); redirect(vd.token, vd.user);
+          } else if (d.status === 'denied' || d.status === 'expired' || d.status === 'invalid') {
+            clearInterval(pollTimer); pollTimer = null;
+            ov.querySelector('#tfa-appmsg').textContent = d.status === 'denied' ? '登录请求已在 App 上被拒绝。' : '登录请求已过期,请改用验证码或重新登录。';
+          }
+        } catch (_) {}
+      }, 2000);
+      ov.querySelector('#tfa-usecode').onclick = () => {
+        ov.querySelector('#tfa-codebox').style.display = 'block';
+        ov.querySelector('#tfa-appwait').style.display = 'none';
+        codeEl.focus();
+      };
+    } else {
+      codeEl.focus();
+    }
 
     ov.querySelector('#tfa-toggle').onclick = () => {
       useRecovery = !useRecovery;
@@ -1916,7 +1953,7 @@
       codeEl.placeholder = useRecovery ? '恢复码' : '6 位验证码';
       codeEl.value = ''; codeEl.style.letterSpacing = useRecovery ? '2px' : '6px'; codeEl.focus();
     };
-    ov.querySelector('#tfa-cancel').onclick = () => ov.remove();
+    ov.querySelector('#tfa-cancel').onclick = () => close();
 
     async function submit() {
       const v = codeEl.value.trim();
@@ -1928,7 +1965,7 @@
         const d = await r.json(); if (!r.ok) throw new Error(d.error);
         if (typeof d.recoveryCodesLeft === 'number' && d.recoveryCodesLeft <= 2)
           try { localStorage.setItem('sso_recovery_warn', d.recoveryCodesLeft); } catch(_) {}
-        ov.remove();
+        close();
         redirect(d.token, d.user);
       } catch(e) { errEl.textContent = e.message || '验证失败'; btn.disabled = false; btn.textContent = '验证并登录'; }
     }

@@ -1,9 +1,9 @@
-# QWQ SSO — 统一登录系统 v3.5.93
+# QWQ SSO — 统一登录系统 v3.5.94
 
 > 多渠道登录 · 用户/管理控制台 · 积分商城 · KYC 实名认证 · 开放 API · OIDC 身份提供方
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.5.93-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
+[![Version](https://img.shields.io/badge/version-3.5.94-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen.svg)](https://nodejs.org)
 
 ---
@@ -90,12 +90,31 @@ npm start
 
 ### Zeabur 一键部署
 
-[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com)
+<!-- 发布模板后把 TEMPLATE_CODE 换成 `npx zeabur template create` 返回的模板代码 -->
+[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/TEMPLATE_CODE)
+
+点击上方按钮从 Zeabur 模板市场一键部署（自动随机生成 `JWT_SECRET`/`SESSION_SECRET`、挂载持久化数据卷）。部署完成后访问 `https://你的域名/setup` 完成初始化向导（创建超级管理员）。
+
+> ⚠️ **数据持久化**：数据库是 SQLite，模板已把 `DB_PATH` 指到挂载于 `/data` 的卷。请勿删除该卷，否则重新部署时数据会全部丢失。
+
+#### 手动从 GitHub 导入
 
 1. Fork 本仓库
 2. 在 Zeabur 新建项目 → 从 GitHub 导入
-3. 设置必要环境变量（`JWT_SECRET`、`SESSION_SECRET`）
-4. 访问 `https://your-domain.zeabur.app/setup` 完成初始化
+3. **给服务挂载一个卷到 `/data`**，并设 `DB_PATH=/data/sso.db`（否则重部署丢数据）
+4. 设置必要环境变量：`JWT_SECRET`、`SESSION_SECRET`（随机长字符串）、`BASE_URL`（你的公开域名）
+5. 访问 `https://your-domain.zeabur.app/setup` 完成初始化
+
+#### 维护模板
+
+模板定义在仓库根目录 [`zeabur-template.yaml`](./zeabur-template.yaml)。发布 / 更新：
+
+```bash
+npx zeabur@latest auth login
+npx zeabur@latest template deploy -f zeabur-template.yaml   # 测试部署
+npx zeabur@latest template create -f zeabur-template.yaml   # 发布到模板市场（返回模板代码）
+npx zeabur@latest template update -c <模板代码> -f zeabur-template.yaml   # 后续更新
+```
 
 ---
 

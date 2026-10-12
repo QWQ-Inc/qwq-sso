@@ -4,6 +4,7 @@ import SwiftUI
 struct AccountSettingsView: View {
     @EnvironmentObject var state: AppState
     @State private var twofaEnabled = false
+    @State private var appEnabled = false
     @State private var recoveryLeft = 0
     @State private var showDisable = false
     @State private var disableCode = ""
@@ -33,6 +34,17 @@ struct AccountSettingsView: View {
                 }
             }
 
+            if twofaEnabled {
+                Section {
+                    Toggle(isOn: Binding(get: { appEnabled }, set: { v in setApp2fa(v) })) {
+                        Label("App 审批登录", systemImage: "iphone.and.arrow.forward")
+                    }
+                    NavigationLink { LoginApprovalsView() } label: { Label("登录审批请求", systemImage: "checkmark.shield") }
+                } header: { Text("App 审批式 2FA") } footer: {
+                    Text("开启后,登录时本机 App 会弹「批准/拒绝」,点批准即可登录,不用手输动态码(仍可回退动态码/恢复码)。")
+                }
+            }
+
             Section("其它") {
                 Button { openAuthedWeb(base: state.baseURL, token: state.token, path: "/dashboard.html") } label: { Label("Passkey / 更多设置（浏览器打开）", systemImage: "key") }
                 Text("Passkey 绑定、绑定第三方账号等在浏览器里完成（Passkey 需真 Safari）。").font(.caption2).foregroundColor(.secondary)
@@ -51,7 +63,16 @@ struct AccountSettingsView: View {
 
     private func loadTwofa() async {
         if let s = try? await state.api().twofaStatus(token: state.token) {
-            await MainActor.run { twofaEnabled = s.enabled; recoveryLeft = s.recoveryLeft }
+            await MainActor.run { twofaEnabled = s.enabled; appEnabled = s.appEnabled; recoveryLeft = s.recoveryLeft }
+        }
+    }
+    private func setApp2fa(_ v: Bool) {
+        err = nil
+        Task {
+            do {
+                let r = try await state.api().twofaAppToggle(enable: v, token: state.token)
+                await MainActor.run { appEnabled = r }
+            } catch { await MainActor.run { err = error.localizedDescription }; await loadTwofa() }
         }
     }
     private func doDisable() {

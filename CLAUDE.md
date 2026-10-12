@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.93**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.94**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.94 App 审批式 2FA（登录时手机 App 点批准）（用户反馈·App 2FA 三部曲 B）
+
+三级版本。承接 A，做 B：登录二段不用手输动态码,改为**手机 App 弹「批准/拒绝」**(Duo/Authy 式),轮询实现、不需 APNs 推送证书。
+- **模型/防锁死**：App 审批是 TOTP 的**附加方式**——开启要求已开 TOTP(`/user/2fa/app` 校验 `twofa_enabled`),这样 TOTP 码+恢复码永远是兜底,新设备没手机可审批时不会锁死。关 TOTP 时一并关 App 审批。
+- **数据(db.js)**：`users.app_2fa_enabled`(0/1) + 新表 `login_approvals(id,user_id,status[pending|approved|denied|expired],method,ip,ua,created_at,expires_at,decided_at)` + `idx_login_appr_user`;`loginApprovalStmts`(insert/get/pendingByUser/setStatus/purgeOld),导出 `loginApprovals`。`userStmts.setAppTwofa`。
+- **登录流程(api.js)**：`finishLogin` 进二段时,若 `app_2fa_enabled` 就建一条 pending 审批(5 分钟)、把 `aid` 塞进 2fa 短令牌,响应带 `app_approval:true`。新 `POST /2fa/approval-status {twofa_token}`(公开,只回状态布尔)供登录页轮询;`/2fa/login-verify` 加 `approval:true` 分支(校验该 aid 行 approved 且未过期)。用户端(requireAuth+noPublic):`POST /user/2fa/app {enable}`、`GET /user/2fa/approvals`、`POST /user/2fa/approvals/:id {action:approve|deny}`。`/user/2fa/status` 回 `app_enabled`。过期审批每小时 purge。⚠️ 第三方 OAuth 登录二段(oauth.js 直签短令牌、无 aid)仍只能用动态码,不走审批。
+- **前端(login.html)**：`show2faLogin(token, appApproval)`——appApproval 时顶部显示转圈 +「在 App 上批准」,每 2 秒轮询 approval-status,approved → 调 login-verify{approval:true} 换 token;denied/expired 提示;「改用验证码/恢复码」随时回退。dashboard 账号设定 2FA 卡(已开 TOTP 时)加「App 审批登录」开关。
+- **iOS**：APIClient 加 twofaAppToggle/pendingApprovals/decideApproval,`twofaStatus` 返回加 appEnabled。AccountSettings 加 App 审批开关 + 「登录审批请求」入口;新 `LoginApprovalsView`(列待批准、批准/拒绝、3 秒轮询);MeTab 顶部在有待批准时显示红色提醒入口(无推送,靠打开 App 时拉取)。
+- 测试：审批流 node:sqlite 复刻全过(pending 列表排除过期、approve/一次性/属主校验、login-verify 放行判定、过期拦截);server(db/api/auth) + dashboard/login 内联 JS 语法通过。iOS 靠 GitHub Actions 云编译。
+- ⚠️ 下一步 C：应用内 TOTP 保管库(端到端口令加密,服务器只存密文)。真机审批交互需装包验证。
 
 ## v3.5.93 App 登录态时长单独设（APP_JWT_EXPIRES_IN）（用户反馈·App 2FA 三部曲 A）
 

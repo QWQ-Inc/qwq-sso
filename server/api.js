@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
 const mdmApple = require('./mdm-apple');
 const plist = require('./plist');
@@ -291,8 +291,18 @@ function finishLogin(res, user, req, method, extra = {}) {
   // org-scoped 登录（v3.5.20）：token 带 org/org_scoped，2FA 中间态也要带上，过二段后仍保留
   const org = extra.org || null, orgScoped = !!extra.org_scoped;
   if (user.twofa_enabled) {
-    const twofa_token = signShortToken({ uid: user.id, stage: '2fa', method, org, org_scoped: orgScoped });
-    return res.json({ success: true, twofa_required: true, twofa_token });
+    // App 审批式 2FA（v3.5.94）：开了 App 审批就建一条 pending 审批，App 轮询展示、批准；token 里带 aid 关联。
+    let aid = null, app_approval = false;
+    if (user.app_2fa_enabled) {
+      try {
+        aid = uuidv4();
+        loginApprovals.insert.run({ id: aid, user_id: user.id, method: method || '', ip: req.ip || '', ua: (ua || '').slice(0, 300),
+          expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ') });
+        app_approval = true;
+      } catch (_) { aid = null; app_approval = false; }
+    }
+    const twofa_token = signShortToken({ uid: user.id, stage: '2fa', method, org, org_scoped: orgScoped, ...(aid ? { aid } : {}) });
+    return res.json({ success: true, twofa_required: true, twofa_token, app_approval });
   }
   logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method, ip: req.ip, ua });
   const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
@@ -474,17 +484,35 @@ router.post('/account/register', handleRegister);   // 语义更准的别名
 // 2FA（TOTP 二次验证）
 // ══════════════════════════════════════════
 
-// 登录第二步：用中间态令牌 + 动态码（或恢复码）换正式 token
+// 登录审批状态查询（v3.5.94）：登录页/其它客户端轮询，App 批准后这里返回 approved，再调 login-verify {approval:true} 换 token。
+// 公开（twofa_token 本身即凭证），只回状态布尔，不泄露任何用户数据。
+router.post('/2fa/approval-status', (req, res) => {
+  const { valid, data } = verifyToken(req.body.twofa_token || '');
+  if (!valid || data.stage !== '2fa' || !data.aid) return res.json({ status: 'invalid' });
+  const row = loginApprovals.get.get(data.aid);
+  if (!row || row.user_id !== data.uid) return res.json({ status: 'invalid' });
+  let status = row.status;
+  if (status === 'pending' && new Date(row.expires_at.replace(' ', 'T') + 'Z') < new Date()) status = 'expired';
+  res.json({ status });
+});
+
+// 登录第二步：用中间态令牌 + 动态码（或恢复码或 App 审批）换正式 token
 router.post('/2fa/login-verify', (req, res) => {
-  const { twofa_token, code, recovery_code } = req.body;
+  const { twofa_token, code, recovery_code, approval } = req.body;
   const { valid, data } = verifyToken(twofa_token || '');
   if (!valid || data.stage !== '2fa') return res.status(401).json({ error: '验证会话已过期，请重新登录' });
   const user = users.findById.get(data.uid);
   if (!user || !user.twofa_enabled || !user.twofa_secret) return res.status(400).json({ error: '账号状态异常，请重新登录' });
   if (user.status === 'disabled') return res.status(403).json({ error: '账号已停用，请联系管理员' });
 
-  let ok = false, viaRecovery = false;
-  if (recovery_code) {
+  let ok = false, viaRecovery = false, viaApproval = false;
+  if (approval) {
+    // App 审批式：本次登录对应的审批已被批准（未过期）才放行
+    const row = data.aid ? loginApprovals.get.get(data.aid) : null;
+    if (row && row.user_id === user.id && row.status === 'approved'
+        && new Date(row.expires_at.replace(' ', 'T') + 'Z') >= new Date()) { ok = true; viaApproval = true; }
+    if (!ok) return res.status(401).json({ error: '登录尚未在 App 上批准（或已过期/被拒绝）' });
+  } else if (recovery_code) {
     const row = twofa.findCode.get(user.id, totp.hashRecoveryCode(recovery_code));
     if (row) { twofa.useCode.run(row.id); ok = true; viaRecovery = true; }
   } else {
@@ -494,7 +522,7 @@ router.post('/2fa/login-verify', (req, res) => {
     logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: data.method || '账号密码', ip: req.ip, ua: req.headers['user-agent'], status: 'failed', failReason: '2FA 验证失败' });
     return res.status(401).json({ error: recovery_code ? '恢复码无效或已使用' : '动态验证码不正确' });
   }
-  logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: (data.method || '账号密码') + (viaRecovery ? '+恢复码' : '+2FA'), ip: req.ip, ua: req.headers['user-agent'] });
+  logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: (data.method || '账号密码') + (viaApproval ? '+App审批' : viaRecovery ? '+恢复码' : '+2FA'), ip: req.ip, ua: req.headers['user-agent'] });
   // org-scoped 登录（v3.5.20）：从中间态令牌把 org/org_scoped 带进正式 token
   const org = data.org || null, orgScoped = !!data.org_scoped;
   const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
@@ -508,9 +536,40 @@ router.get('/user/2fa/status', requireAuth, (req, res) => {
   res.json({
     success: true,
     enabled: !!user.twofa_enabled,
+    app_enabled: !!user.app_2fa_enabled,   // App 审批式 2FA（v3.5.94）
     mustSetup: mustSetup2fa(user),
     recoveryCodesLeft: user.twofa_enabled ? twofa.countCodes.get(user.id).n : 0,
   });
+});
+
+// ── App 审批式 2FA（v3.5.94）──
+// 开/关 App 审批（开启要求已开 TOTP——TOTP 码+恢复码作兜底，防没手机可审批时锁死）
+router.post('/user/2fa/app', requireAuth, noPublic, (req, res) => {
+  const user = users.findById.get(req.user.uid);
+  const enable = req.body.enable !== false && req.body.enable !== 0;
+  if (enable && !user.twofa_enabled) return res.status(400).json({ error: '请先开启两步验证（TOTP），App 审批作为其附加方式' });
+  users.setAppTwofa.run(enable ? 1 : 0, user.id);
+  res.json({ success: true, app_enabled: enable });
+});
+
+// App 拉取待审批的登录请求（本人；展示 IP/时间/登录方式供判断）
+router.get('/user/2fa/approvals', requireAuth, noPublic, (req, res) => {
+  const rows = loginApprovals.pendingByUser.all(req.user.uid).map(r => ({
+    id: r.id, method: r.method || '', ip: r.ip || '', ua: r.ua || '', created_at: r.created_at, expires_at: r.expires_at,
+  }));
+  res.json({ success: true, approvals: rows });
+});
+
+// App 批准/拒绝某次登录
+router.post('/user/2fa/approvals/:id', requireAuth, noPublic, (req, res) => {
+  const row = loginApprovals.get.get(req.params.id);
+  if (!row || row.user_id !== req.user.uid) return res.status(404).json({ error: '审批请求不存在' });
+  if (row.status !== 'pending') return res.status(400).json({ error: '该请求已处理或已过期' });
+  if (new Date(row.expires_at.replace(' ', 'T') + 'Z') < new Date()) { loginApprovals.setStatus.run('expired', row.id); return res.status(400).json({ error: '该请求已过期' }); }
+  const action = String(req.body.action || '').toLowerCase();
+  if (action !== 'approve' && action !== 'deny') return res.status(400).json({ error: '参数错误' });
+  loginApprovals.setStatus.run(action === 'approve' ? 'approved' : 'denied', row.id);
+  res.json({ success: true });
 });
 
 // 发起绑定：生成一个待启用密钥（不落库，返回给前端；启用时再校验并持久化）
@@ -552,6 +611,7 @@ router.post('/user/2fa/disable', requireAuth, noPublic, (req, res) => {
   else ok = totp.verifyToken(user.twofa_secret, code);
   if (!ok) return res.status(401).json({ error: '验证码不正确，无法关闭' });
   users.set2fa.run(0, null, user.id);
+  users.setAppTwofa.run(0, user.id);   // App 审批依赖 TOTP，一并关闭（v3.5.94）
   twofa.clearCodes.run(user.id);
   res.json({ success: true });
 });
@@ -1540,6 +1600,7 @@ router.delete('/admin/verify-files/:name', requireAdmin(1), (req, res) => {
 });
 // 到期清理：每小时一次（读取时也会过滤掉过期的，这里只是把行删掉）
 setInterval(() => { try { verifyFiles.purgeExpired.run(); } catch (_) {} }, 3600e3).unref();
+setInterval(() => { try { loginApprovals.purgeOld.run(); } catch (_) {} }, 3600e3).unref();   // 清理过期登录审批（v3.5.94）
 // 给 index.js 在根路径下提供文件用
 router.serveVerifyFile = (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();

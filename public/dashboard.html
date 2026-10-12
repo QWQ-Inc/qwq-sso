@@ -3886,8 +3886,23 @@ async function loadTwofaCard() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn" onclick="regen2faRecovery()">重新生成恢复码</button>
         <button class="btn" style="color:var(--err);border-color:var(--err);" onclick="disable2fa()">关闭两步验证</button>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--txt);">📱 App 审批登录　<span class="badge ${data.app_enabled?'ok':''}" style="${data.app_enabled?'':'background:var(--bg);color:var(--txd);'}">${data.app_enabled?'已开启':'未开启'}</span></div>
+            <div style="font-size:11.5px;color:var(--txd);margin-top:3px;line-height:1.6;">开启后登录时手机 App 会弹「批准/拒绝」,点批准即可登录,不用手输动态码(仍可回退用动态码/恢复码)。需装并登录 QWQ App。</div>
+          </div>
+          <button class="btn ${data.app_enabled?'':'primary'}" onclick="toggleApp2fa(${data.app_enabled?0:1})">${data.app_enabled?'关闭':'开启'}</button>
+        </div>
       </div>`;
   }
+}
+async function toggleApp2fa(enable) {
+  const { ok, data } = await api('POST', '/user/2fa/app', { enable: !!enable });
+  if (!ok) { showToast(data?.error || '操作失败'); return; }
+  showToast(enable ? '✓ 已开启 App 审批登录' : '已关闭 App 审批登录');
+  loadTwofaCard();
 }
 
 // 通用：弹一个输入动态码的小浮层，回调拿到 code

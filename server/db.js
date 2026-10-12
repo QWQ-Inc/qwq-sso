@@ -297,6 +297,21 @@ try { db.exec('ALTER TABLE users ADD COLUMN kyc_pseudonym TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE users ADD COLUMN kyc_name_hash TEXT'); } catch(_) {}
 // v3.5.41：同一人多个账号合并后，被合并的账号停用并记下并入了谁（不删行：登录日志等历史还挂在它上面）
 try { db.exec('ALTER TABLE users ADD COLUMN merged_into TEXT'); } catch(_) {}
+// App 审批式 2FA（v3.5.94）：开启后登录二段可在手机 App 上「批准/拒绝」；要求已开 TOTP 作兜底（TOTP 码+恢复码永远可用，防锁死）。
+try { db.exec('ALTER TABLE users ADD COLUMN app_2fa_enabled INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+// 登录审批请求：登录进二段时若用户开了 App 审批，建一条 pending，App 轮询展示并批准；登录页轮询结果换正式 token。
+try { db.exec(`CREATE TABLE IF NOT EXISTS login_approvals (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | denied | expired
+  method      TEXT,                              -- 登录方式文案（账号密码/第三方…）
+  ip          TEXT,
+  ua          TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at  TEXT NOT NULL,
+  decided_at  TEXT
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_login_appr_user ON login_approvals(user_id, status)'); } catch(_) {}
 try { db.exec("ALTER TABLE shop_goods ADD COLUMN redeem_mode TEXT NOT NULL DEFAULT 'code'"); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN allow_instant INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN redirect_url TEXT'); } catch(_) {}
@@ -1096,6 +1111,7 @@ const userStmts = {
 
   // 2FA
   set2fa:     db.prepare("UPDATE users SET twofa_enabled=?, twofa_secret=?, updated_at=datetime('now') WHERE id=?"),
+  setAppTwofa:db.prepare("UPDATE users SET app_2fa_enabled=?, updated_at=datetime('now') WHERE id=?"),
 };
 
 // ──────────────────────────────────────────
@@ -1108,6 +1124,15 @@ const twofaStmts = {
   useCode:     db.prepare('UPDATE twofa_recovery_codes SET used=1 WHERE id=?'),
   clearCodes:  db.prepare('DELETE FROM twofa_recovery_codes WHERE user_id=?'),
   countCodes:  db.prepare('SELECT COUNT(*) AS n FROM twofa_recovery_codes WHERE user_id=? AND used=0'),
+};
+
+// App 审批式 2FA（v3.5.94）：登录审批请求
+const loginApprovalStmts = {
+  insert:       db.prepare("INSERT INTO login_approvals (id,user_id,status,method,ip,ua,expires_at) VALUES (@id,@user_id,'pending',@method,@ip,@ua,@expires_at)"),
+  get:          db.prepare('SELECT * FROM login_approvals WHERE id=?'),
+  pendingByUser:db.prepare("SELECT * FROM login_approvals WHERE user_id=? AND status='pending' AND expires_at > datetime('now') ORDER BY created_at DESC"),
+  setStatus:    db.prepare("UPDATE login_approvals SET status=?, decided_at=datetime('now') WHERE id=? AND status='pending'"),
+  purgeOld:     db.prepare("DELETE FROM login_approvals WHERE expires_at < datetime('now','-1 day')"),
 };
 
 const webauthnStmts = {
@@ -1852,6 +1877,7 @@ module.exports = {
   apps: appStmts,
   idp: idpStmts,
   twofa: twofaStmts,
+  loginApprovals: loginApprovalStmts,
   webauthn: webauthnStmts,
   announcements: announcementStmts,
   documents: documentStmts,

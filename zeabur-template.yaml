@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://schema.zeabur.app/template.json
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: QWQ-SSO
+spec:
+  description: 统一登录系统 · 多渠道登录 / OIDC 身份提供方 / 积分商城 / KYC / 开放 API
+  # TODO: 换成你自己的图标与封面图 URL（可留空）
+  icon: https://raw.githubusercontent.com/QWQ-Inc/qwq-sso/main/public/favicon.ico
+  tags:
+    - Authentication
+    - Tool
+  readme: |-
+    # QWQ SSO
+    统一登录系统：13 平台三方登录、OIDC 身份提供方、2FA/Passkey、积分商城、KYC 实名、开放 API。
+
+    部署后访问 `https://<你的域名>/setup` 完成初始化向导（创建超级管理员）。
+
+    - 数据持久化在挂载到 `/data` 的卷里（SQLite）。请勿删除该卷，否则数据丢失。
+    - `JWT_SECRET` / `SESSION_SECRET` 已自动随机生成，无需手填。
+    - 短信/邮件、三方登录、KYC 等凭证部署后在管理端「系统配置」里填写。
+
+  variables:
+    - key: PUBLIC_DOMAIN
+      type: DOMAIN
+      name: 访问域名
+      description: 分配给登录系统的公开域名
+
+  services:
+    - name: qwq-sso
+      template: GIT
+      domainKey: PUBLIC_DOMAIN
+      icon: https://raw.githubusercontent.com/QWQ-Inc/qwq-sso/main/public/favicon.ico
+      spec:
+        source:
+          # GitHub 仓库的数字 ID（QWQ-Inc/qwq-sso）。换成 fork 后的仓库需改这里。
+          repoID: 1280195499
+          branch: main
+        ports:
+          - id: web
+            port: 3000
+            type: HTTP
+        volumes:
+          # SQLite 数据库 + 字体缓存 + 备份都落在这里，务必持久化
+          - id: data
+            dir: /data
+        env:
+          PORT:
+            default: "3000"
+          NODE_ENV:
+            default: production
+          DB_PATH:
+            default: /data/sso.db
+          BASE_URL:
+            # 绑定到本服务的公开地址（完整 https URL）
+            default: ${ZEABUR_WEB_URL}
+          JWT_SECRET:
+            default: ${PASSWORD}
+          SESSION_SECRET:
+            default: ${PASSWORD}
+          JWT_EXPIRES_IN:
+            default: 7d
+
+localization:
+  zh-CN:
+    description: 统一登录系统 · 多渠道登录 / OIDC 身份提供方 / 积分商城 / KYC / 开放 API

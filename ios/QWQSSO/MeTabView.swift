@@ -7,6 +7,7 @@ struct MeTabView: View {
     @State private var kycVerified = false
     @State private var kycText = "未实名"
     @State private var orgs: [[String: Any]] = []   // 我所属的组织 + 组织内 UID（v3.5.32）
+    @State private var pendingApprovals = 0          // 待批准的登录请求（App 审批式 2FA，v3.5.94）
 
     var body: some View {
         NavigationStack {
@@ -24,6 +25,20 @@ struct MeTabView: View {
                             Text(state.domain).font(.caption2).foregroundColor(.secondary)
                         }
                     }.padding(.vertical, 4)
+                }
+
+                if pendingApprovals > 0 {
+                    Section {
+                        NavigationLink { LoginApprovalsView() } label: {
+                            HStack {
+                                Image(systemName: "person.badge.key.fill").foregroundColor(.orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("有 \(pendingApprovals) 个登录待批准").font(.subheadline).bold()
+                                    Text("去确认是否本人登录").font(.caption).foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Section("账号") {
@@ -78,7 +93,8 @@ struct MeTabView: View {
         do {
             let u = try await state.api().meUser(token: state.token)
             let os = (try? await state.api().myOrgs(token: state.token)) ?? []
-            await MainActor.run { orgs = os }
+            let appr = (try? await state.api().pendingApprovals(token: state.token))?.count ?? 0
+            await MainActor.run { orgs = os; pendingApprovals = appr }
             await MainActor.run {
                 if let name = u["name"] as? String { state.setMe(name: name, uid: state.meUid.isEmpty ? uidOf(u) : state.meUid) }
                 let verified = ((u["kyc_verified"] as? Int) ?? 0) == 1 || (u["kyc_verified"] as? Bool) == true
