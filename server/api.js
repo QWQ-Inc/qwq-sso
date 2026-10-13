@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, totpVault, printers, printJobs, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, totpVault, printers, printJobs, printRules, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
 const mdmApple = require('./mdm-apple');
 const plist = require('./plist');
@@ -1816,6 +1816,7 @@ router.delete('/admin/oauth-subjects/:id', requireAdmin(2), (req, res) => {
   dirSources.removeAppliedBySubject.run(row.id);
   dirSources.removeBySubject.run(row.id);
   oauthSubjects.clearAdmins.run(row.id);         // 连带清组织管理员
+  try { printRules.removeBySubject.run(row.id); } catch (_) {}   // v3.5.98 连带清打印规则
   oauthSubjects.remove.run(row.id);
   res.json({ success: true });
 });
@@ -5296,6 +5297,31 @@ function scopedDeviceRows(req, org) {
   const want = org && my.includes(org) ? [org] : my;
   return want.length ? devices.bySubjects.all(JSON.stringify(want)) : [];
 }
+// ── 打印治理（v3.5.98 Phase 2a）：规则引擎 + 配额 + 页数估算 ──
+function printPlatformDailyPages() { const n = parseInt(process.env.PRINT_PLATFORM_DAILY_PAGES, 10); return Number.isInteger(n) && n >= 0 ? n : 0; } // 平台每日总量,0=不限
+function orgDailyPages(sid) { const s = oauthSubjects.get.get(sid); const n = s ? parseInt(s.print_daily_pages, 10) : 0; return Number.isInteger(n) && n > 0 ? n : 0; } // 0=不限
+// 估算页数（配额用）：PDF 数 /Type /Page；图片/其它按 1 页；× 份数在调用处
+function estimatePages(buf, mime) {
+  if (mime === 'application/pdf') {
+    try {
+      const s = buf.toString('latin1');
+      let c = (s.match(/\/Type\s*\/Page(?![\w])/g) || []).length;         // 页对象(排除 /Pages)
+      if (!c) { const m = s.match(/\/Count\s+(\d+)/); if (m) c = parseInt(m[1], 10); }
+      return Math.max(1, Math.min(c || 1, 5000));
+    } catch (_) { return 1; }
+  }
+  return 1;   // 图片 1 页；Office 服务端无法解析,保守按 1 页/份（真实页数由代理转 PDF 后才知）
+}
+function printCategoriesOf(sid) {
+  return printRules.bySubject.all(sid).map(r => ({ key: r.category, label: r.label, watermark: !!r.watermark, approval: !!r.approval, is_default: !!r.is_default }));
+}
+// 解析用户选的类别 → 该走的规则（选了就用,没选/不存在用默认,无规则则无水印无审批）
+function resolvePrintRule(sid, category) {
+  let r = category ? printRules.getCat.get(sid, category) : null;
+  if (!r) r = printRules.defaultOf.get(sid);
+  return r ? { category: r.category, label: r.label, watermark: !!r.watermark, approval: !!r.approval }
+           : { category: null, label: null, watermark: false, approval: false };
+}
 
 // 列打印机 + 打印代理（管理端）
 router.get('/admin/printers', requireAuth, (req, res) => {
@@ -5366,13 +5392,93 @@ router.get('/admin/print-jobs', requireAuth, (req, res) => {
   res.json({ success: true, jobs: printJobs.byPrinter.all(pr.id) });
 });
 
+// ── 打印治理：规则引擎 + 配额 + 审批（组织管理员，canManageOrg 限本组织）──
+// 列某组织的打印规则 + 配额
+router.get('/admin/orgs/:sid/print-rules', requireAuth, (req, res) => {
+  if (!oauthSubjects.get.get(req.params.sid)) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, req.params.sid, false)) return res.status(403).json({ error: '无权管理该组织' });
+  res.json({ success: true, rules: printRules.bySubject.all(req.params.sid), daily_pages: orgDailyPages(req.params.sid) });
+});
+router.post('/admin/orgs/:sid/print-rules', requireAuth, (req, res) => {
+  if (!oauthSubjects.get.get(req.params.sid)) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, req.params.sid)) return res.status(403).json({ error: '无权管理该组织' });
+  const b = req.body || {};
+  const label = String(b.label || '').trim(); if (!label) return res.status(400).json({ error: '请填类别名称' });
+  // 类别 key：用传入的 category（归一化）或从 label 生成；组织内唯一
+  let cat = String(b.category || label).trim().toLowerCase().replace(/[^a-z0-9_一-龥]/g, '_').slice(0, 40) || ('cat_' + Date.now().toString(36));
+  if (printRules.getCat.get(req.params.sid, cat)) return res.status(409).json({ error: '该类别已存在' });
+  const id = uuidv4();
+  printRules.insert.run({ id, subject_id: req.params.sid, category: cat, label: label.slice(0, 40), watermark: b.watermark ? 1 : 0, approval: b.approval ? 1 : 0, is_default: b.is_default ? 1 : 0, sort_order: parseInt(b.sort_order) || 0 });
+  if (b.is_default) printRules.clearDefault.run(req.params.sid, id);   // 保证只有一个默认
+  audit('print.rule_added', { subject: req.params.sid, actor: actorOf(req), detail: { category: cat, label, watermark: !!b.watermark, approval: !!b.approval } });
+  res.json({ success: true, id });
+});
+router.patch('/admin/print-rules/:id', requireAuth, (req, res) => {
+  const r = printRules.get.get(req.params.id);
+  if (!r) return res.status(404).json({ error: '规则不存在' });
+  if (!canManageOrg(req, r.subject_id)) return res.status(403).json({ error: '无权管理' });
+  const b = req.body || {};
+  printRules.update.run({ id: r.id, label: String(b.label != null ? b.label : r.label).slice(0, 40),
+    watermark: b.watermark != null ? (b.watermark ? 1 : 0) : r.watermark,
+    approval: b.approval != null ? (b.approval ? 1 : 0) : r.approval,
+    is_default: b.is_default != null ? (b.is_default ? 1 : 0) : r.is_default,
+    sort_order: b.sort_order != null ? (parseInt(b.sort_order) || 0) : r.sort_order });
+  if (b.is_default) printRules.clearDefault.run(r.subject_id, r.id);
+  res.json({ success: true });
+});
+router.delete('/admin/print-rules/:id', requireAuth, (req, res) => {
+  const r = printRules.get.get(req.params.id);
+  if (!r) return res.status(404).json({ error: '规则不存在' });
+  if (!canManageOrg(req, r.subject_id)) return res.status(403).json({ error: '无权管理' });
+  printRules.remove.run(r.id);
+  res.json({ success: true });
+});
+// 组织每日打印页数上限
+router.put('/admin/orgs/:sid/print-policy', requireAuth, (req, res) => {
+  if (!oauthSubjects.get.get(req.params.sid)) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, req.params.sid)) return res.status(403).json({ error: '无权管理该组织' });
+  const n = Math.max(0, Math.min(1000000, parseInt(req.body?.daily_pages) || 0));
+  oauthSubjects.setPrintDailyPages.run(n, req.params.sid);
+  audit('print.policy_set', { subject: req.params.sid, actor: actorOf(req), detail: { daily_pages: n } });
+  res.json({ success: true, daily_pages: n });
+});
+// 待审批打印任务（某组织）
+router.get('/admin/print-approvals', requireAuth, (req, res) => {
+  const org = String(req.query?.org || '').trim();
+  if (org) {
+    if (!canManageOrg(req, org, false)) return res.status(403).json({ error: '无权管理该组织' });
+    return res.json({ success: true, jobs: printJobs.pendingApprovalsForOrg.all(org) });
+  }
+  // 不指定组织：汇总我管理的所有组织
+  const orgs = isSysAdmin(req, 3) ? oauthSubjects.all.all().map(s => s.id) : myManagedOrgs(req).map(o => o.id);
+  if (!orgs.length) return res.status(403).json({ error: '无权管理' });
+  let jobs = []; orgs.forEach(sid => { jobs = jobs.concat(printJobs.pendingApprovalsForOrg.all(sid)); });
+  res.json({ success: true, jobs });
+});
+router.post('/admin/print-jobs/:id/approve', requireAuth, (req, res) => {
+  const j = printJobs.get.get(req.params.id);
+  if (!j || j.status !== 'pending_approval') return res.status(404).json({ error: '任务不存在或已处理' });
+  if (!canManageOrg(req, j.subject_id)) return res.status(403).json({ error: '无权审批' });
+  printJobs.approve.run(req.user.uid, j.id);   // → pending,进代理队列
+  audit('print.approved', { subject: j.printer_id, actor: actorOf(req), detail: { job: j.id, file: j.file_name, pages: j.pages } });
+  res.json({ success: true });
+});
+router.post('/admin/print-jobs/:id/deny', requireAuth, (req, res) => {
+  const j = printJobs.get.get(req.params.id);
+  if (!j || j.status !== 'pending_approval') return res.status(404).json({ error: '任务不存在或已处理' });
+  if (!canManageOrg(req, j.subject_id)) return res.status(403).json({ error: '无权审批' });
+  printJobs.deny.run(String(req.body?.reason || '管理员已拒绝').slice(0, 200), req.user.uid, j.id);
+  audit('print.denied', { subject: j.printer_id, actor: actorOf(req), detail: { job: j.id, file: j.file_name } });
+  res.json({ success: true });
+});
+
 // ── 用户端：发去打印 ──
 router.get('/user/printers', requireAuth, noPublic, (req, res) => {
   if (!devicesSelfEnabled()) return res.json({ success: true, printers: [] });
   const myOrgs = (orgMembers.ofUser.all(req.user.uid) || []).map(m => m.subject_id);
   if (!myOrgs.length) return res.json({ success: true, printers: [] });
   const rows = devices.bySubjects.all(JSON.stringify(myOrgs)).filter(d => d.kind === 'printer' && d.status === 'active');
-  const list = rows.map(d => { const v = printerView(d); return { id: v.id, name: v.name, subject_name: v.subject_name, color: v.color, duplex: v.duplex, default_media: v.default_media }; });
+  const list = rows.map(d => { const v = printerView(d); return { id: v.id, name: v.name, subject_name: v.subject_name, color: v.color, duplex: v.duplex, default_media: v.default_media, categories: printCategoriesOf(d.subject_id) }; });
   res.json({ success: true, printers: list });
 });
 router.post('/user/print-jobs', requireAuth, noPublic, express.raw({ type: () => true, limit: printMaxBytes() + 4096 }), (req, res) => {
@@ -5388,16 +5494,29 @@ router.post('/user/print-jobs', requireAuth, noPublic, express.raw({ type: () =>
   if (!v.ok) return res.status(400).json({ error: v.error });
   const limit = printDailyLimit();
   if (limit && printJobs.countUserDay.get(req.user.uid).n >= limit) return res.status(429).json({ error: '今日打印次数已达上限' });
+  // 打印触发规则（类别 → 水印/审批）
+  const rule = resolvePrintRule(printer.subject_id, String(req.query?.category || '').trim() || null);
+  // 需烧水印的类别只支持 PDF/图片（Office 由代理转 PDF,服务端烧不了 → 拒绝,防无法溯源的件被打印）
+  if (rule.watermark && !wmBurn.canBurn(v.mime)) return res.status(400).json({ error: '该类别需烧录身份水印，仅支持 PDF / 图片，请先转成 PDF' });
+  const copies = Math.max(1, Math.min(99, parseInt(req.query?.copies) || 1));
+  const pages = estimatePages(buf, v.mime) * copies;
+  // 配额：组织每日页数 + 平台每日总量
+  const orgLimit = orgDailyPages(printer.subject_id);
+  if (orgLimit && printJobs.pagesOrgDay.get(printer.subject_id).n + pages > orgLimit) return res.status(429).json({ error: '本组织今日打印页数已达上限（' + orgLimit + ' 页）' });
+  const platLimit = printPlatformDailyPages();
+  if (platLimit && printJobs.pagesPlatformDay.get().n + pages > platLimit) return res.status(429).json({ error: '平台今日打印页数已达上限' });
   const cfg = printers.cfgGet.get(printer.id) || {};
   const id = uuidv4();
+  const status = rule.approval ? 'pending_approval' : 'pending';
   printJobs.insert.run({ id, printer_id: printer.id, user_id: req.user.uid, subject_id: printer.subject_id,
     file_name: filename, mime: v.mime, size: buf.length, data: buf,
-    copies: Math.max(1, Math.min(99, parseInt(req.query?.copies) || 1)),
+    copies,
     duplex: (req.query?.duplex === '1' && cfg.duplex) ? 1 : 0,
     color: (req.query?.color === '0' || !cfg.color) ? 0 : 1,
-    media: String(req.query?.media || cfg.default_media || 'A4').slice(0, 16) });
-  audit('print.job', { subject: printer.id, actor: 'user:' + req.user.uid, detail: { printer: printer.name, file: filename, size: buf.length, mime: v.mime } });
-  res.json({ success: true, id });
+    media: String(req.query?.media || cfg.default_media || 'A4').slice(0, 16),
+    category: rule.category, pages, watermark: rule.watermark ? 1 : 0, status });
+  audit('print.job', { subject: printer.id, actor: 'user:' + req.user.uid, detail: { printer: printer.name, file: filename, size: buf.length, mime: v.mime, category: rule.category, pages, watermark: rule.watermark, approval: rule.approval } });
+  res.json({ success: true, id, status, needs_approval: rule.approval, pages });
 });
 router.get('/user/print-jobs', requireAuth, noPublic, (req, res) => {
   res.json({ success: true, jobs: printJobs.byUser.all(req.user.uid) });
@@ -5426,17 +5545,36 @@ router.post('/print/checkin', express.json(), (req, res) => {
   jobs.forEach(j => printJobs.setStatus.run('printing', null, j.id));   // 派发即标 printing,避免重复打印
   res.json({ success: true, jobs });
 });
-router.post('/print/file', express.json(), (req, res) => {
+router.post('/print/file', express.json(), async (req, res) => {
   const agent = printAgentDev(req);
   if (!agent) return res.status(401).json({ error: 'unauthorized' });
-  const row = printJobs.fileOf.get(String(req.body.job_id || ''));
+  const jobId = String(req.body.job_id || '');
+  const row = printJobs.fileOf.get(jobId);
   if (!row || !row.data) return res.status(404).json({ error: 'not found' });
   const cfg = printers.cfgGet.get(row.printer_id);
   if (!cfg || cfg.agent_id !== agent.id) return res.status(403).json({ error: 'forbidden' });
+  let data = row.data;
+  // 规则要求烧水印：下发给代理前把「发起人 + 时间 + 追踪码」烧进 PDF/图片（与导出烧录一致,打印件泄露可溯源）
+  if (row.watermark && wmBurn.canBurn(row.mime)) {
+    try {
+      const trace = wmBurn.genTrace();
+      const submitter = users.findById.get(row.user_id);
+      const out = await wmBurn.burn(Buffer.from(row.data), row.mime, { user: submitter, policy: watermarkPolicy(row.subject_id || undefined), trace });
+      data = out.data;
+      audit('file.watermarked', { subject: submitter ? String(submitter.uid_seq) : null, actor: 'print_agent:' + agent.id,
+        detail: { trace, print_job: jobId, printer: row.printer_id, file: String(row.file_name || '').slice(0, 80), mime: row.mime, cjk: out.cjk } });
+    } catch (e) {
+      // 烧录失败绝不下发原件：标任务失败,让用户知道
+      console.warn('[打印水印] 烧录失败：', e.message);
+      printJobs.setStatus.run('failed', '水印烧录失败：' + e.message.slice(0, 120), jobId);
+      printJobs.clearData.run(jobId);
+      return res.status(500).json({ error: 'watermark failed' });
+    }
+  }
   res.setHeader('Content-Type', row.mime || 'application/octet-stream');
   res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(row.file_name || 'document') + '"');
   res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.send(row.data);
+  res.send(data);
 });
 router.post('/print/result', express.json(), (req, res) => {
   const agent = printAgentDev(req);

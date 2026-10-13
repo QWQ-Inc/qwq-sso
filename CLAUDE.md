@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.97**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.98**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.98 打印接入 Phase 2a（打印触发规则引擎 + 审批流 + 配额 + 水印烧录）（用户反馈）
+
+三级版本。承接 v3.5.97 Phase 1，做 Phase 2 的治理层（用户确认的第 3、4 点：类别→水印/审批由组织管理员设定、配额组织每日页数+平台总量）。直连 IPP / iOS 发打印 / Chromebook 作后续单独版本。
+- **数据(db.js)**：新表 `print_rules`（subject_id/category/label/watermark/approval/is_default/sort_order，`UNIQUE(subject_id,category)`）；`print_jobs` 加 `category`/`pages`(估算页数×份数)/`watermark`/`approver`/`decided_at`，status 增 `pending_approval`；`oauth_subjects.print_daily_pages`(组织每日页数上限,0=不限)。`printRuleStmts`（bySubject/get/getCat/defaultOf/insert/update/clearDefault/remove/removeBySubject），导出 `printRules`。`printJobStmts` 扩：insert 带新列、`pagesUserDay`/`pagesOrgDay`/`pagesPlatformDay`(SUM pages 排除 canceled/failed)、`pendingApprovalsForOrg`(JOIN users 带姓名)、`approve`(→pending+审批人)、`deny`(→failed 清 BLOB)、cancel 放宽到 pending_approval。`oauthSubjects.setPrintDailyPages`。
+- **接口(api.js)**：`estimatePages(buf,mime)`(PDF 数 /Type /Page 或 /Count；图片/Office 1 页)、`resolvePrintRule(sid,cat)`(选了用之,否则默认,无规则则不烧不审)、`orgDailyPages`、`printPlatformDailyPages`(env `PRINT_PLATFORM_DAILY_PAGES`)。规则/配额(组织管理员 canManageOrg)：`GET/POST /admin/orgs/:sid/print-rules`、`PATCH/DELETE /admin/print-rules/:id`、`PUT /admin/orgs/:sid/print-policy`(每日页数)。审批：`GET /admin/print-approvals?org=`(指定组织或汇总我管的)、`POST /admin/print-jobs/:id/approve|deny`。改 `POST /user/print-jobs`：解析类别规则→需水印但非 PDF/图片则 400→估算页数→组织/平台配额(超 429)→需审批则 `pending_approval` 否则 `pending`，入库 category/pages/watermark，响应带 needs_approval。改 `/print/file`：job.watermark 时下发给代理前用 `wmBurn.burn`(发起人+时间+追踪码,复用 v3.5.33)烧 PDF/图片，审计 `file.watermarked`(actor print_agent)，烧录失败标 failed 不下发原件；追踪码反查沿用 `/admin/audit/trace/:code`。`/user/printers` 每台带 `categories`。`/user/print-jobs/:id/cancel` 可取消 pending_approval。删组织连带清 print_rules。
+- **前端(dashboard.html)**：用户发打印弹窗加「文档类别」下拉(来自 printer.categories)+ 水印/审批提示，任务状态加「⏳待审批」+🔏水印标，提交响应区分「已发送/待审批」。管理端设备页加「🖨️ 打印规则/审批/配额」卡(按当前组织：类别 CRUD[名称/烧水印/需审批/默认] + 每日页数上限) +「⏳ 待审打印」卡(批准/拒绝)；goto/onAdminOrgChange/clearAdminOrg 挂载 loadPrintRules/loadPrintApprovals；AUDIT_EVENT_LABEL + 系统配置加 `PRINT_PLATFORM_DAILY_PAGES`。init.js ENV_KEYS 同步。
+- 测试：`print-gov-test.js` node:sqlite 复刻 28 项全过（页数估算 PDF 多页/Count/图片/Office、规则默认唯一与回退、审批 pending_approval→approve→进代理队列 / deny→failed 清 BLOB / 不进代理队列、水印标志入库、配额组织 3+6≤10 放行·3+8>10 拦截·不限组织放行·平台总量、取消属主校验/失败任务不可取消）；server(db/api/init)+dashboard 内联 JS + print-agent 语法通过。
+- ⚠️ 真机打印/水印烧录(sharp/pdf-lib 可选依赖)无打印机未联调，烧录逻辑复用 v3.5.33 导出烧录(已测路径)。**Phase 2 剩余**：直连 IPP、iOS 发打印、Chromebook 指南。
 
 ## v3.5.97 打印接入 Phase 1（打印机纳入设备管理 + 打印代理管线）（用户反馈）
 

@@ -2646,6 +2646,20 @@ async function loadMe() {
             💡 打印机纳入设备管理、按组织归属。局域网/USB/本地打印机需在组织内一台机器跑**打印代理**（<code>tools/print-agent</code>，像 MDM 代理那样轮询拉任务打印）；网络打印机可选直连 IPP（规划中）。组织成员在「我的设备 → 打印」里发资料打印。
           </div>
         </div>
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>🖨️ 打印规则 / 审批 / 配额</h3>
+            <button class="btn primary" style="font-size:11px;" onclick="openPrintRuleModal()">+ 新建类别</button>
+          </div>
+          <div class="card-body"><div id="print-rules-admin"><div style="color:var(--txd);">加载中…</div></div></div>
+          <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
+            💡 组织管理员设定「文档类别」→ 是否烧身份水印+追踪码 / 是否需审批。用户发打印时选类别，命中默认类别时按默认规则走。需审批的任务进「待审打印」，批准后才进代理队列。配额按**估算页数×份数**计（PDF 按页、图片/其它按 1 页）。需水印的类别仅支持 PDF/图片。
+          </div>
+        </div>
+        <div class="card" id="print-approvals-card" style="display:none;">
+          <div class="card-header"><h3>⏳ 待审打印</h3></div>
+          <div class="card-body"><div id="print-approvals-admin"></div></div>
+        </div>
       </div>
 
       <!-- ▸ 管理端：门禁管理 -->
@@ -3526,6 +3540,9 @@ function onAdminOrgChange() {
   if (typeof loadOauthSubjects === 'function') loadOauthSubjects();
   if (typeof loadDevices === 'function') loadDevices('adm');
   if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
+  if (typeof loadPrinters === 'function') loadPrinters();
+  if (typeof loadPrintRules === 'function') loadPrintRules();
+  if (typeof loadPrintApprovals === 'function') loadPrintApprovals();
 }
 function renderAdminOrgBanner(org) {
   let el = document.getElementById('admin-org-banner');
@@ -3551,6 +3568,9 @@ function clearAdminOrg() {
   if (typeof loadOauthSubjects === 'function') loadOauthSubjects();
   if (typeof loadDevices === 'function') loadDevices('adm');
   if (typeof loadAccessAdmin === 'function') loadAccessAdmin();
+  if (typeof loadPrinters === 'function') loadPrinters();
+  if (typeof loadPrintRules === 'function') loadPrintRules();
+  if (typeof loadPrintApprovals === 'function') loadPrintApprovals();
 }
 
 function setMode(mode, targetPage) {
@@ -3734,7 +3754,7 @@ function goto(page) {
   if(page === 'adm-oauth') { loadOauthSubjects(); }
   if(page === 'adm-api-logs') { loadAdmApiLogs(); }
   if(page === 'adm-audit') { loadAuditChain(); }
-  if(page === 'adm-devices') { loadDevices('adm'); loadPrinters(); }
+  if(page === 'adm-devices') { loadDevices('adm'); loadPrinters(); loadPrintRules(); loadPrintApprovals(); }
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
   if(page === 'adm-limited') loadLimitedAdmins();
@@ -7798,6 +7818,7 @@ const AUDIT_EVENT_LABEL = {
   'access.fed_issued':'签发跨域码', 'fed.app_login':'跨域应用登录', 'fed.pair_received':'接收联邦配对',
   'app.deprovision_pushed':'推送撤销账号', 'verify.checked':'身份核验', 'file.watermarked':'导出文件加水印', 'org.dir_synced':'通讯录同步', 'org.dir_sync_configured':'配置通讯录同步', 'folder.dir_conn_configured':'配置文件夹通讯录', 'folder.credential_added':'添加文件夹凭证', 'folder.migrated':'迁移到文件夹',
   'org.member_password_set':'设置组织密码', 'org.member_password_cleared':'清除组织密码',
+  'print.job':'发起打印', 'print.agent_registered':'登记打印代理', 'print.rule_added':'新增打印类别', 'print.policy_set':'设置打印配额', 'print.approved':'批准打印', 'print.denied':'拒绝打印',
 };
 // 水印追踪码反查（v3.5.33）：外泄的图片/PDF 上「T+8 位」→ 谁、何时、导出了哪个附件
 async function lookupTrace() {
@@ -8156,6 +8177,85 @@ async function delPrinter(id, name) {
   if (!await uiConfirm(`删除打印机「${name || id}」？其待打印任务也会清除。`)) return;
   const { ok, data } = await api('DELETE', '/admin/devices/' + id);
   if (ok) { showToast('已删除'); loadPrinters(); } else showToast(data?.error || '删除失败');
+}
+// ── 打印规则 / 审批 / 配额（管理端，v3.5.98）──
+let _printRules = [];
+async function loadPrintRules() {
+  const box = document.getElementById('print-rules-admin'); if (!box) return;
+  const org = _curAdminOrg ? _curAdminOrg() : '';
+  if (!org) { box.innerHTML = '<div style="color:var(--txd);font-size:12px;">请先在顶部「当前组织」里选定一个组织，再设定它的打印规则与配额。</div>'; _printRules = []; return; }
+  const { ok, data } = await api('GET', '/admin/orgs/' + encodeURIComponent(org) + '/print-rules');
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);font-size:12px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  _printRules = data.rules || [];
+  const rulesHtml = _printRules.map(r => `<div style="border:1px solid var(--bd);border-radius:7px;padding:9px;margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+      <div><b>${esc(r.label)}</b>${r.is_default ? ' <span style="font-size:10px;color:var(--pr);">默认</span>' : ''}
+        <div style="font-size:11px;color:var(--txd);">${r.watermark ? '🔏 烧水印+追踪码' : '不烧水印'} · ${r.approval ? '⏳ 需审批' : '免审批'}</div></div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn" style="font-size:11px;" onclick="openPrintRuleModal('${esc(r.id)}')">编辑</button>
+        <button class="btn" style="font-size:11px;color:var(--err);" onclick="delPrintRule('${esc(r.id)}','${esc(r.label)}')">删除</button>
+      </div></div>`).join('') || '<div style="color:var(--txd);font-size:12px;">还没有打印类别。新建一个类别并勾「默认」，用户发打印时就按它走（如「普通→不烧水印」「合同→烧水印+需审批」）。</div>';
+  box.innerHTML = rulesHtml +
+    `<div style="margin-top:12px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+       <label>本组织每日打印页数上限 <input id="print-daily-pages" type="number" min="0" value="${data.daily_pages || 0}" style="width:90px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label>
+       <span style="font-size:11px;color:var(--txd);">0 = 不限（按估算页数×份数计）</span>
+       <button class="btn" style="font-size:11px;" onclick="savePrintPolicy('${esc(org)}')">保存配额</button>
+     </div>`;
+}
+function openPrintRuleModal(id) {
+  const org = _curAdminOrg ? _curAdminOrg() : '';
+  if (!org) { showToast('请先在顶部选定当前组织'); return; }
+  const r = id ? _printRules.find(x => x.id === id) : null;
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);font-size:13px;';
+  const ov = document.createElement('div'); ov.className = 'modal-mask show';
+  ov.innerHTML = `<div class="modal" style="min-width:320px;max-width:400px;text-align:left;">
+    <h3 style="margin-bottom:12px;">${r ? '编辑打印类别' : '新建打印类别'}</h3>
+    <label style="font-size:12px;color:var(--txd);display:block;margin-bottom:10px;">类别名称<input id="prule-label" value="${r ? esc(r.label) : ''}" placeholder="如 普通 / 合同 / 机密" style="${inp}"></label>
+    <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;margin-bottom:10px;">
+      <label><input type="checkbox" id="prule-wm" ${r && r.watermark ? 'checked' : ''}> 烧录身份水印 + 追踪码（仅 PDF/图片，泄露可溯源）</label>
+      <label><input type="checkbox" id="prule-ap" ${r && r.approval ? 'checked' : ''}> 需组织管理员审批后才打印</label>
+      <label><input type="checkbox" id="prule-def" ${r && r.is_default ? 'checked' : ''}> 设为默认类别（用户不选时用它）</label>
+    </div>
+    <div id="prule-err" style="color:var(--err);font-size:12px;min-height:16px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;"><button class="btn" onclick="this.closest('.modal-mask').remove()">取消</button><button class="btn primary" id="prule-go">保存</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#prule-go').onclick = async () => {
+    const body = { label: ov.querySelector('#prule-label').value.trim(), watermark: ov.querySelector('#prule-wm').checked, approval: ov.querySelector('#prule-ap').checked, is_default: ov.querySelector('#prule-def').checked };
+    if (!body.label) { ov.querySelector('#prule-err').textContent = '请填类别名称'; return; }
+    const { ok, data } = r ? await api('PATCH', '/admin/print-rules/' + id, body) : await api('POST', '/admin/orgs/' + encodeURIComponent(org) + '/print-rules', body);
+    if (!ok) { ov.querySelector('#prule-err').textContent = data?.error || '失败'; return; }
+    ov.remove(); showToast('已保存'); loadPrintRules();
+  };
+}
+async function delPrintRule(id, label) {
+  if (!await uiConfirm(`删除打印类别「${label || id}」？`)) return;
+  const { ok, data } = await api('DELETE', '/admin/print-rules/' + id);
+  if (ok) { showToast('已删除'); loadPrintRules(); } else showToast(data?.error || '删除失败');
+}
+async function savePrintPolicy(org) {
+  const n = parseInt(document.getElementById('print-daily-pages')?.value) || 0;
+  const { ok, data } = await api('PUT', '/admin/orgs/' + encodeURIComponent(org) + '/print-policy', { daily_pages: n });
+  if (ok) showToast('配额已保存'); else showToast(data?.error || '保存失败');
+}
+async function loadPrintApprovals() {
+  const card = document.getElementById('print-approvals-card'), box = document.getElementById('print-approvals-admin');
+  if (!card || !box) return;
+  const org = _curAdminOrg ? _curAdminOrg() : '';
+  const { ok, data } = await api('GET', '/admin/print-approvals' + (org ? '?org=' + encodeURIComponent(org) : ''));
+  const jobs = (ok && data.jobs) || [];
+  if (!jobs.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  box.innerHTML = jobs.map(j => `<div style="border:1px solid var(--bd);border-radius:7px;padding:9px;margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+      <div><b>${esc(j.file_name || '文件')}</b> <span style="font-size:11px;color:var(--txd);">· ${esc(j.user_name || '')}${j.user_uid ? ' #' + String(j.user_uid).padStart(5, '0') : ''} · ${esc(j.printer_name || '')}${j.copies > 1 ? ' ×' + j.copies : ''} · 约 ${j.pages} 页${j.watermark ? ' · 🔏水印' : ''}</span></div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn primary" style="font-size:11px;" onclick="decidePrintJob('${esc(j.id)}',true)">批准</button>
+        <button class="btn" style="font-size:11px;color:var(--err);" onclick="decidePrintJob('${esc(j.id)}',false)">拒绝</button>
+      </div></div>`).join('');
+}
+async function decidePrintJob(id, approve) {
+  let reason = '';
+  if (!approve) { reason = await uiPrompt('拒绝理由（可空）：', ''); if (reason === null) return; }
+  const { ok, data } = await api('POST', '/admin/print-jobs/' + id + '/' + (approve ? 'approve' : 'deny'), approve ? {} : { reason });
+  if (ok) { showToast(approve ? '已批准' : '已拒绝'); loadPrintApprovals(); } else showToast(data?.error || '操作失败');
 }
 async function delDevice(id, name, ctx) {
   if (ctx) _devCtx = ctx;
@@ -9426,10 +9526,10 @@ async function loadMyPrintJobs() {
   const box = document.getElementById('my-print-jobs'); if (!box) return;
   const { ok, data } = await api('GET', '/user/print-jobs'); const jobs = (ok && data.jobs) || [];
   if (!jobs.length) { box.innerHTML = '<span style="color:var(--txd);">暂无</span>'; return; }
-  const ST = { pending: '排队中', printing: '打印中', done: '✅ 已完成', failed: '❌ 失败', canceled: '已取消' };
+  const ST = { pending: '排队中', pending_approval: '⏳ 待审批', printing: '打印中', done: '✅ 已完成', failed: '❌ 失败', canceled: '已取消' };
   box.innerHTML = jobs.map(j => `<div style="padding:5px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-    <span>${esc(j.file_name || '文件')} → ${esc(j.printer_name || '')}${j.copies > 1 ? ' ×' + j.copies : ''}</span>
-    <span>${ST[j.status] || j.status}${j.status === 'failed' && j.result ? ' <span style="color:var(--txd);">(' + esc(j.result) + ')</span>' : ''}${j.status === 'pending' ? ` <a href="javascript:void 0" onclick="cancelPrintJob('${j.id}')" style="color:var(--err);">取消</a>` : ''}</span></div>`).join('');
+    <span>${esc(j.file_name || '文件')} → ${esc(j.printer_name || '')}${j.copies > 1 ? ' ×' + j.copies : ''}${j.watermark ? ' <span style="font-size:10px;color:var(--txd);" title="已烧录身份水印+追踪码">🔏</span>' : ''}</span>
+    <span>${ST[j.status] || j.status}${j.status === 'failed' && j.result ? ' <span style="color:var(--txd);">(' + esc(j.result) + ')</span>' : ''}${(j.status === 'pending' || j.status === 'pending_approval') ? ` <a href="javascript:void 0" onclick="cancelPrintJob('${j.id}')" style="color:var(--err);">取消</a>` : ''}</span></div>`).join('');
 }
 function openPrintSend(id) {
   const p = _myPrinters.find(x => x.id === id); if (!p) return;
@@ -9437,6 +9537,7 @@ function openPrintSend(id) {
   ov.innerHTML = `<div class="modal" style="min-width:320px;max-width:400px;text-align:left;">
     <h3 style="margin-bottom:12px;">发去打印 · ${esc(p.name)}</h3>
     <input type="file" id="pr-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv,.md,.doc,.docx,.xls,.xlsx,.ppt,.pptx" style="width:100%;font-size:13px;margin-bottom:10px;">
+    ${(p.categories && p.categories.length) ? `<div style="font-size:13px;margin-bottom:8px;"><label>文档类别 <select id="pr-cat" style="padding:4px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);">${p.categories.map(c => `<option value="${esc(c.key)}"${c.is_default ? ' selected' : ''}>${esc(c.label)}${c.watermark ? ' · 水印' : ''}${c.approval ? ' · 需审批' : ''}</option>`).join('')}</select></label><div id="pr-cat-hint" style="font-size:11px;color:var(--txd);margin-top:4px;"></div></div>` : ''}
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px;">
       <label>份数 <input id="pr-copies" type="number" min="1" max="99" value="1" style="width:60px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label>
       ${p.duplex ? '<label><input type="checkbox" id="pr-duplex"> 双面</label>' : ''}
@@ -9447,6 +9548,14 @@ function openPrintSend(id) {
       <button class="btn" id="pr-cancel">取消</button><button class="btn primary" id="pr-go">打印</button>
     </div></div>`;
   document.body.appendChild(ov);
+  const catSel = ov.querySelector('#pr-cat');
+  const catHint = ov.querySelector('#pr-cat-hint');
+  const updCatHint = () => {
+    if (!catSel || !catHint) return;
+    const c = (p.categories || []).find(x => x.key === catSel.value);
+    catHint.textContent = c ? [c.watermark ? '🔏 将烧录身份水印+追踪码（仅 PDF/图片）' : '', c.approval ? '⏳ 需组织管理员审批后才打印' : ''].filter(Boolean).join(' · ') : '';
+  };
+  if (catSel) { catSel.onchange = updCatHint; updCatHint(); }
   ov.querySelector('#pr-cancel').onclick = () => ov.remove();
   ov.querySelector('#pr-go').onclick = async () => {
     const f = ov.querySelector('#pr-file').files[0];
@@ -9456,11 +9565,13 @@ function openPrintSend(id) {
     const color = ov.querySelector('#pr-color') ? (ov.querySelector('#pr-color').checked ? 1 : 0) : 0;
     const btn = ov.querySelector('#pr-go'); btn.disabled = true; btn.textContent = '发送中…';
     try {
-      const qs = new URLSearchParams({ printer: id, filename: f.name, copies, duplex, color });
+      const params = { printer: id, filename: f.name, copies, duplex, color };
+      if (catSel && catSel.value) params.category = catSel.value;
+      const qs = new URLSearchParams(params);
       const buf = await f.arrayBuffer();
       const r = await fetch('/api/user/print-jobs?' + qs, { method: 'POST', headers: { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/octet-stream' }, body: buf });
       const d = await r.json(); if (!r.ok) throw new Error(d.error || '发送失败');
-      ov.remove(); showToast('✓ 已发送打印'); loadMyPrintJobs();
+      ov.remove(); showToast(d.needs_approval ? '✓ 已提交，待管理员审批' : '✓ 已发送打印'); loadMyPrintJobs();
     } catch (e) { ov.querySelector('#pr-err').textContent = e.message; btn.disabled = false; btn.textContent = '打印'; }
   };
 }
@@ -11953,7 +12064,8 @@ const ENV_GROUPS = [
       { key: 'MEMO_ADMIN_LEVEL', label: '备忘录管理最低等级', desc: '哪一级（含）以上管理员能查看/管理全部用户的备忘录。默认 1 = 仅超级管理员；填 2 = Lv.1/Lv.2 都可。范围 1~9', required: false, secret: false, placeholder: '1', value: '' },
       { key: 'DEVICES_SELF_ENABLED', label: '用户端「我的设备」', desc: '默认开。开着时用户端常显「我的设备」入口（没分到设备也能进去输领取码认领）；填 off 关闭则对所有人隐藏该入口。', required: false, secret: false, placeholder: 'on', value: '' },
       { key: 'PRINT_MAX_MB', label: '打印单文件上限(MB)', desc: '发去打印的单文件大小上限，默认 20，硬顶 50。', required: false, secret: false, placeholder: '20', value: '' },
-      { key: 'PRINT_DAILY_LIMIT', label: '每人每日打印次数', desc: '平台级每人每天最多发多少个打印任务，默认 0 = 不限（按组织/类别的精细配额在后续版本）。', required: false, secret: false, placeholder: '0', value: '' },
+      { key: 'PRINT_DAILY_LIMIT', label: '每人每日打印次数', desc: '平台级每人每天最多发多少个打印任务，默认 0 = 不限。按组织/类别的精细配额（每日页数）在「设备管理 → 打印规则」里按组织设。', required: false, secret: false, placeholder: '0', value: '' },
+      { key: 'PRINT_PLATFORM_DAILY_PAGES', label: '平台每日打印页数总量', desc: '全平台每天打印页数上限（估算页数×份数），默认 0 = 不限。作为各组织配额之上的平台兜底。', required: false, secret: false, placeholder: '0', value: '' },
       { key: 'PRINT_JOB_RETAIN_HOURS', label: '打印文档保留(小时)', desc: '打印任务的文档本体在服务端保留多久后清除（记录保留），默认 24。', required: false, secret: false, placeholder: '24', value: '' },
     ]
   },

@@ -366,6 +366,27 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS print_jobs (
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_printer ON print_jobs(printer_id, status)'); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_print_jobs_user ON print_jobs(user_id)'); } catch(_) {}
+// 打印治理层（v3.5.98，Phase 2a）：打印触发规则(类别→水印/审批) + 审批流 + 配额(组织每日页数 + 平台总量) + 水印烧录
+try { db.exec('ALTER TABLE print_jobs ADD COLUMN category TEXT'); } catch(_) {}            // 文档类别 key
+try { db.exec('ALTER TABLE print_jobs ADD COLUMN pages INTEGER NOT NULL DEFAULT 1'); } catch(_) {} // 估算页数×份数(配额用)
+try { db.exec('ALTER TABLE print_jobs ADD COLUMN watermark INTEGER NOT NULL DEFAULT 0'); } catch(_) {} // 下发时是否烧身份水印+追踪码
+try { db.exec('ALTER TABLE print_jobs ADD COLUMN approver TEXT'); } catch(_) {}             // 审批人 uid
+try { db.exec('ALTER TABLE print_jobs ADD COLUMN decided_at TEXT'); } catch(_) {}
+// status 增 pending_approval（等组织管理员审批；批准后转 pending 进代理队列）
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_daily_pages INTEGER NOT NULL DEFAULT 0'); } catch(_) {} // 组织每日页数上限,0=不限
+try { db.exec(`CREATE TABLE IF NOT EXISTS print_rules (
+  id          TEXT PRIMARY KEY,
+  subject_id  TEXT NOT NULL,                 -- 组织(登录主体)
+  category    TEXT NOT NULL,                 -- 类别 key(组织内唯一)
+  label       TEXT NOT NULL,                 -- 显示名(普通/合同/机密…)
+  watermark   INTEGER NOT NULL DEFAULT 0,    -- 该类别是否烧身份水印+追踪码
+  approval    INTEGER NOT NULL DEFAULT 0,    -- 该类别是否需组织管理员审批
+  is_default  INTEGER NOT NULL DEFAULT 0,    -- 是否默认类别
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_print_rules_subject ON print_rules(subject_id)'); } catch(_) {}
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_print_rules_cat ON print_rules(subject_id, category)'); } catch(_) {}
 try { db.exec("ALTER TABLE shop_goods ADD COLUMN redeem_mode TEXT NOT NULL DEFAULT 'code'"); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN allow_instant INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN redirect_url TEXT'); } catch(_) {}
@@ -1190,22 +1211,45 @@ const printerStmts = {
   setQueues: db.prepare("UPDATE devices SET print_queues=?, last_seen=datetime('now'), updated_at=datetime('now') WHERE id=?"),
 };
 const printJobStmts = {
-  insert:    db.prepare(`INSERT INTO print_jobs (id,printer_id,user_id,subject_id,file_name,mime,size,data,copies,duplex,color,media)
-                         VALUES (@id,@printer_id,@user_id,@subject_id,@file_name,@mime,@size,@data,@copies,@duplex,@color,@media)`),
-  get:       db.prepare('SELECT id,printer_id,user_id,subject_id,file_name,mime,size,copies,duplex,color,media,status,result,created_at FROM print_jobs WHERE id=?'),
-  fileOf:    db.prepare('SELECT data,mime,file_name,printer_id,status FROM print_jobs WHERE id=?'),
-  byUser:    db.prepare('SELECT j.id,j.printer_id,j.file_name,j.copies,j.status,j.result,j.created_at,d.name AS printer_name FROM print_jobs j LEFT JOIN devices d ON d.id=j.printer_id WHERE j.user_id=? ORDER BY j.created_at DESC LIMIT 100'),
-  byPrinter: db.prepare('SELECT id,user_id,file_name,copies,status,result,created_at FROM print_jobs WHERE printer_id=? ORDER BY created_at DESC LIMIT 200'),
-  // 某代理机负责的所有打印机的待打印任务
+  insert:    db.prepare(`INSERT INTO print_jobs (id,printer_id,user_id,subject_id,file_name,mime,size,data,copies,duplex,color,media,category,pages,watermark,status)
+                         VALUES (@id,@printer_id,@user_id,@subject_id,@file_name,@mime,@size,@data,@copies,@duplex,@color,@media,@category,@pages,@watermark,@status)`),
+  get:       db.prepare('SELECT id,printer_id,user_id,subject_id,file_name,mime,size,copies,duplex,color,media,category,pages,watermark,status,result,created_at FROM print_jobs WHERE id=?'),
+  fileOf:    db.prepare('SELECT data,mime,file_name,printer_id,status,user_id,subject_id,watermark FROM print_jobs WHERE id=?'),
+  byUser:    db.prepare('SELECT j.id,j.printer_id,j.file_name,j.copies,j.category,j.pages,j.watermark,j.status,j.result,j.created_at,d.name AS printer_name FROM print_jobs j LEFT JOIN devices d ON d.id=j.printer_id WHERE j.user_id=? ORDER BY j.created_at DESC LIMIT 100'),
+  byPrinter: db.prepare('SELECT id,user_id,file_name,copies,category,pages,watermark,status,result,created_at FROM print_jobs WHERE printer_id=? ORDER BY created_at DESC LIMIT 200'),
+  // 某代理机负责的所有打印机的待打印任务（只取 pending；pending_approval 要先审批）
   pendingForAgent: db.prepare(`SELECT j.id,j.file_name,j.mime,j.copies,j.duplex,j.color,j.media,pc.queue_name
     FROM print_jobs j JOIN printer_config pc ON pc.device_id=j.printer_id
     WHERE pc.agent_id=? AND pc.transport='agent' AND j.status='pending' ORDER BY j.created_at LIMIT 20`),
+  // 组织的待审批任务（跨该组织所有打印机）
+  pendingApprovalsForOrg: db.prepare(`SELECT j.id,j.printer_id,j.user_id,j.file_name,j.copies,j.category,j.pages,j.watermark,j.created_at,
+      d.name AS printer_name, u.name AS user_name, u.uid_seq AS user_uid
+    FROM print_jobs j LEFT JOIN devices d ON d.id=j.printer_id LEFT JOIN users u ON u.id=j.user_id
+    WHERE j.subject_id=? AND j.status='pending_approval' ORDER BY j.created_at`),
   setStatus: db.prepare("UPDATE print_jobs SET status=?, result=COALESCE(?,result), updated_at=datetime('now') WHERE id=?"),
+  approve:   db.prepare("UPDATE print_jobs SET status='pending', approver=?, decided_at=datetime('now'), updated_at=datetime('now') WHERE id=? AND status='pending_approval'"),
+  deny:      db.prepare("UPDATE print_jobs SET status='failed', result=?, approver=?, decided_at=datetime('now'), data=NULL, updated_at=datetime('now') WHERE id=? AND status='pending_approval'"),
   clearData: db.prepare("UPDATE print_jobs SET data=NULL WHERE id=?"),
-  cancel:    db.prepare("UPDATE print_jobs SET status='canceled', updated_at=datetime('now') WHERE id=? AND user_id=? AND status='pending'"),
+  cancel:    db.prepare("UPDATE print_jobs SET status='canceled', data=NULL, updated_at=datetime('now') WHERE id=? AND user_id=? AND status IN ('pending','pending_approval')"),
   countUserDay: db.prepare("SELECT COUNT(*) n FROM print_jobs WHERE user_id=? AND created_at >= datetime('now','-1 day')"),
+  // 配额：当日已占用页数（排除已取消/被拒的任务）
+  pagesUserDay:     db.prepare("SELECT COALESCE(SUM(pages),0) n FROM print_jobs WHERE user_id=? AND created_at >= datetime('now','-1 day') AND status NOT IN ('canceled','failed')"),
+  pagesOrgDay:      db.prepare("SELECT COALESCE(SUM(pages),0) n FROM print_jobs WHERE subject_id=? AND created_at >= datetime('now','-1 day') AND status NOT IN ('canceled','failed')"),
+  pagesPlatformDay: db.prepare("SELECT COALESCE(SUM(pages),0) n FROM print_jobs WHERE created_at >= datetime('now','-1 day') AND status NOT IN ('canceled','failed')"),
   removeByPrinter: db.prepare('DELETE FROM print_jobs WHERE printer_id=?'),
   purgeOld:  db.prepare("UPDATE print_jobs SET data=NULL WHERE data IS NOT NULL AND created_at < datetime('now', ?)"),
+};
+// 打印触发规则（v3.5.98）：组织管理员设定「文档类别 → 水印/审批」
+const printRuleStmts = {
+  bySubject: db.prepare('SELECT * FROM print_rules WHERE subject_id=? ORDER BY sort_order, created_at'),
+  get:       db.prepare('SELECT * FROM print_rules WHERE id=?'),
+  getCat:    db.prepare('SELECT * FROM print_rules WHERE subject_id=? AND category=?'),
+  defaultOf: db.prepare('SELECT * FROM print_rules WHERE subject_id=? AND is_default=1 LIMIT 1'),
+  insert:    db.prepare('INSERT INTO print_rules (id,subject_id,category,label,watermark,approval,is_default,sort_order) VALUES (@id,@subject_id,@category,@label,@watermark,@approval,@is_default,@sort_order)'),
+  update:    db.prepare('UPDATE print_rules SET label=@label,watermark=@watermark,approval=@approval,is_default=@is_default,sort_order=@sort_order WHERE id=@id'),
+  clearDefault: db.prepare('UPDATE print_rules SET is_default=0 WHERE subject_id=? AND id!=?'),
+  remove:    db.prepare('DELETE FROM print_rules WHERE id=?'),
+  removeBySubject: db.prepare('DELETE FROM print_rules WHERE subject_id=?'),
 };
 
 // 应用内 TOTP 保管库（v3.5.95）：服务器只存密文
@@ -1393,6 +1437,7 @@ const oauthSubjectStmts = {
   setDirectListed: db.prepare('UPDATE oauth_subjects SET direct_listed=? WHERE id=?'),
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   setContactLimits: db.prepare('UPDATE oauth_subjects SET max_phones=?, max_emails=? WHERE id=?'),
+  setPrintDailyPages: db.prepare('UPDATE oauth_subjects SET print_daily_pages=? WHERE id=?'),   // v3.5.98 组织每日打印页数上限
   setSmsChannels: db.prepare('UPDATE oauth_subjects SET sms_channels=? WHERE id=?'),   // v3.5.71 组织覆盖某区号短信凭证
   setDomain: db.prepare('UPDATE oauth_subjects SET domain=? WHERE id=?'),             // v3.5.77 组织独立站点域名
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),
@@ -1984,6 +2029,7 @@ module.exports = {
   totpVault: totpVaultStmts,
   printers: printerStmts,
   printJobs: printJobStmts,
+  printRules: printRuleStmts,
   webauthn: webauthnStmts,
   announcements: announcementStmts,
   documents: documentStmts,
