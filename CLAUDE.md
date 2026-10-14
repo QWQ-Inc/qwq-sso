@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.98**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.99**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.99 打印接入 Phase 2b（直连 IPP + iOS 发打印 + Chromebook 指南）+ 修 guardOrgWrite 拒绝分支 500（用户反馈）
+
+三级版本。收尾 Phase 2 剩余项（直连 IPP / iOS 发打印 / Chromebook 指南），并顺带修掉一个会 500 的真 bug。
+- 🐛 **guardOrgWrite 拒绝分支 ReferenceError→500**（独立 spawn 会话定位、未落地，本版修）：`guardOrgWrite(req, sid, write)` 在拒绝分支调 `res.status(403)`，但 `res` 不是参数 → 任何无权调用（限权管理员/非管理员命中 v3.5.74/75 的组织成员·待分配成员端点）都 500 而非干净 403。改签名为 `guardOrgWrite(req, res, sid, write)`，7 处调用点全部传 `res`。
+- **直连 IPP（`server/ipp.js` 新文件，零依赖）**：手写最小 IPP `Print-Job`（operation 0x0002，RFC 8010 编码）——`buildPrintJob`（version 1.1 + operation/job 属性组：charset/natural-language/printer-uri/requesting-user-name/job-name/document-format + copies/sides/print-color-mode/media）、`printViaIpp`（ipp→http:631 / ipps→https，`application/ipp` POST，20s 超时，自签证书放行，解析响应 status-code <0x0100 为成功）、media 关键字映射（A4→iso_a4_210x297mm…）。`db.js` 加 `printJobs.pendingIpp`（transport=ipp 的 pending 任务）。`api.js` worker `runIppJobs`（每 15 秒，`_ippBusy` 串行；认领标 printing→需水印先 `wmBurn.burn`（审计 file.watermarked actor=ipp）→`ipp.printViaIpp`→done 清 BLOB；失败标 failed 记原因清 BLOB，gated 不阻断）。
+- **iOS 发打印（`PrintView.swift` 新文件）**：列我所在组织打印机（含 categories）+ 发打印弹窗 `PrintSendSheet`（PhotosPicker 选照片 / fileImporter 选 PDF·图片·Office、文档类别 Picker + 水印/审批提示、份数 Stepper、双面/彩色按打印机能力）+ 我的打印任务（状态/🔏/失败原因/取消）。`APIClient` 加 `userPrinters`/`printJobs`/`sendPrintJob`(原始字节 + query)/`cancelPrintJob`。`MeTabView` 功能区加「打印」入口。iOS 靠 GitHub Actions 云编译验证（本机 Windows 无 Swift）。
+- **Chromebook 指南**：`tools/print-agent/README.md` §4 直连 IPP（SSO 可达网络打印机，无需代理）+ §5 Chromebook（作客户端；局域网 Linux 代理 / Crostini 容器内 CUPS+agent / 直连 IPP / Google 管理控制台下发的 IPP 地址）。设计稿 §9 标注 Phase 2a/2b 已做、Phase 3 未做。
+- 测试：`ipp-test.js` 24 项全过（Print-Job 编码：版本/操作码/charset 在 printer-uri 前/document-format/duplex/monochrome/media A4/文档数据/end-tag；响应解析 ok 家族与错误；URL 映射；**真 HTTP 往返打 mock IPP 打印机**成功/失败状态/连不上均正确 resolve/reject）；`print-gov-test.js` 28 项回归全过；server(ipp/db/api) 语法通过。guardOrgWrite 修复：grep 确认 0 处旧式调用、7 处已传 res。
+- ⚠️ 真机打印/真实 IPP 打印机无设备未联调（gated，worker 失败即标 failed 不阻断）；iOS 发打印真机交互需装包验。至此打印接入 Phase 1 + 2 全部完成，Phase 3（审计看板/时段策略/Google Admin 深度）未做。
 
 ## v3.5.98 打印接入 Phase 2a（打印触发规则引擎 + 审批流 + 配额 + 水印烧录）（用户反馈）
 

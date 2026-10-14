@@ -14,6 +14,7 @@ const { validateAttachment, isLinkAllowed, linkWhitelist, maxAttachBytes } = req
 const contactUtil = require('./contacts');
 const wmBurn = require('./watermark-burn');
 wmBurn.prefetchFont();   // 开了「导出加水印」就在启动时把中文字体备好
+const ipp = require('./ipp');
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
 const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, appExpiresIn } = require('./auth');
 const totp = require('./twofa');
@@ -1952,7 +1953,7 @@ router.get('/admin/orgs', requireAdmin(3), (req, res) => {
 router.get('/admin/orgs/:sid/members', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id, false)) return;
+  if (!guardOrgWrite(req, res, s.id, false)) return;
   // 每个成员在本组织各同步源里对应的外部账号（企业微信 UserId 等）——一人多号时能看出来，好合并（v3.5.41）
   const ext = new Map();
   for (const l of db.prepare(`SELECT l.user_id, l.ext_id, d.label FROM dir_source_links l JOIN dir_sync_sources d ON d.id=l.source_id
@@ -2069,7 +2070,7 @@ async function removeMemberFromSources(subject, user) {
 router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   let r;
   if (req.body?.create) {
     // 按组织建成员（v3.5.67）：直接建一个平台账号并加入本组织
@@ -2121,7 +2122,7 @@ router.post('/admin/orgs/:sid/members', requireAuth, async (req, res) => {
 router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   if (!target || !orgMembers.get.get(s.id, target.id)) return res.status(404).json({ error: '成员不存在' });
   if (req.body?.org_uid !== undefined) {
@@ -2144,7 +2145,7 @@ router.patch('/admin/orgs/:sid/members/:uid', requireAuth, (req, res) => {
 router.delete('/admin/orgs/:sid/members/:uid', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   if (!target) return res.status(404).json({ error: '成员不存在' });
   // v3.5.69 出站删号（前端强确认后带 push 才删外部账号）
@@ -2172,14 +2173,14 @@ router.post('/admin/orgs/:sid/members/:uid/push', requireAuth, async (req, res) 
 router.get('/admin/orgs/:sid/pending-members', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id, false)) return;
+  if (!guardOrgWrite(req, res, s.id, false)) return;
   res.json({ success: true, members: orgMembers.pendingMembers.all(s.id) });
 });
 // 分配部门：给待分配成员指定实际部门（dept_id + pending=0），并出站把成员从「待分配部门」移到目标部门
 router.post('/admin/orgs/:sid/pending-members/:uid/assign', requireAuth, async (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   const mem = target && orgMembers.get.get(s.id, target.id);
   if (!target || !mem) return res.status(404).json({ error: '成员不存在' });
@@ -2212,7 +2213,7 @@ router.post('/admin/orgs/:sid/pending-members/:uid/assign', requireAuth, async (
 router.post('/admin/orgs/:sid/pending-members/:uid/suspend', requireAuth, (req, res) => {
   const s = oauthSubjects.get.get(req.params.sid);
   if (!s) return res.status(404).json({ error: '组织不存在' });
-  if (!guardOrgWrite(req, s.id)) return;
+  if (!guardOrgWrite(req, res, s.id)) return;
   const target = findRealUserByUid(req.params.uid);
   const mem = target && orgMembers.get.get(s.id, target.id);
   if (!target || !mem) return res.status(404).json({ error: '成员不存在' });
@@ -5591,6 +5592,39 @@ router.post('/print/result', express.json(), (req, res) => {
 // 过期任务清文档本体（保留记录）
 setInterval(() => { try { printJobs.purgeOld.run('-' + (parseInt(process.env.PRINT_JOB_RETAIN_HOURS) || 24) + ' hours'); } catch (_) {} }, 3600e3).unref();
 
+// ── 直连 IPP worker（v3.5.99 Phase 2）：拉 transport=ipp 的 pending 任务 → 需水印先烧 → IPP Print-Job 直发 ──
+// gated：IPP 不可达/报错 → 标 failed 记原因，不阻断；云部署通常够不到局域网打印机，故为辅。
+let _ippBusy = false;
+async function runIppJobs() {
+  if (_ippBusy) return; _ippBusy = true;
+  try {
+    const jobs = printJobs.pendingIpp.all();
+    for (const j of jobs) {
+      printJobs.setStatus.run('printing', null, j.id);   // 认领，防重复发
+      try {
+        const row = printJobs.fileOf.get(j.id);
+        if (!row || !row.data) { printJobs.setStatus.run('failed', '文档已过期', j.id); continue; }
+        let data = row.data;
+        if (j.watermark && wmBurn.canBurn(j.mime)) {
+          const trace = wmBurn.genTrace();
+          const u = users.findById.get(j.user_id);
+          const out = await wmBurn.burn(Buffer.from(row.data), j.mime, { user: u, policy: watermarkPolicy(j.subject_id || undefined), trace });
+          data = out.data;
+          audit('file.watermarked', { subject: u ? String(u.uid_seq) : null, actor: 'ipp',
+            detail: { trace, print_job: j.id, file: String(j.file_name || '').slice(0, 80), mime: j.mime, cjk: out.cjk } });
+        }
+        await ipp.printViaIpp(j.ipp_url, data, { docName: j.file_name, mime: j.mime, copies: j.copies, duplex: !!j.duplex, color: !!j.color, media: j.media, user: 'qwq-sso' });
+        printJobs.setStatus.run('done', '已提交 IPP 打印机', j.id);
+        printJobs.clearData.run(j.id);
+      } catch (e) {
+        printJobs.setStatus.run('failed', 'IPP：' + String(e && e.message || e).slice(0, 200), j.id);
+        printJobs.clearData.run(j.id);
+      }
+    }
+  } catch (_) {} finally { _ippBusy = false; }
+}
+setInterval(runIppJobs, 15000).unref();
+
 // ══════════════════════════════════════════
 // MDM 设备纳管（v3.5.82）：命令下发 / 纳管 / 配置描述文件 / 设备代理 check-in
 // 权限沿用设备：系统管理员 或 该设备所属组织的组织管理员（canManageDevice）
@@ -6164,10 +6198,10 @@ function guardAppWrite(req, res, appId) {
   return true;
 }
 // 组织写权限（成员等）：系统管理员 或 该组织管理员 或 限权管理员（范围匹配）
-function guardOrgWrite(req, sid, write = true) {
+function guardOrgWrite(req, res, sid, write = true) {
   if (canManageOrg(req, sid, write)) return true;
   if (limitedAdminActive(req) && limitedCanScope(req, sid)) return true;
-  res.status(403).json({ error: '无权管理该组织' });
+  res.status(403).json({ error: '无权管理该组织' });   // v3.5.99 修：res 原先不是参数，拒绝分支会 ReferenceError→500
   return false;
 }
 // org-scoped 会话（v3.5.26）：组织管理员权限只限当前登录的组织

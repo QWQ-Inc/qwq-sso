@@ -1221,6 +1221,10 @@ const printJobStmts = {
   pendingForAgent: db.prepare(`SELECT j.id,j.file_name,j.mime,j.copies,j.duplex,j.color,j.media,pc.queue_name
     FROM print_jobs j JOIN printer_config pc ON pc.device_id=j.printer_id
     WHERE pc.agent_id=? AND pc.transport='agent' AND j.status='pending' ORDER BY j.created_at LIMIT 20`),
+  // 直连 IPP 的待打印任务（v3.5.99，服务端 worker 拉取直发）
+  pendingIpp: db.prepare(`SELECT j.id,j.file_name,j.mime,j.copies,j.duplex,j.color,j.media,j.watermark,j.user_id,j.subject_id,pc.ipp_url
+    FROM print_jobs j JOIN printer_config pc ON pc.device_id=j.printer_id
+    WHERE pc.transport='ipp' AND pc.ipp_url IS NOT NULL AND pc.ipp_url!='' AND j.status='pending' ORDER BY j.created_at LIMIT 5`),
   // 组织的待审批任务（跨该组织所有打印机）
   pendingApprovalsForOrg: db.prepare(`SELECT j.id,j.printer_id,j.user_id,j.file_name,j.copies,j.category,j.pages,j.watermark,j.created_at,
       d.name AS printer_name, u.name AS user_name, u.uid_seq AS user_uid

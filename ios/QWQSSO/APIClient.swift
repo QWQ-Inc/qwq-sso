@@ -403,6 +403,41 @@ final class APIClient {
         let j = try await getJSON("/api/user/devices", token: token)
         return (j["devices"] as? [[String: Any]]) ?? []
     }
+    // ── 打印（v3.5.99 Phase 2）──
+    func userPrinters(token: String) async throws -> [[String: Any]] {
+        let j = try await getJSON("/api/user/printers", token: token)
+        return (j["printers"] as? [[String: Any]]) ?? []
+    }
+    func printJobs(token: String) async throws -> [[String: Any]] {
+        let j = try await getJSON("/api/user/print-jobs", token: token)
+        return (j["jobs"] as? [[String: Any]]) ?? []
+    }
+    /// 发去打印：原始文件字节 + query 参数（份数/双面/彩色/类别）。返回后端 JSON（含 needs_approval）。
+    @discardableResult
+    func sendPrintJob(printerId: String, filename: String, data: Data, copies: Int, duplex: Bool, color: Bool, category: String?, token: String) async throws -> [String: Any] {
+        var items = [URLQueryItem(name: "printer", value: printerId),
+                     URLQueryItem(name: "filename", value: filename),
+                     URLQueryItem(name: "copies", value: String(copies)),
+                     URLQueryItem(name: "duplex", value: duplex ? "1" : "0"),
+                     URLQueryItem(name: "color", value: color ? "1" : "0")]
+        if let c = category, !c.isEmpty { items.append(URLQueryItem(name: "category", value: c)) }
+        var comp = URLComponents(); comp.queryItems = items
+        let qs = comp.percentEncodedQuery ?? ""
+        var req = URLRequest(url: try makeURL("/api/user/print-jobs?\(qs)"))
+        req.httpMethod = "POST"
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = data
+        let (d, resp) = try await URLSession.shared.data(for: req)
+        let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] ?? [:]
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw APIError(message: (j["error"] as? String) ?? "发送失败")
+        }
+        return j
+    }
+    func cancelPrintJob(_ id: String, token: String) async throws {
+        _ = try await postJSON("/api/user/print-jobs/\(id)/cancel", body: [:], token: token)
+    }
     /// 对自己的设备下发自助命令（lock / locate）
     @discardableResult
     func deviceSelfCommand(_ id: String, type: String, message: String? = nil, token: String) async throws -> [String: Any] {
