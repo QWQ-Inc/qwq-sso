@@ -2660,6 +2660,13 @@ async function loadMe() {
           <div class="card-header"><h3>⏳ 待审打印</h3></div>
           <div class="card-body"><div id="print-approvals-admin"></div></div>
         </div>
+        <div class="card" id="print-audit-card" style="display:none;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>📊 打印审计</h3>
+            <button class="btn" style="font-size:11px;" onclick="loadPrintAudit()">刷新</button>
+          </div>
+          <div class="card-body"><div id="print-audit-admin"></div></div>
+        </div>
       </div>
 
       <!-- ▸ 管理端：门禁管理 -->
@@ -3543,6 +3550,7 @@ function onAdminOrgChange() {
   if (typeof loadPrinters === 'function') loadPrinters();
   if (typeof loadPrintRules === 'function') loadPrintRules();
   if (typeof loadPrintApprovals === 'function') loadPrintApprovals();
+  if (typeof loadPrintAudit === 'function') loadPrintAudit();
 }
 function renderAdminOrgBanner(org) {
   let el = document.getElementById('admin-org-banner');
@@ -3571,6 +3579,7 @@ function clearAdminOrg() {
   if (typeof loadPrinters === 'function') loadPrinters();
   if (typeof loadPrintRules === 'function') loadPrintRules();
   if (typeof loadPrintApprovals === 'function') loadPrintApprovals();
+  if (typeof loadPrintAudit === 'function') loadPrintAudit();
 }
 
 function setMode(mode, targetPage) {
@@ -3754,7 +3763,7 @@ function goto(page) {
   if(page === 'adm-oauth') { loadOauthSubjects(); }
   if(page === 'adm-api-logs') { loadAdmApiLogs(); }
   if(page === 'adm-audit') { loadAuditChain(); }
-  if(page === 'adm-devices') { loadDevices('adm'); loadPrinters(); loadPrintRules(); loadPrintApprovals(); }
+  if(page === 'adm-devices') { loadDevices('adm'); loadPrinters(); loadPrintRules(); loadPrintApprovals(); loadPrintAudit(); }
   if(page === 'adm-verify-files') loadVerifyFiles();
   if(page === 'adm-grants') loadGrants();
   if(page === 'adm-limited') loadLimitedAdmins();
@@ -8198,8 +8207,30 @@ async function loadPrintRules() {
     `<div style="margin-top:12px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
        <label>本组织每日打印页数上限 <input id="print-daily-pages" type="number" min="0" value="${data.daily_pages || 0}" style="width:90px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label>
        <span style="font-size:11px;color:var(--txd);">0 = 不限（按估算页数×份数计）</span>
-       <button class="btn" style="font-size:11px;" onclick="savePrintPolicy('${esc(org)}')">保存配额</button>
-     </div>`;
+     </div>
+     <div style="margin-top:10px;font-size:12px;">
+       <div style="font-weight:600;margin-bottom:4px;">⏰ 允许打印的时段</div>
+       <div id="print-win">${(data.windows || []).map(pwRowHtml).join('')}</div>
+       <button class="btn" style="font-size:11px;" onclick="document.getElementById('print-win').insertAdjacentHTML('beforeend', pwRowHtml())">＋ 添加时段</button>
+       <div style="font-size:11px;color:var(--txd);margin-top:4px;">不加任何时段 = 全天可打印；加了则只在命中的时段内放行（星期不勾=每天；可跨夜如 22:00–06:00）。</div>
+     </div>
+     <div style="margin-top:10px;"><button class="btn primary" style="font-size:11px;" onclick="savePrintPolicy('${esc(org)}')">保存配额 / 时段</button></div>`;
+}
+const _PW_WD = ['日', '一', '二', '三', '四', '五', '六'];
+function pwRowHtml(w) {
+  w = w || {}; const wd = new Set(w.wd || []);
+  const inp = 'padding:4px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:12px;';
+  return `<div class="pw-row" style="border:1px solid var(--bd);border-radius:6px;padding:6px 8px;margin-bottom:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;">
+    ${_PW_WD.map((n, i) => `<label style="display:inline-flex;align-items:center;gap:2px;color:var(--tx);"><input type="checkbox" class="pw-wd" value="${i}"${wd.has(i) ? ' checked' : ''}>${n}</label>`).join('')}
+    <span style="color:var(--txd);">时段</span><input type="time" class="pw-s" value="${esc(w.s || '')}" style="${inp}"> – <input type="time" class="pw-e" value="${esc(w.e || '')}" style="${inp}">
+    <button class="btn" style="font-size:11px;padding:1px 8px;margin-left:auto;color:var(--err);border-color:var(--err);" onclick="this.closest('.pw-row').remove()">删除</button>
+  </div>`;
+}
+function pwCollect() {
+  return Array.from(document.querySelectorAll('#print-win .pw-row')).map(r => ({
+    wd: Array.from(r.querySelectorAll('.pw-wd:checked')).map(c => +c.value),
+    s: r.querySelector('.pw-s').value, e: r.querySelector('.pw-e').value,
+  })).filter(w => w.wd.length || (w.s && w.e));
 }
 function openPrintRuleModal(id) {
   const org = _curAdminOrg ? _curAdminOrg() : '';
@@ -8233,8 +8264,38 @@ async function delPrintRule(id, label) {
 }
 async function savePrintPolicy(org) {
   const n = parseInt(document.getElementById('print-daily-pages')?.value) || 0;
-  const { ok, data } = await api('PUT', '/admin/orgs/' + encodeURIComponent(org) + '/print-policy', { daily_pages: n });
-  if (ok) showToast('配额已保存'); else showToast(data?.error || '保存失败');
+  const { ok, data } = await api('PUT', '/admin/orgs/' + encodeURIComponent(org) + '/print-policy', { daily_pages: n, windows: pwCollect() });
+  if (ok) showToast('已保存'); else showToast(data?.error || '保存失败');
+}
+// ── 打印审计看板（v3.5.100）──
+let _printAuditDays = 30;
+const _PJ_ST = { pending: '排队', pending_approval: '待审批', printing: '打印中', done: '完成', failed: '失败', canceled: '取消' };
+async function loadPrintAudit() {
+  const card = document.getElementById('print-audit-card'), box = document.getElementById('print-audit-admin');
+  if (!card || !box) return;
+  const org = _curAdminOrg ? _curAdminOrg() : '';
+  if (!org) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  box.innerHTML = '<div style="color:var(--txd);font-size:12px;">加载中…</div>';
+  const { ok, data } = await api('GET', '/admin/print-audit?org=' + encodeURIComponent(org) + '&days=' + _printAuditDays);
+  if (!ok) { box.innerHTML = '<div style="color:var(--err);font-size:12px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
+  const s = data.stats || { total: 0, pages: 0, by_status: {}, top_printers: [], top_users: [] };
+  const rangeBtns = [7, 30, 90].map(d => `<button class="btn${d === _printAuditDays ? ' primary' : ''}" style="font-size:11px;" onclick="_printAuditDays=${d};loadPrintAudit()">近 ${d} 天</button>`).join(' ');
+  const tile = (k, v) => `<div style="border:1px solid var(--bd);border-radius:8px;padding:8px 12px;min-width:84px;"><div style="font-size:11px;color:var(--txd);">${k}</div><div style="font-size:18px;font-weight:700;">${v}</div></div>`;
+  const statusLine = Object.keys(s.by_status).map(k => `${_PJ_ST[k] || k} ${s.by_status[k]}`).join(' · ') || '—';
+  const rankList = (arr, label) => `<div style="flex:1;min-width:180px;"><div style="font-size:11px;color:var(--txd);margin-bottom:4px;">${label}（按页数 Top 10）</div>${(arr.length ? arr.map(x => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--bd);"><span>${esc(x.name || '—')}${x.uid ? ' <span style="color:var(--txd);">#' + String(x.uid).padStart(5, '0') + '</span>' : ''}</span><span style="color:var(--txd);">${x.pages} 页 / ${x.jobs} 单</span></div>`).join('') : '<div style="color:var(--txd);font-size:12px;">无</div>')}</div>`;
+  const recent = (data.jobs || []).slice(0, 50).map(j => `<tr>
+      <td style="padding:4px 6px;">${esc(j.file_name || '文件')}${j.watermark ? ' 🔏' : ''}</td>
+      <td style="padding:4px 6px;color:var(--txd);">${esc(j.user_name || '')}</td>
+      <td style="padding:4px 6px;color:var(--txd);">${esc(j.printer_name || '')}</td>
+      <td style="padding:4px 6px;text-align:right;">${j.pages || 0}</td>
+      <td style="padding:4px 6px;">${_PJ_ST[j.status] || j.status}</td>
+      <td style="padding:4px 6px;color:var(--txd);white-space:nowrap;">${esc((j.created_at || '').slice(5, 16))}</td></tr>`).join('');
+  box.innerHTML = `<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">${rangeBtns}${data.capped ? '<span style="font-size:11px;color:var(--txd);">（仅统计最近 500 条）</span>' : ''}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${tile('任务数', s.total)}${tile('估算页数', s.pages)}<div style="border:1px solid var(--bd);border-radius:8px;padding:8px 12px;flex:1;min-width:160px;"><div style="font-size:11px;color:var(--txd);">状态分布</div><div style="font-size:12px;margin-top:4px;">${statusLine}</div></div></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;">${rankList(s.top_printers, '打印机')}${rankList(s.top_users, '成员')}</div>
+    <div style="font-size:12px;font-weight:600;margin-bottom:4px;">最近任务</div>
+    ${recent ? `<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:var(--txd);text-align:left;"><th style="padding:4px 6px;">文件</th><th style="padding:4px 6px;">发起人</th><th style="padding:4px 6px;">打印机</th><th style="padding:4px 6px;text-align:right;">页</th><th style="padding:4px 6px;">状态</th><th style="padding:4px 6px;">时间</th></tr></thead><tbody>${recent}</tbody></table></div>` : '<div style="color:var(--txd);font-size:12px;">该时段暂无打印任务</div>'}`;
 }
 async function loadPrintApprovals() {
   const card = document.getElementById('print-approvals-card'), box = document.getElementById('print-approvals-admin');

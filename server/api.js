@@ -5301,6 +5301,34 @@ function scopedDeviceRows(req, org) {
 // ── 打印治理（v3.5.98 Phase 2a）：规则引擎 + 配额 + 页数估算 ──
 function printPlatformDailyPages() { const n = parseInt(process.env.PRINT_PLATFORM_DAILY_PAGES, 10); return Number.isInteger(n) && n >= 0 ? n : 0; } // 平台每日总量,0=不限
 function orgDailyPages(sid) { const s = oauthSubjects.get.get(sid); const n = s ? parseInt(s.print_daily_pages, 10) : 0; return Number.isInteger(n) && n > 0 ? n : 0; } // 0=不限
+// 允许打印的时段（v3.5.100）：空=24/7；非空=当前须命中某条窗口（allow-list）
+function printWindowsOf(sid) { const s = oauthSubjects.get.get(sid); if (!s || !s.print_windows) return []; try { const a = JSON.parse(s.print_windows); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
+function normPrintWindows(arr) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const w of arr.slice(0, 20)) {
+    const wd = Array.isArray(w && w.wd) ? [...new Set(w.wd.map(Number).filter(n => n >= 0 && n <= 6))] : [];
+    const s = /^\d{1,2}:\d{2}$/.test(w && w.s || '') ? w.s : '';
+    const e = /^\d{1,2}:\d{2}$/.test(w && w.e || '') ? w.e : '';
+    if (!wd.length && !(s && e)) continue;   // 空条丢弃（防把全天锁死成「须命中但无可命中」）
+    out.push({ wd, s, e });
+  }
+  return out;
+}
+function withinPrintWindow(windows, now = new Date()) {
+  if (!windows || !windows.length) return true;   // 未设 = 不限
+  const wd = now.getDay(), hm = now.getHours() * 60 + now.getMinutes();
+  const toMin = x => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(x || '')); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+  for (const w of windows) {
+    const days = Array.isArray(w.wd) ? w.wd : [];
+    if (days.length && !days.includes(wd)) continue;
+    const s = toMin(w.s), e = toMin(w.e);
+    if (s == null && e == null) return true;        // 仅限星期、全天允许
+    if (s == null || e == null) continue;           // 只填一端 → 忽略该条
+    if (s <= e ? (hm >= s && hm <= e) : (hm >= s || hm <= e)) return true;   // 支持跨夜
+  }
+  return false;
+}
 // 估算页数（配额用）：PDF 数 /Type /Page；图片/其它按 1 页；× 份数在调用处
 function estimatePages(buf, mime) {
   if (mime === 'application/pdf') {
@@ -5398,7 +5426,7 @@ router.get('/admin/print-jobs', requireAuth, (req, res) => {
 router.get('/admin/orgs/:sid/print-rules', requireAuth, (req, res) => {
   if (!oauthSubjects.get.get(req.params.sid)) return res.status(404).json({ error: '组织不存在' });
   if (!canManageOrg(req, req.params.sid, false)) return res.status(403).json({ error: '无权管理该组织' });
-  res.json({ success: true, rules: printRules.bySubject.all(req.params.sid), daily_pages: orgDailyPages(req.params.sid) });
+  res.json({ success: true, rules: printRules.bySubject.all(req.params.sid), daily_pages: orgDailyPages(req.params.sid), windows: printWindowsOf(req.params.sid) });
 });
 router.post('/admin/orgs/:sid/print-rules', requireAuth, (req, res) => {
   if (!oauthSubjects.get.get(req.params.sid)) return res.status(404).json({ error: '组织不存在' });
@@ -5440,8 +5468,33 @@ router.put('/admin/orgs/:sid/print-policy', requireAuth, (req, res) => {
   if (!canManageOrg(req, req.params.sid)) return res.status(403).json({ error: '无权管理该组织' });
   const n = Math.max(0, Math.min(1000000, parseInt(req.body?.daily_pages) || 0));
   oauthSubjects.setPrintDailyPages.run(n, req.params.sid);
-  audit('print.policy_set', { subject: req.params.sid, actor: actorOf(req), detail: { daily_pages: n } });
-  res.json({ success: true, daily_pages: n });
+  const windows = normPrintWindows(req.body?.windows);
+  oauthSubjects.setPrintWindows.run(windows.length ? JSON.stringify(windows) : null, req.params.sid);
+  audit('print.policy_set', { subject: req.params.sid, actor: actorOf(req), detail: { daily_pages: n, windows: windows.length } });
+  res.json({ success: true, daily_pages: n, windows });
+});
+// 打印审计看板（某组织，近 N 天）
+router.get('/admin/print-audit', requireAuth, (req, res) => {
+  const org = String(req.query?.org || '').trim();
+  if (!org) return res.status(400).json({ error: '请指定组织' });
+  if (!oauthSubjects.get.get(org)) return res.status(404).json({ error: '组织不存在' });
+  if (!canManageOrg(req, org, false)) return res.status(403).json({ error: '无权查看' });
+  const days = Math.max(1, Math.min(365, parseInt(req.query?.days) || 30));
+  const since = new Date(Date.now() - days * 86400e3).toISOString().replace('T', ' ').slice(0, 19);
+  const jobs = printJobs.auditByOrg.all(org, since);   // 最多 500 条
+  const stats = { total: jobs.length, pages: 0, byStatus: {}, printers: {}, users: {} };
+  for (const j of jobs) {
+    stats.pages += (j.pages || 0);
+    stats.byStatus[j.status] = (stats.byStatus[j.status] || 0) + 1;
+    const pk = j.printer_name || j.printer_id || '—';
+    const p = stats.printers[pk] || (stats.printers[pk] = { name: pk, jobs: 0, pages: 0 }); p.jobs++; p.pages += (j.pages || 0);
+    const uk = j.user_id || '—';
+    const u = stats.users[uk] || (stats.users[uk] = { name: j.user_name || '—', uid: j.user_uid, jobs: 0, pages: 0 }); u.jobs++; u.pages += (j.pages || 0);
+  }
+  const top = o => Object.values(o).sort((a, b) => b.pages - a.pages).slice(0, 10);
+  res.json({ success: true, days, capped: jobs.length >= 500,
+    stats: { total: stats.total, pages: stats.pages, by_status: stats.byStatus, top_printers: top(stats.printers), top_users: top(stats.users) },
+    jobs: jobs.slice(0, 200) });
 });
 // 待审批打印任务（某组织）
 router.get('/admin/print-approvals', requireAuth, (req, res) => {
@@ -5506,6 +5559,8 @@ router.post('/user/print-jobs', requireAuth, noPublic, express.raw({ type: () =>
   if (orgLimit && printJobs.pagesOrgDay.get(printer.subject_id).n + pages > orgLimit) return res.status(429).json({ error: '本组织今日打印页数已达上限（' + orgLimit + ' 页）' });
   const platLimit = printPlatformDailyPages();
   if (platLimit && printJobs.pagesPlatformDay.get().n + pages > platLimit) return res.status(429).json({ error: '平台今日打印页数已达上限' });
+  // 打印时段策略（组织设定；空=不限）
+  if (!withinPrintWindow(printWindowsOf(printer.subject_id))) return res.status(403).json({ error: '当前时段不允许打印（本组织限定了打印时段）' });
   const cfg = printers.cfgGet.get(printer.id) || {};
   const id = uuidv4();
   const status = rule.approval ? 'pending_approval' : 'pending';

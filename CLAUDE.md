@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.99**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.100**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.100 打印接入 Phase 3a（打印审计看板 + 打印时段策略）（用户反馈）
+
+三级版本。收尾 Phase 3 的两块可测项（审计看板 + 时段策略）；Google Admin 深度对接（Phase 3b）需真实 Google Workspace 凭据，且 Chromebook 打印已由 IPP/代理覆盖，未做。
+- **打印时段策略**：`oauth_subjects.print_windows`（JSON `[{wd:[0-6],s:'HH:MM',e:'HH:MM'}]`，空=24/7，**allow-list**：非空则发打印时当前须命中某条）+ `oauthSubjects.setPrintWindows`。api.js `printWindowsOf(sid)` / `normPrintWindows(arr)`（去重星期、校验 HH:MM、丢空条防锁死）/ `withinPrintWindow(windows,now)`（星期筛选→仅星期=全天→时段 in/out，支持跨夜 s>e；只填一端忽略该条）。`POST /user/print-jobs` 在配额之后加时段门（不命中 403）。`GET /admin/orgs/:sid/print-rules` 回 `windows`；`PUT /admin/orgs/:sid/print-policy` 收 `windows`（normPrintWindows，空数组存 NULL），审计 detail 带 windows 数。
+- **打印审计看板**：`printJobStmts.auditByOrg(subject, since)`（JOIN devices/users 带打印机名/发起人名，created_at>=since，DESC LIMIT 500）。`GET /admin/print-audit?org=&days=`（canManageOrg 读；days 夹 1~365，since=JS 算 `YYYY-MM-DD HH:MM:SS` UTC 串与 SQLite datetime 同格式字符串比较）：JS 聚合 total/pages/by_status/top_printers/top_users（按页数 Top10）+ 近 200 条任务；`capped` 标 500 上限。
+- **前端(dashboard.html)**：打印规则卡加「⏰ 允许打印的时段」编辑器（`pwRowHtml`/`pwCollect`：星期勾选+起止 time，紧凑版，无日期区间），`savePrintPolicy` 一并提交 windows；设备页加「📊 打印审计」卡（`loadPrintAudit`：近 7/30/90 天切换 + 任务数/页数/状态分布 stat tiles + Top 打印机/成员 + 最近 50 条表）；goto `adm-devices` 与 onAdminOrgChange/clearAdminOrg 挂载 loadPrintAudit。
+- 测试：`print-phase3-test.js` node:sqlite 23 项全过（normPrintWindows 去重/丢空条/非法；withinPrintWindow 空=放行/星期命中与否/时段内外/仅星期全天/跨夜三点/只填一端忽略/多条取一；审计聚合排除别组织与超期、页数合计、状态分布、Top 打印机/成员、DESC 序）；print-gov 28 + ipp 24 回归；server(db/api/index) + dashboard 内联 JS 语法通过。
+- ⚠️ 真机打印/真实环境未联调（逻辑测试覆盖）。至此打印接入 Phase 1/2/3a 完成；Phase 3b（Google Admin 深度）待真实 Google Workspace 环境。
 
 ## v3.5.99 打印接入 Phase 2b（直连 IPP + iOS 发打印 + Chromebook 指南）+ 修 guardOrgWrite 拒绝分支 500（用户反馈）
 

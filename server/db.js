@@ -374,6 +374,7 @@ try { db.exec('ALTER TABLE print_jobs ADD COLUMN approver TEXT'); } catch(_) {} 
 try { db.exec('ALTER TABLE print_jobs ADD COLUMN decided_at TEXT'); } catch(_) {}
 // status 增 pending_approval（等组织管理员审批；批准后转 pending 进代理队列）
 try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_daily_pages INTEGER NOT NULL DEFAULT 0'); } catch(_) {} // 组织每日页数上限,0=不限
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_windows TEXT'); } catch(_) {} // v3.5.100 允许打印的时段(JSON 数组 [{wd,s,e}]),空=24/7
 try { db.exec(`CREATE TABLE IF NOT EXISTS print_rules (
   id          TEXT PRIMARY KEY,
   subject_id  TEXT NOT NULL,                 -- 组织(登录主体)
@@ -1221,6 +1222,11 @@ const printJobStmts = {
   pendingForAgent: db.prepare(`SELECT j.id,j.file_name,j.mime,j.copies,j.duplex,j.color,j.media,pc.queue_name
     FROM print_jobs j JOIN printer_config pc ON pc.device_id=j.printer_id
     WHERE pc.agent_id=? AND pc.transport='agent' AND j.status='pending' ORDER BY j.created_at LIMIT 20`),
+  // 打印审计看板（v3.5.100）：某组织一段时间内的打印任务（带发起人/打印机名）
+  auditByOrg: db.prepare(`SELECT j.id,j.printer_id,j.user_id,j.file_name,j.copies,j.category,j.pages,j.watermark,j.status,j.result,j.created_at,
+      d.name AS printer_name, u.name AS user_name, u.uid_seq AS user_uid
+    FROM print_jobs j LEFT JOIN devices d ON d.id=j.printer_id LEFT JOIN users u ON u.id=j.user_id
+    WHERE j.subject_id=? AND j.created_at>=? ORDER BY j.created_at DESC LIMIT 500`),
   // 直连 IPP 的待打印任务（v3.5.99，服务端 worker 拉取直发）
   pendingIpp: db.prepare(`SELECT j.id,j.file_name,j.mime,j.copies,j.duplex,j.color,j.media,j.watermark,j.user_id,j.subject_id,pc.ipp_url
     FROM print_jobs j JOIN printer_config pc ON pc.device_id=j.printer_id
@@ -1442,6 +1448,7 @@ const oauthSubjectStmts = {
   setOrgCode: db.prepare('UPDATE oauth_subjects SET org_code=? WHERE id=?'),
   setContactLimits: db.prepare('UPDATE oauth_subjects SET max_phones=?, max_emails=? WHERE id=?'),
   setPrintDailyPages: db.prepare('UPDATE oauth_subjects SET print_daily_pages=? WHERE id=?'),   // v3.5.98 组织每日打印页数上限
+  setPrintWindows: db.prepare('UPDATE oauth_subjects SET print_windows=? WHERE id=?'),          // v3.5.100 组织允许打印时段
   setSmsChannels: db.prepare('UPDATE oauth_subjects SET sms_channels=? WHERE id=?'),   // v3.5.71 组织覆盖某区号短信凭证
   setDomain: db.prepare('UPDATE oauth_subjects SET domain=? WHERE id=?'),             // v3.5.77 组织独立站点域名
   byOrgCode: db.prepare('SELECT * FROM oauth_subjects WHERE org_code=?'),
