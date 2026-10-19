@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.100**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.101**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,23 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.101 全站数据导出 / 导入恢复 + 备份支持阿里云 OSS + 修企业微信登录反复跳转（用户反馈）
+
+三级版本。用户两件：① 加「导出全部数据 + 导入恢复 + 备份到 OSS/R2」，数据丢失能一键恢复省运维；② 修「设了企业微信登录，一打开登录页就被带去企业微信网址、反复跳转」。
+
+### 🐛 企业微信登录反复跳转（`public/login.html`）
+- 根因：`renderPlatformList` 末尾 `selectPlatform(platforms[0], true)` 自动选中首个平台；其 isAuto 分支对「QR 平台且非 useRedirectLogin」调 `selectMethod`，而**企业微信自 v3.5.77.1 起 `selectMethod` 是 `window.location.href='/auth/wecom'`（不再内嵌二维码）**——于是企业微信排首位时一打开登录页就跳企业微信网页登录，返回后又被自动带走 = 反复跳转。
+- 修：① 自动选中首个平台只对「能内嵌二维码」的平台（`wechat`）渲染二维码，**绝不自动触发任何跳转**：`if (isAuto) { if (key === 'wechat' && !useRedirectLogin(key)) selectMethod(arr[0].idx); return; }`。② 取消 `maybeInAppAutoLogin()`「一打开就自动跳转」的应用内自动登录——改为只高亮对应平台按钮作提示，由用户**主动点击**该登录方式才跳（DOMContentLoaded 末尾不再调 maybeInAppAutoLogin，只 `pb-<平台>` 高亮）。符合用户「主动点击才采用，不要一上来全部跳转」。
+- ⚠️ 企业微信/微信点击后仍按既有逻辑跳转（应用内直接跳、电脑跳企业微信网页登录、手机浏览器提示到应用内打开），只是不再「自动」。
+
+### 全站数据导出 / 导入恢复（`server/backup.js` + `db.js` + `api.js` + `dashboard.html`）
+- **导出全部数据**：`POST /admin/backups/export`（Lv.1，可选 passphrase）即时生成整库快照（含全部凭据 / env_config / 各平台数据）直接下载，前端 fetch→blob。等价于一份完整备份（整个 SQLite 库就是全量导出）。
+- **导入恢复（两步，带预览）**：`POST /admin/restore/stage`（express.raw 上传，口令走 `X-Backup-Pass: base64(UTF-8)` 头不进 URL）→ `decodeBackup`（解密+gunzip+校验 SQLite 头）→ `inspectDbBuffer`（better-sqlite3 只读打开跑 `integrity_check` + 校验 users/env_config 表 + 各表计数）→ 暂存 `.restore-stage-<token>.db` 返回概要+token（暂存 10 分钟过期清理）。`POST /admin/restore/apply {token, confirm:'恢复全站数据'}`（强确认）→ `stageRestore` 写 `<库>.pending-restore` → 响应后 `setTimeout(process.exit(0),800)`。也可从备份目标直接恢复：`POST /admin/backups/:id/restore {name, passphrase, confirm}`（服务端拉取→解码→校验→stage→退出）。
+- **⚠️ 恢复机制（关键）**：交换在**启动时、库被打开之前**完成——`db.js` 顶部 `applyPendingRestore()` IIFE（在 `new Database()` 之前）检测 `<DB_FILE>.pending-restore`：先把现库另存 `pre-restore-<stamp>`、清掉旧 `-wal`/`-shm`（避免旧日志套到新库）、再 `renameSync` 待恢复文件覆盖现库。这样跨平台安全（Windows 下也不受文件占用影响），且恢复前自动留底可回头。进程退出靠平台/守护进程（Zeabur 自动重启）拉起；自托管无守护进程则需手动重启（消息已提示）。
+- **备份支持阿里云 OSS**：`backup.js` 加 OSS 签名 V1（HMAC-SHA1，不引 SDK）——`ossHost`（region→`<region>.aliyuncs.com` 或完整 endpoint）/`ossSign`（StringToSign = `VERB\nMD5\nType\nDate\n/bucket/key`）/`ossRequest`/`ossList`（marker 翻页）；`writeTo`/`list`/`read` 加 `oss` 分支。`backup_targets.type` 只是 TEXT，加 `oss` 免迁移。配置 `{region/endpoint, bucket, access_key_id, access_key_secret, prefix}`，`access_key_secret` 视图打码。
+- 前端：数据备份页拆成「数据导出/导入」卡（⬇️导出全部数据 / ⬆️导入恢复…）+「定时备份目标」卡；备份目标弹窗加「阿里云 OSS 存储桶」类型 + OSS 字段；每份备份文件加「从此恢复」按钮（强确认 + 可填解密口令）。导入走 `openImportRestore`→`importStage`（校验+概要预览）→`importApply`（输入「恢复全站数据」确认）。AUDIT_EVENT_LABEL 加 `backup.exported`/`backup.restored`。
+- 测试：backup 逻辑 13 项全过（OSS 签名 GET/PUT 规范串与 HMAC-SHA1 独立复算一致、ossHost 推导、decodeBackup gzip/加密/错口令/非 SQLite/非 gzip 各分支、FILE_RE 白名单）；恢复 boot-swap 文件操作 7 项全过（stageRestore 落盘、启动替换、pre-restore 留底、清 WAL/SHM、pending 消费、内容正确）；server(backup/db/api) + dashboard/login 内联 JS 语法通过。⚠️ `inspectDbBuffer` 依赖 better-sqlite3（线上有、本机无），靠代码审查 + decodeBackup 单测覆盖；真实 R2/OSS 链路无凭据未端到端跑（OSS 签名用官方 V1 算法 + 独立复算验证）。
 
 ## v3.5.100 打印接入 Phase 3a（打印审计看板 + 打印时段策略）（用户反馈）
 

@@ -12,6 +12,24 @@ const DB_FILE  = process.env.DB_PATH || path.join(__dirname, '../data/sso.db');
 const DATA_DIR = path.dirname(DB_FILE);
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// v3.5.101：待恢复文件（管理端「导入全站数据」写下的 <库>.pending-restore）——在打开数据库之前，
+// 用它替换现有库文件。交换发生在库尚未被 better-sqlite3 打开时，跨平台安全（Windows 下也不受文件占用影响）。
+(function applyPendingRestore() {
+  try {
+    const pending = DB_FILE + '.pending-restore';
+    if (!fs.existsSync(pending)) return;
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    // 先把当前库另存一份，恢复出错也能回头
+    if (fs.existsSync(DB_FILE)) { try { fs.copyFileSync(DB_FILE, DB_FILE + '.pre-restore-' + stamp); } catch (_) {} }
+    // 清掉旧的 WAL / SHM，避免把旧日志套到新库上
+    for (const ext of ['-wal', '-shm']) { try { if (fs.existsSync(DB_FILE + ext)) fs.unlinkSync(DB_FILE + ext); } catch (_) {} }
+    fs.renameSync(pending, DB_FILE);
+    console.log('[RESTORE] 已用待恢复文件替换数据库，现库已备份为 pre-restore-' + stamp);
+  } catch (e) {
+    console.error('[RESTORE] 待恢复文件应用失败：', e.message);
+  }
+})();
+
 const db = new Database(DB_FILE);
 
 // WAL 模式提升并发性能

@@ -2746,16 +2746,29 @@ async function loadMe() {
       <div class="page" id="page-adm-backups">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <h3>数据备份</h3>
+            <h3>数据导出 / 导入</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn primary" style="font-size:11px;" onclick="exportAllData()">⬇️ 导出全部数据</button>
+              <button class="btn" style="font-size:11px;" onclick="openImportRestore()">⬆️ 导入恢复…</button>
+            </div>
+          </div>
+          <div style="padding:0 20px 12px;font-size:12px;color:var(--txd);line-height:1.8;">
+            「导出全部数据」把整个数据库（含全部<b>凭据、系统配置的 env、各平台数据</b>）做成一份快照直接下载，可填口令加密。
+            「导入恢复」上传一份导出/备份文件，校验后用它<b>覆盖当前全站数据并重启</b>——数据丢失后可一键恢复，省去运维手动替换库文件。
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>定时备份目标</h3>
             <div style="display:flex;gap:8px;">
               <button class="btn" style="font-size:11px;" onclick="runBackupNow()">全部立即备份</button>
               <button class="btn primary" style="font-size:11px;" onclick="openBackupModal()">+ 添加备份目标</button>
             </div>
           </div>
           <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
-            把整个数据库做成快照（gzip 压缩），存到服务器本地目录或 Cloudflare R2 存储桶。可以添加多个目标、同时开启，每个目标单独设置备份频率和保留份数。
-            <b>备份里包含全部数据和系统配置里的密钥</b>，存到外部存储桶建议设置加密口令（AES-256-GCM）；解密：<code>node server/backup.js decrypt 备份文件 输出.db.gz 口令</code>，再 gunzip 得到数据库文件。
-            ⚠️ Zeabur 等容器的本地磁盘重新部署会清空，本地目录请挂载持久卷，或者同时开 R2。
+            把整个数据库做成快照（gzip 压缩），存到服务器本地目录、Cloudflare R2 或阿里云 OSS 存储桶。可以添加多个目标、同时开启，每个目标单独设置备份频率和保留份数；每份备份都可「从此恢复」。
+            <b>备份里包含全部数据和系统配置里的密钥</b>，存到外部存储桶建议设置加密口令（AES-256-GCM）；也可命令行解密：<code>node server/backup.js decrypt 备份文件 输出.db.gz 口令</code>，再 gunzip 得到数据库文件。
+            ⚠️ Zeabur 等容器的本地磁盘重新部署会清空，本地目录请挂载持久卷，或者同时开 R2 / OSS。
           </div>
           <div class="card-body"><div id="backup-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
         </div>
@@ -5738,7 +5751,7 @@ async function loadBackups() {
       : `<span style="color:var(--err);">✗ ${esc(fmtTime(st.at))} 失败：${esc(st.error || '')}</span>`) : '<span>还没有备份过</span>';
     return `<div style="border:1px solid var(--bd);border-radius:6px;padding:10px 12px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
-        <span style="color:var(--txt);font-weight:600;">${t.type === 'r2' ? '☁️' : '💾'} ${esc(t.label)} <span style="color:var(--txd);font-weight:400;font-size:11px;">${t.type === 'r2' ? 'Cloudflare R2' : '本地目录'} · <code>${esc(t.location)}</code></span></span>
+        <span style="color:var(--txt);font-weight:600;">${t.type === 'local' ? '💾' : '☁️'} ${esc(t.label)} <span style="color:var(--txd);font-weight:400;font-size:11px;">${t.type === 'r2' ? 'Cloudflare R2' : t.type === 'oss' ? '阿里云 OSS' : '本地目录'} · <code>${esc(t.location)}</code></span></span>
         <span class="badge ${t.enabled ? 'ok' : 'grey'}">${t.enabled ? '启用' : '停用'}</span>
       </div>
       <div style="margin-top:4px;line-height:1.8;">${t.interval_hours ? `每 ${t.interval_hours} 小时自动备份` : '只手动备份'} · 保留最近 ${t.keep || '全部'}${t.keep ? ' 份' : ''} · ${t.config.has_passphrase ? '🔒 加密' : '未加密'}<br>${last}</div>
@@ -5767,8 +5780,23 @@ async function showBackupFiles(id) {
   if (!ok) { box.innerHTML = '<div style="color:var(--err);margin-top:6px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
   box.innerHTML = data.files.length ? '<div style="margin-top:8px;">' + _udTable(['文件', '大小', '时间', ''], data.files.map(f => [
     `<code style="font-size:11px;">${esc(f.name)}</code>`, _fmtSize(f.size), esc(fmtTime(f.modified)),
-    `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='downloadBackup(${JSON.stringify(id)}, ${JSON.stringify(f.name)})'>下载</button>`])) + '</div>'
+    `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='downloadBackup(${JSON.stringify(id)}, ${JSON.stringify(f.name)})'>下载</button>
+     <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='restoreFromTarget(${JSON.stringify(id)}, ${JSON.stringify(f.name)})'>从此恢复</button>`])) + '</div>'
     : '<div style="margin-top:6px;">还没有备份文件。</div>';
+}
+// 从某个备份目标里的某份备份恢复（强确认 + 重启）
+async function restoreFromTarget(id, name) {
+  if (!await uiConfirm(`确定用备份「${esc(name)}」恢复全站数据？\n\n⚠️ 这会用该备份覆盖当前的全部数据（含用户、应用、凭据、配置），并立即重启服务。恢复前当前库会自动另存一份。此操作不可撤销。`, { danger: true })) return;
+  let passphrase = '';
+  const pass = await uiPrompt('如果这份备份有加密口令，请在此输入（目标自带口令会自动使用，一般留空即可）：', '', { password: true, title: '解密口令（可选）' });
+  if (pass === null) return;   // 取消
+  passphrase = pass;
+  const confirm = await uiPrompt('这是高危操作。请输入「恢复全站数据」以确认：', '', { danger: true, title: '最终确认' });
+  if (confirm === null) return;
+  showToast('正在恢复，服务即将重启…');
+  const { ok, data } = await api('POST', `/admin/backups/${id}/restore`, { name, passphrase, confirm });
+  if (ok) { await uiAlert((data.message || '已载入恢复数据，服务正在重启。') + '\n\n请等待十几秒后刷新页面并重新登录。', { title: '恢复已启动' }); }
+  else showToast('恢复失败：' + (data?.error || '未知错误'));
 }
 async function downloadBackup(id, name) {
   const r = await fetch(`/api/admin/backups/${id}/files/${encodeURIComponent(name)}`, { headers: { Authorization: 'Bearer ' + getToken() } });
@@ -5776,6 +5804,75 @@ async function downloadBackup(id, name) {
   const url = URL.createObjectURL(await r.blob());
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+// ── 一键导出全部数据 ──
+async function exportAllData() {
+  const pass = await uiPrompt('给导出文件设置加密口令（可选，至少 8 位）。备份含全部密钥，强烈建议加密。留空 = 不加密：', '', { password: true, title: '导出全部数据' });
+  if (pass === null) return;
+  if (pass && pass.length < 8) { showToast('加密口令至少 8 位'); return; }
+  showToast('正在生成导出文件…');
+  try {
+    const r = await fetch('/api/admin/backups/export', { method: 'POST',
+      headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase: pass }) });
+    if (!r.ok) { showToast('导出失败：' + ((await r.json().catch(() => ({}))).error || r.status)); return; }
+    const name = (r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || ('qwq-sso-export' + (pass ? '.db.gz.enc' : '.db.gz'));
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    showToast('已导出' + (pass ? '（已加密）' : ''));
+  } catch (e) { showToast('导出失败：' + e.message); }
+}
+// ── 导入恢复 ──
+let _importToken = null;
+function openImportRestore() {
+  document.getElementById('import-modal')?.remove();
+  _importToken = null;
+  const m = document.createElement('div');
+  m.className = 'modal-mask show'; m.id = 'import-modal';
+  const inp = 'width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--bd);border-radius:5px;background:var(--sf);color:var(--tx);font-size:13px;';
+  m.innerHTML = `<div class="modal" style="min-width:460px;text-align:left;">
+    <h3 style="margin-bottom:6px;">导入恢复全站数据</h3>
+    <div style="font-size:12px;color:var(--txd);line-height:1.8;margin-bottom:8px;">
+      上传一份导出 / 备份文件（<code>qwq-sso-*.db.gz</code> 或 <code>.db.gz.enc</code>）。先校验，确认无误后会用它<b>覆盖当前全站数据并重启服务</b>。恢复前当前库会自动另存一份。
+    </div>
+    <div style="margin-top:6px;"><input type="file" id="imp-file" accept=".gz,.enc" style="${inp}"></div>
+    <div style="margin-top:10px;"><div style="font-size:12px;color:var(--txm);margin-bottom:4px;">解密口令（加密备份才需要）</div><input id="imp-pass" type="password" style="${inp}"></div>
+    <div id="imp-info" style="margin-top:10px;font-size:12px;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button class="btn" onclick="document.getElementById('import-modal').remove()">取消</button>
+      <button class="btn primary" onclick="importStage()">校验文件</button>
+    </div></div>`;
+  document.body.appendChild(m);
+}
+async function importStage() {
+  const f = document.getElementById('imp-file').files[0];
+  if (!f) { showToast('请选择文件'); return; }
+  const pass = document.getElementById('imp-pass').value || '';
+  const info = document.getElementById('imp-info');
+  info.innerHTML = '校验中…';
+  const headers = { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/octet-stream' };
+  if (pass) headers['X-Backup-Pass'] = btoa(unescape(encodeURIComponent(pass)));
+  try {
+    const r = await fetch('/api/admin/restore/stage', { method: 'POST', headers, body: await f.arrayBuffer() });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { info.innerHTML = '<span style="color:var(--err);">' + esc(data.error || ('校验失败 ' + r.status)) + (data.need_pass ? '（请填解密口令后重试）' : '') + '</span>'; return; }
+    _importToken = data.token;
+    const i = data.info || {};
+    info.innerHTML = `<div style="border:1px solid #1a7f37;border-radius:6px;padding:8px 10px;color:var(--txt);line-height:1.9;">
+      ✓ 文件有效。将恢复为：<br>用户 <b>${i.users ?? '—'}</b> · 应用 <b>${i.apps ?? '—'}</b> · 环境变量 <b>${i.env_config ?? '—'}</b> · 组织 <b>${i.oauth_subjects ?? '—'}</b> · 登录凭证 <b>${i.oauth_providers ?? '—'}</b><br>
+      <span style="color:var(--err);">⚠️ 确认恢复会覆盖当前全部数据并重启服务，不可撤销。</span></div>
+      <button class="btn primary" style="margin-top:10px;background:var(--err);border-color:var(--err);" onclick="importApply()">确认恢复（覆盖并重启）</button>`;
+  } catch (e) { info.innerHTML = '<span style="color:var(--err);">' + esc(e.message) + '</span>'; }
+}
+async function importApply() {
+  if (!_importToken) return;
+  const confirm = await uiPrompt('这是高危操作，会覆盖全站数据并重启服务。请输入「恢复全站数据」以确认：', '', { danger: true, title: '最终确认' });
+  if (confirm === null) return;
+  showToast('正在恢复，服务即将重启…');
+  const { ok, data } = await api('POST', '/admin/restore/apply', { token: _importToken, confirm });
+  if (ok) { document.getElementById('import-modal')?.remove(); await uiAlert((data.message || '已载入恢复数据，服务正在重启。') + '\n\n请等待十几秒后刷新页面并重新登录。', { title: '恢复已启动' }); }
+  else showToast('恢复失败：' + (data?.error || '未知错误'));
 }
 async function toggleBackup(id, enabled) {
   const { ok, data } = await api('PATCH', '/admin/backups/' + id, { enabled });
@@ -5797,8 +5894,8 @@ function openBackupModal(id) {
   const row = (label, html, hint) => `<div style="margin-top:10px;"><div style="font-size:12px;color:var(--txm);margin-bottom:4px;">${label}</div>${html}${hint ? `<div style="font-size:11px;color:var(--txd);margin-top:3px;">${hint}</div>` : ''}</div>`;
   m.innerHTML = `<div class="modal" style="min-width:460px;text-align:left;">
     <h3 style="margin-bottom:6px;">${t ? '编辑备份目标' : '添加备份目标'}</h3>
-    ${row('类型', `<select id="bk-type" style="${inp}" ${t ? 'disabled' : ''} onchange="_bkTypeChanged()"><option value="local" ${type === 'local' ? 'selected' : ''}>服务器本地目录</option><option value="r2" ${type === 'r2' ? 'selected' : ''}>Cloudflare R2 存储桶</option></select>`)}
-    ${row('名称', `<input id="bk-label" value="${esc(t ? t.label : '')}" placeholder="${type === 'r2' ? 'R2 存储桶' : '本地目录'}" style="${inp}">`)}
+    ${row('类型', `<select id="bk-type" style="${inp}" ${t ? 'disabled' : ''} onchange="_bkTypeChanged()"><option value="local" ${type === 'local' ? 'selected' : ''}>服务器本地目录</option><option value="r2" ${type === 'r2' ? 'selected' : ''}>Cloudflare R2 存储桶</option><option value="oss" ${type === 'oss' ? 'selected' : ''}>阿里云 OSS 存储桶</option></select>`)}
+    ${row('名称', `<input id="bk-label" value="${esc(t ? t.label : '')}" placeholder="${type === 'r2' ? 'R2 存储桶' : type === 'oss' ? 'OSS 存储桶' : '本地目录'}" style="${inp}">`)}
     <div id="bk-local" style="display:${type === 'local' ? '' : 'none'};">
       ${row('目录', `<input id="bk-dir" value="${esc(c.dir || '')}" placeholder="留空 = 数据库所在目录下的 backups/" style="${inp}">`, '可填绝对路径；相对路径相对于数据库所在目录。容器部署请挂载持久卷。')}
     </div>
@@ -5809,6 +5906,14 @@ function openBackupModal(id) {
       ${row('机密访问密钥（Secret Access Key）', `<input id="bk-sk" type="password" value="${esc(c.secret_access_key || '')}" placeholder="${t ? '已配置，留空不修改' : ''}" style="${inp}">`)}
       ${row('目录前缀（可选）', `<input id="bk-prefix" value="${esc(c.prefix || '')}" placeholder="如 qwq-sso" style="${inp}">`)}
       ${row('自定义 Endpoint（可选）', `<input id="bk-endpoint" value="${esc(c.endpoint || '')}" placeholder="留空 = https://<账户ID>.r2.cloudflarestorage.com；欧盟辖区等可在这里填" style="${inp}">`)}
+    </div>
+    <div id="bk-oss" style="display:${type === 'oss' ? '' : 'none'};">
+      ${row('地域（Region）', `<input id="bk-oss-region" value="${esc(c.region || '')}" placeholder="如 oss-cn-hangzhou" style="${inp}">`, '阿里云 OSS 控制台里存储桶的「地域节点」前缀；或在下方填完整 Endpoint。')}
+      ${row('存储桶名称（Bucket）', `<input id="bk-oss-bucket" value="${esc(c.bucket || '')}" style="${inp}">`)}
+      ${row('AccessKey ID', `<input id="bk-oss-ak" value="${esc(c.access_key_id || '')}" style="${inp}">`, 'RAM 用户的 AccessKey；建议只授权该存储桶的读写权限。')}
+      ${row('AccessKey Secret', `<input id="bk-oss-sk" type="password" value="${esc(c.access_key_secret || '')}" placeholder="${t ? '已配置，留空不修改' : ''}" style="${inp}">`)}
+      ${row('目录前缀（可选）', `<input id="bk-oss-prefix" value="${esc(c.prefix || '')}" placeholder="如 qwq-sso" style="${inp}">`)}
+      ${row('自定义 Endpoint（可选）', `<input id="bk-oss-endpoint" value="${esc(c.endpoint || '')}" placeholder="留空 = <地域>.aliyuncs.com；也可填 oss-cn-hangzhou.aliyuncs.com" style="${inp}">`)}
     </div>
     <div style="display:flex;gap:10px;">
       <div style="flex:1;">${row('自动备份频率', `<select id="bk-interval" style="${inp}">${[[0, '只手动'], [1, '每小时'], [6, '每 6 小时'], [12, '每 12 小时'], [24, '每天'], [72, '每 3 天'], [168, '每周']].map(([v, l]) => `<option value="${v}" ${(t ? t.interval_hours : 24) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
@@ -5826,11 +5931,14 @@ function _bkTypeChanged() {
   const v = document.getElementById('bk-type').value;
   document.getElementById('bk-local').style.display = v === 'local' ? '' : 'none';
   document.getElementById('bk-r2').style.display = v === 'r2' ? '' : 'none';
+  document.getElementById('bk-oss').style.display = v === 'oss' ? '' : 'none';
 }
 async function saveBackup(id) {
   const $ = s => document.getElementById(s);
   const type = $('bk-type').value;
   const config = type === 'local' ? { dir: $('bk-dir').value.trim() }
+    : type === 'oss' ? { region: $('bk-oss-region').value.trim(), bucket: $('bk-oss-bucket').value.trim(), access_key_id: $('bk-oss-ak').value.trim(),
+        access_key_secret: $('bk-oss-sk').value.trim(), prefix: $('bk-oss-prefix').value.trim(), endpoint: $('bk-oss-endpoint').value.trim() }
     : { account_id: $('bk-account').value.trim(), bucket: $('bk-bucket').value.trim(), access_key_id: $('bk-ak').value.trim(),
         secret_access_key: $('bk-sk').value.trim(), prefix: $('bk-prefix').value.trim(), endpoint: $('bk-endpoint').value.trim() };
   config.passphrase = $('bk-pass').value;
@@ -7812,7 +7920,7 @@ async function openSubjectApps(sid, name) {
 // 审计存证链（防篡改）
 // ══════════════════════════════════════════
 const AUDIT_EVENT_LABEL = {
-  'backup.run':'数据备份', 'backup.target_added':'添加备份目标', 'backup.target_removed':'删除备份目标', 'backup.downloaded':'下载备份',
+  'backup.run':'数据备份', 'backup.target_added':'添加备份目标', 'backup.target_removed':'删除备份目标', 'backup.downloaded':'下载备份', 'backup.exported':'导出全站数据', 'backup.restored':'导入恢复全站数据',
   'account.deletion_requested':'申请注销 / 删除账号', 'account.deletion_approved':'批准删除账号', 'account.deletion_cancelled':'撤回注销 / 删除', 'account.deletion_rejected':'驳回删除账号',
   'account.deleted':'账号已删除', 'account.restored':'恢复账号', 'account.purged':'彻底清除账号', 'account.external_removed':'在企业微信中删除成员', 'account.handover_done':'交接项处理', 'user.merge_undone':'撤销合并', 'account.external_suspended':'同步禁用企业微信成员', 'account.external_resumed':'同步启用企业微信成员', 'kyc.account_limit':'同一实名账号数超限',
   'admin.grant_added':'授予管理权限', 'admin.grant_removed':'撤销管理权限', 'user.merged':'合并账号', 'user.similar_ignored':'标记不是同一人', 'user.similar_unignored':'恢复疑似重复提示',

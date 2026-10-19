@@ -1316,8 +1316,10 @@
     document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('pb-' + key)?.classList.add('active');
     const arr = METHODS_BY_PLATFORM[key] || [];
-    // 页面载入时自动选中首个平台：只在电脑上给扫码平台出二维码；跳转类平台不能自动跳走（否则一打开登录页就被带去授权）
-    if (isAuto) { if (QR_PLATFORMS.includes(key) && !useRedirectLogin(key)) selectMethod(arr[0].idx); return; }
+    // 页面载入时自动选中首个平台：只给「能内嵌二维码」的平台（微信）出二维码，绝不自动触发任何跳转。
+    // ⚠️ 企业微信（v3.5.77.1 起）点选即跳 /auth/wecom（不再内嵌二维码），所以它不能参与「自动选中首个平台」，
+    //    否则企业微信排在首位时一打开登录页就被带去企业微信网页登录、返回后又被带走 → 反复跳转（v3.5.101 修）。
+    if (isAuto) { if (key === 'wechat' && !useRedirectLogin(key)) selectMethod(arr[0].idx); return; }
     if (arr.length === 1) { selectMethod(arr[0].idx); return; }
     showSubjectPicker(key, arr);
   }
@@ -2180,9 +2182,14 @@
       }
     }
 
-    // 应用内自动登录（v3.5.42）：没登录、且在企业微信 / 微信 / 飞书 / 钉钉里打开 → 用该平台凭证直接登录
+    // v3.5.101：按用户反馈，取消「一打开登录页就自动跳转」的应用内自动登录——改为只在用户主动点击该登录方式时才跳。
+    // 在企业微信 / 微信 / 飞书 / 钉钉里打开时，仅高亮对应平台按钮作提示，不自动导航（点一下即登录）。
     try { await methodsReady; } catch (_) {}
-    maybeInAppAutoLogin();
+    const inApp = inAppPlatform();
+    if (inApp && document.getElementById('pb-' + inApp)) {
+      document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById('pb-' + inApp).classList.add('active');
+    }
   });
 
   // ── 展开/收起角色选择 ──

@@ -4446,7 +4446,9 @@ router.post('/admin/users/:id/enable', requireAdmin(2, { orgAdmin: true }), (req
 // 数据备份（v3.5.46）—— 快照 / 加密 / 本地与 R2 见 backup.js。仅超级管理员（备份里有全部数据和密钥）
 // ══════════════════════════════════════════
 const backup = require('./backup');
-const { DATA_DIR } = require('./db');
+const { DATA_DIR, DB_FILE } = require('./db');
+const bkFs = require('fs');
+const bkPath = require('path');
 const MASK = '••••••••';
 function backupView(t) {
   let cfg = {}; let state = null;
@@ -4454,10 +4456,13 @@ function backupView(t) {
   try { state = t.state ? JSON.parse(t.state) : null; } catch (_) {}
   const view = { ...cfg };
   if (view.secret_access_key) view.secret_access_key = MASK;
+  if (view.access_key_secret) view.access_key_secret = MASK;
   view.has_passphrase = !!cfg.passphrase; delete view.passphrase;
   return { id: t.id, type: t.type, label: t.label, enabled: !!t.enabled, interval_hours: t.interval_hours, keep: t.keep,
     config: view, state, last_run_at: t.last_run_at, created_at: t.created_at,
-    location: t.type === 'local' ? backup.localDir(cfg, DATA_DIR) : `r2://${cfg.bucket || ''}/${String(cfg.prefix || '').replace(/^\/+|\/+$/g, '')}` };
+    location: t.type === 'local' ? backup.localDir(cfg, DATA_DIR)
+      : t.type === 'oss' ? `oss://${cfg.bucket || ''}/${String(cfg.prefix || '').replace(/^\/+|\/+$/g, '')}`
+      : `r2://${cfg.bucket || ''}/${String(cfg.prefix || '').replace(/^\/+|\/+$/g, '')}` };
 }
 function backupCfgFromBody(type, b, old = {}) {
   const cfg = { ...old };
@@ -4471,7 +4476,16 @@ function backupCfgFromBody(type, b, old = {}) {
     if (!cfg.endpoint && !/^[a-f0-9]{32}$/i.test(cfg.account_id || '')) return { error: '请填写 Cloudflare 账户 ID（32 位），或自定义 Endpoint' };
     if (cfg.endpoint && !/^https:\/\//i.test(cfg.endpoint) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(cfg.endpoint)) return { error: 'Endpoint 必须是 https:// 地址' };
     if (!cfg.access_key_id || !cfg.secret_access_key) return { error: '请填写 R2 访问密钥 ID 与机密访问密钥' };
-  } else return { error: '备份目标类型只能是 local / r2' };
+  } else if (type === 'oss') {
+    // 阿里云 OSS（及兼容 OSS 签名 V1 的对象存储）
+    for (const k of ['region', 'endpoint', 'bucket', 'access_key_id', 'prefix']) if (b[k] !== undefined) cfg[k] = String(b[k] || '').trim().slice(0, 300);
+    const sk = String(b.access_key_secret || '').trim();
+    if (sk && sk !== MASK) cfg.access_key_secret = sk;
+    if (!cfg.bucket || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(cfg.bucket)) return { error: '请填写正确的 OSS 存储桶名称（小写字母、数字、连字符）' };
+    if (!cfg.endpoint && !cfg.region) return { error: '请填写 OSS 地域（如 oss-cn-hangzhou）或自定义 Endpoint' };
+    if (cfg.endpoint && !/^(https?:\/\/)?[a-z0-9][a-z0-9.\-]+$/i.test(cfg.endpoint)) return { error: 'Endpoint 格式不正确（如 oss-cn-hangzhou.aliyuncs.com）' };
+    if (!cfg.access_key_id || !cfg.access_key_secret) return { error: '请填写 OSS AccessKey ID 与 AccessKey Secret' };
+  } else return { error: '备份目标类型只能是 local / r2 / oss' };
   const pp = String(b.passphrase || '');
   if (b.clear_passphrase) delete cfg.passphrase;
   else if (pp && pp !== MASK) { if (pp.length < 8) return { error: '加密口令至少 8 位' }; cfg.passphrase = pp; }
@@ -4484,7 +4498,7 @@ router.get('/admin/backups', requireAdmin(1), (req, res) => {
 router.post('/admin/backups', requireAdmin(1), (req, res) => {
   const b = req.body || {};
   const type = String(b.type || '');
-  const label = String(b.label || '').trim().slice(0, 40) || (type === 'r2' ? 'R2 存储桶' : '本地目录');
+  const label = String(b.label || '').trim().slice(0, 40) || (type === 'r2' ? 'R2 存储桶' : type === 'oss' ? 'OSS 存储桶' : '本地目录');
   const r = backupCfgFromBody(type, b.config || {});
   if (r.error) return res.status(400).json({ error: r.error });
   const id = uuidv4();
@@ -4567,6 +4581,88 @@ router.get('/admin/backups/:id/files/:name', requireAdmin(1), async (req, res) =
     res.end(buf);
   } catch (e) { res.status(/文件名/.test(e.message) ? 400 : 404).json({ error: e.message }); }
 });
+// ── 一键导出全站数据（即时下载）──
+// 生成一份完整快照直接下载。备份含全部数据与全部密钥（env_config / oauth 凭据等），请妥善保管；可填口令加密。
+router.post('/admin/backups/export', requireAdmin(1), async (req, res) => {
+  const pass = String(req.body?.passphrase || '');
+  if (pass && pass.length < 8) return res.status(400).json({ error: '加密口令至少 8 位' });
+  if (backupRunning) return res.status(409).json({ error: '已有备份在进行中，请稍后' });
+  backupRunning = true;
+  try {
+    const gz = await backup.snapshot(db, DATA_DIR);
+    const data = pass ? backup.encrypt(gz, pass) : gz;
+    const name = `qwq-sso-${backup.stamp()}.db.gz` + (pass ? '.enc' : '');
+    audit('backup.exported', { subject: 'backup', actor: actorOf(req), detail: { encrypted: !!pass, size: data.length } });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+  finally { backupRunning = false; }
+});
+
+// ── 导入恢复全站数据 ──
+// 两步：① 上传备份文件校验并暂存（返回概要 + token）；② 确认后应用（写「待恢复」文件并重启，开机时替换库）。
+// ⚠️ 恢复会用备份覆盖当前全部数据，并重启服务。只有超级管理员可用。
+const restoreStages = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of restoreStages) if (now - v.at > 10 * 60 * 1000) { try { bkFs.unlinkSync(v.file); } catch (_) {} restoreStages.delete(k); }
+}, 5 * 60 * 1000).unref();
+
+// 上传一份备份文件（.db.gz 或 .db.gz.enc）→ 解密/解压/校验 → 暂存，返回概要 + token。
+// 加密口令走请求头 X-Backup-Pass（base64(UTF-8)），避免进 URL / 日志。
+router.post('/admin/restore/stage', requireAdmin(1), express.raw({ type: () => true, limit: 512 * 1024 * 1024 }), (req, res) => {
+  try {
+    const buf = req.body;
+    if (!buf || !buf.length) return res.status(400).json({ error: '没有收到文件' });
+    let pass = '';
+    try { const h = req.get('X-Backup-Pass'); if (h) pass = Buffer.from(h, 'base64').toString('utf8'); } catch (_) {}
+    const dbBuf = backup.decodeBackup(Buffer.isBuffer(buf) ? buf : Buffer.from(buf), pass);
+    const info = backup.inspectDbBuffer(dbBuf, DATA_DIR);
+    const token = uuidv4();
+    const staged = bkPath.join(DATA_DIR, `.restore-stage-${token}.db`);
+    bkFs.writeFileSync(staged, dbBuf, { mode: 0o600 });
+    restoreStages.set(token, { file: staged, at: Date.now(), info });
+    res.json({ success: true, token, info });
+  } catch (e) { res.status(400).json({ error: e.message, need_pass: !!e.needPass }); }
+});
+
+// 确认应用上传的恢复文件：写「待恢复」文件 → 响应 → 退出进程（由平台/守护进程拉起，开机时 db.js 替换库）。
+router.post('/admin/restore/apply', requireAdmin(1), (req, res) => {
+  const { token, confirm } = req.body || {};
+  if (confirm !== '恢复全站数据') return res.status(400).json({ error: '请输入确认口令「恢复全站数据」', confirm_text: '恢复全站数据' });
+  const st = restoreStages.get(token);
+  if (!st || !bkFs.existsSync(st.file)) return res.status(404).json({ error: '暂存的恢复文件已失效，请重新上传' });
+  try {
+    backup.stageRestore(DB_FILE, bkFs.readFileSync(st.file));
+    restoreStages.delete(token); try { bkFs.unlinkSync(st.file); } catch (_) {}
+    audit('backup.restored', { subject: 'backup', actor: actorOf(req), detail: { via: 'upload', info: st.info } });
+    res.json({ success: true, restart: true, message: '已载入恢复数据，系统将在几秒后重启并切换到恢复后的数据（若为自托管且无守护进程，请手动重启服务）。' });
+    setTimeout(() => process.exit(0), 800);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 从某个备份目标（本地 / R2 / OSS）里的某份备份直接恢复。
+router.post('/admin/backups/:id/restore', requireAdmin(1), async (req, res) => {
+  const { name, passphrase, confirm } = req.body || {};
+  if (confirm !== '恢复全站数据') return res.status(400).json({ error: '请输入确认口令「恢复全站数据」', confirm_text: '恢复全站数据' });
+  const t = db.prepare('SELECT * FROM backup_targets WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: '备份目标不存在' });
+  if (!backup.FILE_RE.test(String(name || ''))) return res.status(400).json({ error: '文件名不对' });
+  let cfg = {}; try { cfg = JSON.parse(t.config || '{}'); } catch (_) {}
+  try {
+    const raw = await backup.read(t, cfg, DATA_DIR, name);
+    const pass = String(passphrase || cfg.passphrase || '');   // 目标自带口令优先（备份时用它加密）
+    const dbBuf = backup.decodeBackup(Buffer.isBuffer(raw) ? raw : Buffer.from(raw), pass);
+    const info = backup.inspectDbBuffer(dbBuf, DATA_DIR);
+    backup.stageRestore(DB_FILE, dbBuf);
+    audit('backup.restored', { subject: t.id, actor: actorOf(req), detail: { via: t.type, file: name, info } });
+    res.json({ success: true, restart: true, message: '已从备份目标载入恢复数据，系统将在几秒后重启。' });
+    setTimeout(() => process.exit(0), 800);
+  } catch (e) { res.status(e.needPass ? 400 : 500).json({ error: e.message, need_pass: !!e.needPass }); }
+});
+
 // 定时：每 10 分钟看哪些目标到点了（interval_hours>0），一份快照发给本次到期的全部目标
 async function runDueBackups() {
   const due = db.prepare(`SELECT * FROM backup_targets WHERE enabled=1 AND interval_hours>0
