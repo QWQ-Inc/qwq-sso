@@ -167,7 +167,7 @@ select{
       <a href="#" id="restore-toggle" style="color:var(--ac2);font-weight:600;text-decoration:none;">从备份恢复全站数据 →</a>
     </div>
     <div class="card" id="restore-panel" style="display:none;margin-top:10px;">
-      <div class="card-header"><h2>从备份恢复</h2><p>用一份导出 / 备份恢复全站数据（含用户、应用、凭据、配置）。恢复后系统会用它覆盖并重启，然后直接用备份里的管理员账号登录，无需再走安装向导。</p></div>
+      <div class="card-header"><h2>从备份恢复</h2><p>用一份导出 / 备份恢复全站数据（含用户、应用、凭据密钥、全部配置）。恢复后系统会用它覆盖并重启，然后直接用备份里的管理员账号登录，无需再走安装向导。加密的备份需填当初的口令。<br>⚠️ 若原来有些密钥只配在平台（Zeabur 等）面板的环境变量、没进系统配置页，这些不在备份里，恢复后需在新环境重设一遍。</p></div>
       <div class="card-body" style="font-size:13px;">
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button type="button" class="rtab-btn" data-rtab="file" style="flex:1;padding:8px;border:1px solid var(--bd);border-radius:4px;background:var(--ac3);cursor:pointer;font-size:12px;">📄 上传文件</button>

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.102**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.102.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,12 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.102.1 导出/导入页写清敏感性提示（用户反馈）
+
+四级补丁（纯文案/UX）。用户问「用户数据和凭据内容也能导出吗」——答案是全含(整库 1:1)，遂在 UI 写清敏感性：
+- 数据备份页「数据导出/导入」卡加警示块：**所有凭据密钥按原文(明文)导出**(JWT_SECRET/各平台 AppSecret/KYC·短信分发密钥/应用 client_secret/sk_test)；用户数据全含但登录密码只是 bcrypt 哈希、KYC 已脱敏；**强烈建议导出填加密口令**、妥善保管；**不含平台面板(Zeabur)里直接设的 env**(运行时优先、不在库里，恢复后需重设)。
+- `exportAllData` 口令弹窗文案强化(标题「导出全部数据（含全部密钥）」+ 明文警示)。adm-about 数据卡、setup.html 恢复面板同步加简要提示。纯前端文案，无逻辑改动。
 
 ## v3.5.102 导出改 ZIP 格式 + 安装向导「从备份恢复」+ 关于页导入导出入口（用户反馈）
 

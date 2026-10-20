@@ -2753,8 +2753,14 @@ async function loadMe() {
             </div>
           </div>
           <div style="padding:0 20px 12px;font-size:12px;color:var(--txd);line-height:1.8;">
-            「导出全部数据」把整个数据库（含全部<b>凭据、系统配置的 env、各平台数据</b>）打包成一份 <code>.zip</code> 直接下载（任何解压工具可打开查看），可填口令加密。
-            「导入恢复」上传一份导出/备份文件，校验后用它<b>覆盖当前全站数据并重启</b>——数据丢失后可一键恢复，省去运维手动替换库文件。
+            「导出全部数据」把整个数据库打包成一份 <code>.zip</code> 直接下载（任何解压工具可打开查看）。「导入恢复」上传一份导出/备份文件，校验后用它<b>覆盖当前全站数据并重启</b>——数据丢失后可一键恢复，省去运维手动替换库文件。
+            <div style="margin-top:8px;padding:10px 12px;border:1px solid var(--warn,#c93);border-radius:6px;background:rgba(204,153,0,.08);color:var(--txt);line-height:1.9;">
+              ⚠️ <b>这份导出包含全站一切，极其敏感</b>：
+              <br>• <b>所有凭据密钥按原文导出</b>：JWT 密钥、各平台 OAuth AppSecret、KYC/短信分发等密钥、应用 client_secret、测试版 API Key —— 都是明文。
+              <br>• <b>用户数据</b>全含；其中登录密码只导出 bcrypt 哈希（不可逆），实名信息库里本就脱敏（打码姓名+证件尾号）。
+              <br>• <b>强烈建议导出时填加密口令</b>（库会被 AES-256 加密）；文件请妥善保管、勿传不可信处。
+              <br>• <b>不含</b>在 Zeabur 等平台面板里直接设的环境变量（运行时它们优先，也不在库里）——只配在面板、没进「系统配置」的密钥，恢复到新环境后需重设一遍。
+            </div>
           </div>
         </div>
         <div class="card">
@@ -2890,7 +2896,8 @@ async function loadMe() {
             </div>
           </div>
           <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
-            导出整站数据（含全部凭据、系统配置、各平台数据）为一份 <code>.zip</code>；或上传一份导出 / 备份文件覆盖恢复全站并重启。完整的定时备份目标（本地 / R2 / OSS）在「<a href="#" onclick="goto('adm-backups');return false;" style="color:var(--ac2);">数据备份</a>」页管理。
+            导出整站数据为一份 <code>.zip</code>；或上传一份导出 / 备份文件覆盖恢复全站并重启。完整的定时备份目标（本地 / R2 / OSS）在「<a href="#" onclick="goto('adm-backups');return false;" style="color:var(--ac2);">数据备份</a>」页管理。
+            <br>⚠️ 导出含<b>全部密钥（明文）</b>与全站数据（用户密码为哈希、实名已脱敏），<b>强烈建议加密</b>、妥善保管；不含 Zeabur 等平台面板里直接设的环境变量。
           </div>
         </div>
       </div>
@@ -5819,7 +5826,7 @@ async function downloadBackup(id, name) {
 }
 // ── 一键导出全部数据 ──
 async function exportAllData() {
-  const pass = await uiPrompt('给导出文件设置加密口令（可选，至少 8 位）。备份含全部密钥，强烈建议加密。留空 = 不加密：', '', { password: true, title: '导出全部数据' });
+  const pass = await uiPrompt('这份导出含全站数据与全部密钥（JWT/各平台 AppSecret/API 等，均为明文），强烈建议设加密口令（至少 8 位，忘了无法解开，请另存）。留空 = 不加密，谨慎：', '', { password: true, title: '导出全部数据（含全部密钥）' });
   if (pass === null) return;
   if (pass && pass.length < 8) { showToast('加密口令至少 8 位'); return; }
   showToast('正在生成导出文件…');
