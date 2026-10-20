@@ -2753,7 +2753,7 @@ async function loadMe() {
             </div>
           </div>
           <div style="padding:0 20px 12px;font-size:12px;color:var(--txd);line-height:1.8;">
-            「导出全部数据」把整个数据库（含全部<b>凭据、系统配置的 env、各平台数据</b>）做成一份快照直接下载，可填口令加密。
+            「导出全部数据」把整个数据库（含全部<b>凭据、系统配置的 env、各平台数据</b>）打包成一份 <code>.zip</code> 直接下载（任何解压工具可打开查看），可填口令加密。
             「导入恢复」上传一份导出/备份文件，校验后用它<b>覆盖当前全站数据并重启</b>——数据丢失后可一键恢复，省去运维手动替换库文件。
           </div>
         </div>
@@ -2879,6 +2879,18 @@ async function loadMe() {
             <p><b>Zeabur / 云部署</b>：向 GitHub 推送新版本后自动拉取部署，无需在此操作。</p>
             <p><b>自托管直跑</b>：可在服务器 <code>git pull &amp;&amp; npm ci</code> 后重启；或开启「自托管一键更新」后用下方按钮（见「系统配置 → 版本更新」）。</p>
             <div id="about-selfhost" style="margin-top:10px;"></div>
+          </div>
+        </div>
+        <div class="card" id="about-data-card" style="display:none;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>数据导出 / 导入</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn primary" style="font-size:11px;" onclick="exportAllData()">⬇️ 导出全部数据</button>
+              <button class="btn" style="font-size:11px;" onclick="openImportRestore()">⬆️ 导入恢复…</button>
+            </div>
+          </div>
+          <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
+            导出整站数据（含全部凭据、系统配置、各平台数据）为一份 <code>.zip</code>；或上传一份导出 / 备份文件覆盖恢复全站并重启。完整的定时备份目标（本地 / R2 / OSS）在「<a href="#" onclick="goto('adm-backups');return false;" style="color:var(--ac2);">数据备份</a>」页管理。
           </div>
         </div>
       </div>
@@ -5834,9 +5846,9 @@ function openImportRestore() {
   m.innerHTML = `<div class="modal" style="min-width:460px;text-align:left;">
     <h3 style="margin-bottom:6px;">导入恢复全站数据</h3>
     <div style="font-size:12px;color:var(--txd);line-height:1.8;margin-bottom:8px;">
-      上传一份导出 / 备份文件（<code>qwq-sso-*.db.gz</code> 或 <code>.db.gz.enc</code>）。先校验，确认无误后会用它<b>覆盖当前全站数据并重启服务</b>。恢复前当前库会自动另存一份。
+      上传一份导出 / 备份文件（<code>qwq-sso-*.zip</code> 或 <code>*.db.gz</code> / <code>.db.gz.enc</code>）。先校验，确认无误后会用它<b>覆盖当前全站数据并重启服务</b>。恢复前当前库会自动另存一份。
     </div>
-    <div style="margin-top:6px;"><input type="file" id="imp-file" accept=".gz,.enc" style="${inp}"></div>
+    <div style="margin-top:6px;"><input type="file" id="imp-file" accept=".zip,.gz,.enc" style="${inp}"></div>
     <div style="margin-top:10px;"><div style="font-size:12px;color:var(--txm);margin-bottom:4px;">解密口令（加密备份才需要）</div><input id="imp-pass" type="password" style="${inp}"></div>
     <div id="imp-info" style="margin-top:10px;font-size:12px;"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
@@ -9947,6 +9959,9 @@ async function loadVersionInfo(force) {
   const box = document.getElementById('about-version');
   const upd = document.getElementById('about-update');
   const self = document.getElementById('about-selfhost');
+  // 数据导出/导入卡片只给超级管理员（后端 requireAdmin(1)）
+  const dataCard = document.getElementById('about-data-card');
+  if (dataCard) dataCard.style.display = adminRole === 'superadmin' ? '' : 'none';
   if (box) box.innerHTML = '检查中…';
   const { ok, data } = await api('GET', '/admin/version' + (force ? '?force=1' : ''));
   if (!ok) { if (box) box.textContent = '检查失败'; return; }

@@ -160,6 +160,40 @@ select{
     </div>
   </div>
 
+  <!-- 已有备份？从备份恢复 -->
+  <div style="margin-bottom:16px;">
+    <div style="font-size:12px;color:var(--txm);">
+      已经在别处部署过、手上有导出 / 备份文件？可以直接
+      <a href="#" id="restore-toggle" style="color:var(--ac2);font-weight:600;text-decoration:none;">从备份恢复全站数据 →</a>
+    </div>
+    <div class="card" id="restore-panel" style="display:none;margin-top:10px;">
+      <div class="card-header"><h2>从备份恢复</h2><p>用一份导出 / 备份恢复全站数据（含用户、应用、凭据、配置）。恢复后系统会用它覆盖并重启，然后直接用备份里的管理员账号登录，无需再走安装向导。</p></div>
+      <div class="card-body" style="font-size:13px;">
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button type="button" class="rtab-btn" data-rtab="file" style="flex:1;padding:8px;border:1px solid var(--bd);border-radius:4px;background:var(--ac3);cursor:pointer;font-size:12px;">📄 上传文件</button>
+          <button type="button" class="rtab-btn" data-rtab="bucket" style="flex:1;padding:8px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);cursor:pointer;font-size:12px;">☁️ 从存储桶</button>
+        </div>
+        <div id="rtab-file">
+          <label style="font-size:12px;color:var(--txm);">备份文件（qwq-sso-*.zip / *.db.gz）</label>
+          <input type="file" id="rs-file" accept=".zip,.gz,.enc" style="width:100%;margin-top:4px;">
+          <label style="font-size:12px;color:var(--txm);display:block;margin-top:10px;">解密口令（加密备份才需要）</label>
+          <input type="password" id="rs-file-pass" style="width:100%;box-sizing:border-box;margin-top:4px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;">
+          <button type="button" id="rs-file-btn" style="margin-top:12px;padding:9px 16px;border:none;border-radius:4px;background:var(--ac2);color:#fff;font-weight:600;cursor:pointer;">校验并预览</button>
+        </div>
+        <div id="rtab-bucket" style="display:none;">
+          <label style="font-size:12px;color:var(--txm);">存储类型</label>
+          <select id="rs-type" style="width:100%;box-sizing:border-box;margin:4px 0 8px;padding:7px 9px;border:1px solid var(--bd);border-radius:4px;">
+            <option value="r2">Cloudflare R2</option><option value="oss">阿里云 OSS</option><option value="local">服务器本地目录</option>
+          </select>
+          <div id="rs-bucket-fields" style="display:grid;gap:6px;"></div>
+          <button type="button" id="rs-bucket-list" style="margin-top:10px;padding:9px 16px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);cursor:pointer;">列出备份</button>
+          <div id="rs-bucket-files" style="margin-top:10px;"></div>
+        </div>
+        <div id="rs-result" style="margin-top:12px;font-size:12px;"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- 步骤条 -->
   <div class="steps" id="steps-bar">
     <div class="step active" id="s1">
@@ -663,6 +697,84 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) {}
   });
 });
+
+// ── 从备份恢复（安装向导）──
+(function () {
+  const $ = s => document.getElementById(s);
+  const toggle = $('restore-toggle'); if (!toggle) return;
+  toggle.addEventListener('click', e => { e.preventDefault(); const p = $('restore-panel'); p.style.display = p.style.display === 'none' ? '' : 'none'; });
+  // 文件 / 存储桶 分页
+  document.querySelectorAll('.rtab-btn').forEach(b => b.addEventListener('click', () => {
+    const t = b.dataset.rtab;
+    document.querySelectorAll('.rtab-btn').forEach(x => x.style.background = x.dataset.rtab === t ? 'var(--ac3)' : 'var(--sf)');
+    $('rtab-file').style.display = t === 'file' ? '' : 'none';
+    $('rtab-bucket').style.display = t === 'bucket' ? '' : 'none';
+  }));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const inp = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;';
+  const FIELDS = {
+    r2: [['account_id', 'Cloudflare 账户 ID（32 位，或填 Endpoint）'], ['bucket', '存储桶名称'], ['access_key_id', 'Access Key ID'], ['secret_access_key', 'Secret Access Key'], ['prefix', '目录前缀（可选）'], ['endpoint', '自定义 Endpoint（可选）']],
+    oss: [['region', '地域，如 oss-cn-hangzhou'], ['bucket', '存储桶名称'], ['access_key_id', 'AccessKey ID'], ['access_key_secret', 'AccessKey Secret'], ['prefix', '目录前缀（可选）'], ['endpoint', '自定义 Endpoint（可选）']],
+    local: [['dir', '本地目录（留空 = 数据库目录下 backups/）']],
+  };
+  function renderBucketFields() {
+    const t = $('rs-type').value;
+    $('rs-bucket-fields').innerHTML = FIELDS[t].map(([k, ph]) =>
+      `<input id="rsb-${k}" placeholder="${esc(ph)}" type="${/secret|key_secret/.test(k) ? 'password' : 'text'}" style="${inp}">`).join('');
+  }
+  $('rs-type').addEventListener('change', () => { renderBucketFields(); $('rs-bucket-files').innerHTML = ''; });
+  renderBucketFields();
+  function bucketConfig() { const t = $('rs-type').value; const c = {}; FIELDS[t].forEach(([k]) => { const el = $('rsb-' + k); if (el) c[k] = el.value.trim(); }); return { type: t, config: c }; }
+  async function confirmAndRun(fn) {
+    const c = prompt('这会用备份覆盖当前全站数据并重启。请输入「恢复全站数据」确认：');
+    if (c === null) return;
+    if (c !== '恢复全站数据') { alert('确认口令不正确'); return; }
+    $('rs-result').innerHTML = '正在恢复，系统即将重启…';
+    await fn(c);
+  }
+  // 上传文件：先 stage 预览，再 apply
+  let _token = null;
+  $('rs-file-btn').addEventListener('click', async () => {
+    const f = $('rs-file').files[0]; if (!f) { alert('请选择备份文件'); return; }
+    const pass = $('rs-file-pass').value || '';
+    $('rs-result').innerHTML = '校验中…';
+    const headers = { 'Content-Type': 'application/octet-stream' };
+    if (pass) headers['X-Backup-Pass'] = btoa(unescape(encodeURIComponent(pass)));
+    try {
+      const r = await fetch('/setup/restore/stage', { method: 'POST', headers, body: await f.arrayBuffer() });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { $('rs-result').innerHTML = '<span style="color:var(--err);">' + esc(d.error || '校验失败') + (d.need_pass ? '（请填解密口令）' : '') + '</span>'; return; }
+      _token = d.token; const i = d.info || {};
+      $('rs-result').innerHTML = `<div style="border:1px solid var(--ok);border-radius:4px;padding:8px 10px;line-height:1.9;">✓ 文件有效：用户 <b>${i.users ?? '—'}</b> · 应用 <b>${i.apps ?? '—'}</b> · 环境变量 <b>${i.env_config ?? '—'}</b> · 组织 <b>${i.oauth_subjects ?? '—'}</b> · 凭证 <b>${i.oauth_providers ?? '—'}</b></div>
+        <button type="button" id="rs-file-apply" style="margin-top:10px;padding:9px 16px;border:none;border-radius:4px;background:var(--err,#d33);color:#fff;font-weight:600;cursor:pointer;">确认恢复（覆盖并重启）</button>`;
+      $('rs-file-apply').addEventListener('click', () => confirmAndRun(async confirm => {
+        const rr = await fetch('/setup/restore/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: _token, confirm }) });
+        const dd = await rr.json().catch(() => ({}));
+        $('rs-result').innerHTML = rr.ok ? '<span style="color:var(--ok);">' + esc(dd.message || '已恢复，系统正在重启。请稍候刷新页面。') + '</span>' : '<span style="color:var(--err);">' + esc(dd.error || '恢复失败') + '</span>';
+      }));
+    } catch (e) { $('rs-result').innerHTML = '<span style="color:var(--err);">' + esc(e.message) + '</span>'; }
+  });
+  // 从存储桶：列出 → 选一份恢复
+  $('rs-bucket-list').addEventListener('click', async () => {
+    $('rs-bucket-files').innerHTML = '加载中…';
+    try {
+      const r = await fetch('/setup/restore/bucket-list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bucketConfig()) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { $('rs-bucket-files').innerHTML = '<span style="color:var(--err);">' + esc(d.error || '列出失败') + '</span>'; return; }
+      if (!d.files.length) { $('rs-bucket-files').innerHTML = '该存储桶里没有备份文件。'; return; }
+      $('rs-bucket-files').innerHTML = d.files.map(f => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd);"><code style="font-size:11px;">${esc(f.name)}</code><button type="button" data-name="${esc(f.name)}" class="rs-pick" style="padding:4px 10px;border:1px solid var(--err,#d33);color:var(--err,#d33);border-radius:4px;background:none;cursor:pointer;font-size:11px;">从此恢复</button></div>`).join('');
+      document.querySelectorAll('.rs-pick').forEach(btn => btn.addEventListener('click', () => {
+        const name = btn.dataset.name;
+        confirmAndRun(async confirm => {
+          const pass = prompt('如果这份备份有加密口令请输入（没有就留空）：') || '';
+          const rr = await fetch('/setup/restore/from-bucket', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...bucketConfig(), name, passphrase: pass, confirm }) });
+          const dd = await rr.json().catch(() => ({}));
+          $('rs-result').innerHTML = rr.ok ? '<span style="color:var(--ok);">' + esc(dd.message || '已恢复，系统正在重启。') + '</span>' : '<span style="color:var(--err);">' + esc(dd.error || '恢复失败') + (dd.need_pass ? '（请检查解密口令）' : '') + '</span>';
+        });
+      }));
+    } catch (e) { $('rs-bucket-files').innerHTML = '<span style="color:var(--err);">' + esc(e.message) + '</span>'; }
+  });
+})();
 </script>
 
 __FOOTER_HTML__

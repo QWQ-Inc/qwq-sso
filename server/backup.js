@@ -31,6 +31,67 @@ function decrypt(buf, passphrase) {
   return Buffer.concat([d.update(buf.subarray(50)), d.final()]);
 }
 
+// ── ZIP（导出用，标准 .zip，任何解压工具可开；无第三方依赖）──
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+let _crcTable;
+function crc32(buf) {
+  if (typeof zlib.crc32 === 'function') return zlib.crc32(buf) >>> 0;   // Node ≥20.15 原生
+  if (!_crcTable) { _crcTable = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); _crcTable[n] = c >>> 0; } }
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) crc = _crcTable[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+// entries: [{name, data(Buffer)}] → 一个 .zip Buffer（deflate 压缩、UTF-8 文件名）
+function zipWrite(entries) {
+  const parts = [], central = []; let offset = 0;
+  for (const e of entries) {
+    const name = Buffer.from(e.name, 'utf8');
+    const comp = zlib.deflateRawSync(e.data, { level: 6 });
+    const crc = crc32(e.data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(8, 8);
+    lh.writeUInt16LE(0, 10); lh.writeUInt16LE(0x21, 12); lh.writeUInt32LE(crc, 14);
+    lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(e.data.length, 22);
+    lh.writeUInt16LE(name.length, 26); lh.writeUInt16LE(0, 28);
+    parts.push(lh, name, comp);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8);
+    ch.writeUInt16LE(8, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(0x21, 14); ch.writeUInt32LE(crc, 16);
+    ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(e.data.length, 24); ch.writeUInt16LE(name.length, 28);
+    ch.writeUInt32LE(offset, 42);
+    central.push(ch, name);
+    offset += lh.length + name.length + comp.length;
+  }
+  const cd = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, cd, eocd]);
+}
+// 读 .zip → { 文件名: Buffer }（只认 store/deflate）
+function zipRead(buf) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0 && i >= buf.length - 22 - 65536; i--) { if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; } }
+  if (eocd < 0) throw new Error('不是有效的 ZIP 文件');
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  const out = {};
+  for (let n = 0; n < count && p + 46 <= buf.length; n++) {
+    if (buf.readUInt32LE(p) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(p + 10);
+    const compSize = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+    const lho = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    const lhNameLen = buf.readUInt16LE(lho + 26), lhExtraLen = buf.readUInt16LE(lho + 28);
+    const dataStart = lho + 30 + lhNameLen + lhExtraLen;
+    const comp = buf.subarray(dataStart, dataStart + compSize);
+    out[name] = method === 0 ? Buffer.from(comp) : zlib.inflateRawSync(comp);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
 // ── SigV4（S3 / R2）──
 const sha256hex = b => crypto.createHash('sha256').update(b).digest('hex');
 const hmac = (k, s) => crypto.createHmac('sha256', k).update(s).digest();
@@ -153,8 +214,35 @@ async function ossList(cfg) {
 }
 
 // ── 恢复（导入全站数据）相关 ──
-// 把一份备份文件内容（可能加密、gzip）还原成 SQLite 库字节
+const README_TXT = [
+  'QWQ SSO 全站数据导出',
+  '',
+  '这是一份 QWQ SSO 的完整数据导出（整个数据库）。',
+  '- sso.db       明文数据库（未加密导出时）',
+  '- sso.db.enc   加密数据库（导出时填了口令；AES-256-GCM）',
+  '- MANIFEST.json 导出信息（版本、时间、各表数量、是否加密）',
+  '',
+  '恢复：在管理端「数据备份 / 导出 · 导入」或安装向导页上传本 .zip 文件即可，',
+  '系统会校验后用它覆盖全站数据并重启。加密导出需填当初的口令。',
+  '也可命令行解密单独的 sso.db.enc：node server/backup.js decrypt sso.db.enc sso.db 口令',
+].join('\n');
+
+// 把一份导出/备份文件内容还原成 SQLite 库字节（支持 .zip 新格式 与 旧 .db.gz / .db.gz.enc）
 function decodeBackup(buf, passphrase) {
+  // 新格式：.zip（里面是 sso.db 或 sso.db.enc）
+  if (buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
+    const entries = zipRead(buf);
+    let dbBytes;
+    if (entries['sso.db.enc']) {
+      if (!passphrase) { const e = new Error('这是加密导出，请提供解密口令'); e.needPass = true; throw e; }
+      dbBytes = decrypt(entries['sso.db.enc'], passphrase);
+    } else if (entries['sso.db']) {
+      dbBytes = entries['sso.db'];
+    } else throw new Error('ZIP 里找不到 sso.db（不是 QWQ SSO 的导出文件）');
+    if (dbBytes.subarray(0, 15).toString('latin1') !== 'SQLite format 3') throw new Error('不是有效的 SQLite 备份文件');
+    return dbBytes;
+  }
+  // 旧格式：.db.gz / .db.gz.enc（定时备份目标仍用它）
   let b = buf;
   if (b.length >= 6 && b.subarray(0, 6).equals(MAGIC)) {
     if (!passphrase) { const e = new Error('这是加密备份，请提供解密口令'); e.needPass = true; throw e; }
@@ -164,6 +252,25 @@ function decodeBackup(buf, passphrase) {
   catch (_) { throw new Error('解压失败：文件可能已损坏，或是加密备份但没填对口令'); }
   if (b.subarray(0, 15).toString('latin1') !== 'SQLite format 3') throw new Error('不是有效的 SQLite 备份文件');
   return b;
+}
+
+// 生成一份 .zip 全站导出（含 sso.db[.enc] + MANIFEST.json + README.txt）
+async function buildExportZip(db, dataDir, passphrase, meta = {}) {
+  const tmp = path.join(dataDir, `.export-${process.pid}-${Date.now()}.db`);
+  try {
+    await db.backup(tmp);
+    const raw = fs.readFileSync(tmp);
+    let counts = {}; try { counts = inspectDbBuffer(raw, dataDir); } catch (_) {}
+    const encrypted = !!passphrase;
+    const manifest = { product: 'QWQ SSO', kind: 'full-export', version: meta.version || '',
+      created_at: new Date().toISOString(), encrypted, db_file: encrypted ? 'sso.db.enc' : 'sso.db', counts };
+    const entries = [
+      { name: 'MANIFEST.json', data: Buffer.from(JSON.stringify(manifest, null, 2)) },
+      { name: 'README.txt', data: Buffer.from(README_TXT) },
+      encrypted ? { name: 'sso.db.enc', data: encrypt(raw, passphrase) } : { name: 'sso.db', data: raw },
+    ];
+    return { buf: zipWrite(entries), name: `qwq-sso-${stamp()}.zip`, encrypted, counts };
+  } finally { try { fs.unlinkSync(tmp); } catch (_) {} }
 }
 // 校验一份（已还原的）SQLite 库是否为本系统的合法备份，并返回概要（给管理员确认用）
 function inspectDbBuffer(dbBuf, dataDir) {
@@ -253,7 +360,8 @@ async function read(target, cfg, dataDir, name) {
 }
 
 module.exports = { encrypt, decrypt, sigv4, snapshot, writeTo, list, read, stamp, localDir,
-  ossHost, ossSign, decodeBackup, inspectDbBuffer, stageRestore, FILE_RE };
+  ossHost, ossSign, decodeBackup, buildExportZip, inspectDbBuffer, stageRestore,
+  zipWrite, zipRead, crc32, FILE_RE };
 
 // 命令行：解密备份
 if (require.main === module) {

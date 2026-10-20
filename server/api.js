@@ -4581,22 +4581,22 @@ router.get('/admin/backups/:id/files/:name', requireAdmin(1), async (req, res) =
     res.end(buf);
   } catch (e) { res.status(/文件名/.test(e.message) ? 400 : 404).json({ error: e.message }); }
 });
-// ── 一键导出全站数据（即时下载）──
-// 生成一份完整快照直接下载。备份含全部数据与全部密钥（env_config / oauth 凭据等），请妥善保管；可填口令加密。
+// ── 一键导出全站数据（即时下载，.zip 格式）──
+// 生成一份完整数据库导出直接下载（标准 .zip，任何解压工具可开）。含全部数据与全部密钥（env_config / oauth 凭据等），
+// 请妥善保管；可填口令加密（加密的是 zip 内的 sso.db.enc，zip 本身仍可打开查看）。
+const APP_VERSION = (() => { try { return require('../package.json').version; } catch (_) { return ''; } })();
 router.post('/admin/backups/export', requireAdmin(1), async (req, res) => {
   const pass = String(req.body?.passphrase || '');
   if (pass && pass.length < 8) return res.status(400).json({ error: '加密口令至少 8 位' });
   if (backupRunning) return res.status(409).json({ error: '已有备份在进行中，请稍后' });
   backupRunning = true;
   try {
-    const gz = await backup.snapshot(db, DATA_DIR);
-    const data = pass ? backup.encrypt(gz, pass) : gz;
-    const name = `qwq-sso-${backup.stamp()}.db.gz` + (pass ? '.enc' : '');
-    audit('backup.exported', { subject: 'backup', actor: actorOf(req), detail: { encrypted: !!pass, size: data.length } });
-    res.setHeader('Content-Type', 'application/octet-stream');
+    const { buf, name, encrypted } = await backup.buildExportZip(db, DATA_DIR, pass, { version: APP_VERSION });
+    audit('backup.exported', { subject: 'backup', actor: actorOf(req), detail: { encrypted, size: buf.length, format: 'zip' } });
+    res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
     res.setHeader('Cache-Control', 'no-store');
-    res.end(data);
+    res.end(buf);
   } catch (e) { res.status(500).json({ error: e.message }); }
   finally { backupRunning = false; }
 });

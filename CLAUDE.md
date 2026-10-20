@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.101**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.102**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,31 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.102 导出改 ZIP 格式 + 安装向导「从备份恢复」+ 关于页导入导出入口（用户反馈）
+
+三级版本。承接 v3.5.101，用户三点：① 导出改 .zip 格式；② 安装/setup 页加「从文件/存储桶恢复」；③ 管理端「关于」页也放导入导出入口。
+
+### 导出 → 标准 .zip（`server/backup.js`）
+- 自写零依赖 ZIP 读写：`crc32`（有 `zlib.crc32` 用原生、否则表法回退）/`zipWrite(entries)`（deflate + UTF-8 名 + central dir + EOCD）/`zipRead(buf)`（扫 EOCD → central dir → 按名 inflateRaw）。
+- `buildExportZip(db, dataDir, passphrase, {version})`：`db.backup` 出整库 → 打包 `MANIFEST.json`（product/kind/version/created_at/encrypted/db_file/counts）+ `README.txt`（恢复说明）+ `sso.db`（明文）或 `sso.db.enc`（AES-256-GCM 加密的原库，zip 本身仍可打开、只是库被加密）。文件名 `qwq-sso-<stamp>.zip`。
+- `decodeBackup` 扩展为**同时认 zip 新格式与旧 .db.gz/.db.gz.enc**：zip → `zipRead` 取 `sso.db`/`sso.db.enc`(有则解密)；旧格式走原解密+gunzip。于是导入侧（上传 stage / 目标 restore）自动同时接受两种。
+- `api.js` `/admin/backups/export` 改调 `buildExportZip`，`Content-Type: application/zip`，audit detail `format:'zip'`。**定时备份目标（local/R2/OSS）仍写 `.db.gz`**（轮询/保留更省），`decodeBackup` 两种都能恢复。
+- ⚠️ 真实 unzip + Python zipfile 校验：`testzip()` 无损、CRC 正确、`sso.db` 头 `SQLite format 3` 可提取 —— 跨工具可开。
+
+### 安装向导「从备份恢复」（`server/setup.js` + `public/setup.html`）
+- 全新部署数据丢失后，可在**安装页**直接恢复，不用先走完向导。4 个路由（**全部 gated on `!isSetupDone()`**，装好即 403；setup 路由本就免鉴权＝首装信任模型，恢复要素在于持有备份/凭证）：
+  - `POST /setup/restore/stage`（express.raw 上传，`X-Backup-Pass` 头）→ decode+inspect+暂存 → 概要+token；`POST /setup/restore/apply {token,confirm:恢复全站数据}` → `stageRestore` + `process.exit`。
+  - `POST /setup/restore/bucket-list {type,config}` / `POST /setup/restore/from-bucket {type,config,name,passphrase,confirm}` —— 内联填 R2/OSS/本地凭证，列出并恢复（读 `.db.gz`）。
+  - ⚠️ 挂在 `/setup`（绕开安装守卫，`/api` 在未安装时会被守卫 503）；恢复后开机 `db.js` 的 `applyPendingRestore` 替换库 → 直接用备份里的管理员登录。
+- setup.html 品牌下加「从备份恢复 →」折叠面板：文件上传（stage 预览→apply）/ 存储桶（选类型→填字段→列出→从此恢复），强确认「恢复全站数据」。
+
+### 管理端「关于 / 更新」页（`public/dashboard.html`）
+- adm-about 加「数据导出 / 导入」卡（⬇️导出 / ⬆️导入，复用 `exportAllData`/`openImportRestore`），`loadVersionInfo` 里 `adminRole==='superadmin'` 才显示（后端 requireAdmin(1)）。导入文件 accept 加 `.zip`。
+
+### 测试
+- backup ZIP/decode 11 项全过（zipWrite↔zipRead 往返含中文名/大内容、crc32 空=0 与官方向量 0xCBF43926、decodeBackup 明文 zip/加密 zip+口令/无口令 needPass/错口令/无 sso.db/旧 .db.gz）；真实 unzip + Python zipfile 验证 testzip 无损、可提取。server(backup/api/setup) + dashboard/setup/login 内联 JS 语法通过。
+- ⚠️ 真实 R2/OSS 链路、setup 恢复的进程重启靠平台拉起未端到端（本机 node_modules 为空壳）；逻辑靠单测 + 代码审查。
 
 ## v3.5.101 全站数据导出 / 导入恢复 + 备份支持阿里云 OSS + 修企业微信登录反复跳转（用户反馈）
 
