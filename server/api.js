@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, totpVault, printers, printJobs, printRules, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, realtimeCodes, totpVault, printers, printJobs, printRules, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
 const mdmApple = require('./mdm-apple');
 const plist = require('./plist');
@@ -246,6 +246,31 @@ function checkEmailDomain(email) {
   return null;
 }
 const genCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+// ── App 实时确认码（v3.5.103）──
+// 服务端实时下发的滚动验证码，只在已登录 App / 控制台的「实时确认」面板显示；用户读出后在验证点输入校验。
+const RT_MAX_ATTEMPTS = 5;
+const rtHash = code => crypto.createHash('sha256').update(String(code)).digest('hex');
+const realtimeTtl = () => Math.max(30, Math.min(600, parseInt(process.env.REALTIME_CODE_TTL || '90', 10) || 90));
+// 生成并存一条新的实时确认码（覆盖旧的），返回明文 + 有效期秒数
+function issueRealtimeCode(userId) {
+  const code = genCode();
+  const ttl = realtimeTtl();
+  realtimeCodes.set.run(userId, rtHash(code), Date.now() + ttl * 1000);
+  return { code, expires_in: ttl };
+}
+// 校验实时确认码：命中且未过期未超限才通过，通过即消费（删除）；失败累计尝试，超限作废
+function verifyRealtimeCode(userId, code) {
+  const row = realtimeCodes.get.get(userId);
+  if (!row) return false;
+  if (row.expires_at < Date.now()) { realtimeCodes.clear.run(userId); return false; }
+  if (row.attempts >= RT_MAX_ATTEMPTS) { realtimeCodes.clear.run(userId); return false; }
+  if (rtHash(String(code || '')) === row.code_hash) { realtimeCodes.clear.run(userId); return true; }
+  realtimeCodes.bumpAttempt.run(userId);
+  if (row.attempts + 1 >= RT_MAX_ATTEMPTS) realtimeCodes.clear.run(userId);
+  return false;
+}
+setInterval(() => { try { realtimeCodes.purgeOld.run(Date.now()); } catch (_) {} }, 10 * 60 * 1000).unref();
 
 function logLogin(data) {
   try {
@@ -506,7 +531,7 @@ router.post('/2fa/login-verify', (req, res) => {
   if (!user || !user.twofa_enabled || !user.twofa_secret) return res.status(400).json({ error: '账号状态异常，请重新登录' });
   if (user.status === 'disabled') return res.status(403).json({ error: '账号已停用，请联系管理员' });
 
-  let ok = false, viaRecovery = false, viaApproval = false;
+  let ok = false, viaRecovery = false, viaApproval = false, viaRealtime = false;
   if (approval) {
     // App 审批式：本次登录对应的审批已被批准（未过期）才放行
     const row = data.aid ? loginApprovals.get.get(data.aid) : null;
@@ -517,13 +542,15 @@ router.post('/2fa/login-verify', (req, res) => {
     const row = twofa.findCode.get(user.id, totp.hashRecoveryCode(recovery_code));
     if (row) { twofa.useCode.run(row.id); ok = true; viaRecovery = true; }
   } else {
+    // 先按 TOTP 校验；不中且开了「App 实时确认码」则再按实时确认码校验（两者都是 6 位，输哪个都行）
     ok = totp.verifyToken(user.twofa_secret, code);
+    if (!ok && user.app_realtime_enabled && verifyRealtimeCode(user.id, code)) { ok = true; viaRealtime = true; }
   }
   if (!ok) {
     logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: data.method || '账号密码', ip: req.ip, ua: req.headers['user-agent'], status: 'failed', failReason: '2FA 验证失败' });
-    return res.status(401).json({ error: recovery_code ? '恢复码无效或已使用' : '动态验证码不正确' });
+    return res.status(401).json({ error: recovery_code ? '恢复码无效或已使用' : '动态验证码 / 实时确认码不正确' });
   }
-  logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: (data.method || '账号密码') + (viaApproval ? '+App审批' : viaRecovery ? '+恢复码' : '+2FA'), ip: req.ip, ua: req.headers['user-agent'] });
+  logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: (data.method || '账号密码') + (viaApproval ? '+App审批' : viaRecovery ? '+恢复码' : viaRealtime ? '+实时确认码' : '+2FA'), ip: req.ip, ua: req.headers['user-agent'] });
   // org-scoped 登录（v3.5.20）：从中间态令牌把 org/org_scoped 带进正式 token
   const org = data.org || null, orgScoped = !!data.org_scoped;
   const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
@@ -538,6 +565,7 @@ router.get('/user/2fa/status', requireAuth, (req, res) => {
     success: true,
     enabled: !!user.twofa_enabled,
     app_enabled: !!user.app_2fa_enabled,   // App 审批式 2FA（v3.5.94）
+    realtime_enabled: !!user.app_realtime_enabled,   // App 实时确认码（v3.5.103）
     mustSetup: mustSetup2fa(user),
     recoveryCodesLeft: user.twofa_enabled ? twofa.countCodes.get(user.id).n : 0,
   });
@@ -551,6 +579,25 @@ router.post('/user/2fa/app', requireAuth, noPublic, (req, res) => {
   if (enable && !user.twofa_enabled) return res.status(400).json({ error: '请先开启两步验证（TOTP），App 审批作为其附加方式' });
   users.setAppTwofa.run(enable ? 1 : 0, user.id);
   res.json({ success: true, app_enabled: enable });
+});
+
+// ── App 实时确认码（v3.5.103）──
+// 开/关「App 实时确认码」（开启要求已开 TOTP，与 App 审批同理作兜底防锁死）
+router.post('/user/2fa/realtime', requireAuth, noPublic, (req, res) => {
+  const user = users.findById.get(req.user.uid);
+  const enable = req.body.enable !== false && req.body.enable !== 0;
+  if (enable && !user.twofa_enabled) return res.status(400).json({ error: '请先开启两步验证（TOTP），App 实时确认码作为其附加方式' });
+  users.setAppRealtime.run(enable ? 1 : 0, user.id);
+  if (!enable) realtimeCodes.clear.run(user.id);
+  res.json({ success: true, realtime_enabled: enable });
+});
+
+// 获取一枚实时确认码（在「实时确认」面板显示；每次调用生成新码、覆盖旧码）。要求已开启本功能。
+router.post('/user/realtime-code', requireAuth, noPublic, (req, res) => {
+  const user = users.findById.get(req.user.uid);
+  if (!user.app_realtime_enabled) return res.status(400).json({ error: '尚未开启「App 实时确认码」，请先到账号设定开启' });
+  const { code, expires_in } = issueRealtimeCode(user.id);
+  res.json({ success: true, code, expires_in });
 });
 
 // App 拉取待审批的登录请求（本人；展示 IP/时间/登录方式供判断）
@@ -685,6 +732,8 @@ router.post('/user/2fa/disable', requireAuth, noPublic, (req, res) => {
   if (!ok) return res.status(401).json({ error: '验证码不正确，无法关闭' });
   users.set2fa.run(0, null, user.id);
   users.setAppTwofa.run(0, user.id);   // App 审批依赖 TOTP，一并关闭（v3.5.94）
+  users.setAppRealtime.run(0, user.id);   // App 实时确认码依赖 TOTP，一并关闭（v3.5.103）
+  realtimeCodes.clear.run(user.id);
   twofa.clearCodes.run(user.id);
   res.json({ success: true });
 });
@@ -6935,6 +6984,28 @@ router.get('/v1/users/:uid/kyc/events', requireApiKey('kyc:read'), (req, res) =>
   const u = findRealUserByUid(req.params.uid);
   if (!u) return res.status(404).json({ error: '用户不存在' });
   res.json({ total: kycEvents.countByUser.get(u.id).n, data: kycEvents.byUser.all(u.id) });
+});
+
+// ── App 实时确认码：开放 API（v3.5.103）──
+// 第三方应用 / 门户要求实时确认时：提示用户打开 QWQ App「实时确认」读码 → 用户输入 → 应用调本接口校验。
+// 校验通过即消费该码（一次性）。仅当用户已开启「App 实时确认码」时可用。
+router.get('/v1/users/:uid/realtime-code', requireApiKey('realtime:verify'), (req, res) => {
+  if (req.isSandbox) return res.json({ uid: 142, enabled: true, has_active: true, _sandbox: true });
+  const u = findRealUserByUid(req.params.uid);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  const row = realtimeCodes.get.get(u.id);
+  res.json({ uid: u.uid_seq, enabled: !!u.app_realtime_enabled, has_active: !!(row && row.expires_at >= Date.now()) });
+});
+router.post('/v1/users/:uid/realtime-code/verify', requireApiKey('realtime:verify'), (req, res) => {
+  if (req.isSandbox) return res.json({ verified: true, _sandbox: true });
+  const u = findRealUserByUid(req.params.uid);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  if (!u.app_realtime_enabled) return res.status(400).json({ error: '该用户未开启 App 实时确认码' });
+  const code = String(req.body?.code || '').trim();
+  if (!code) return res.status(400).json({ error: '缺少 code' });
+  const verified = verifyRealtimeCode(u.id, code);
+  if (verified) audit('realtime.verified', { subject: u.uid_seq, actor: actorOf(req), detail: {} });
+  res.json({ verified });
 });
 
 // 发起实名会话：返回让用户去人脸核身的跳转 URL（走 5 服务商轮询）。

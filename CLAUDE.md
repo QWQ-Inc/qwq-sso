@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.102.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.103**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.103 App 实时确认码（服务端实时下发的滚动确认码，第二因子）（用户反馈）
+
+三级版本。用户：上线「手机端实时确认」——登录 App 后，在某应用/门户做双重验证时，按设定规则需输入**实时验证码**；与 MFA/TOTP 区别在于**实时下发**：用户打开 App 点「实时确认」板块读里面的码再输入完成校验。落地为 2FA 三部曲之后的第四个方法「App 实时确认码」。
+- **概念**：服务端实时生成、只在已登录 App / 控制台「实时确认」面板显示的滚动码；用户读出后在验证点输入。与 TOTP 区别：服务端实时生成+校验、需活跃 App 会话才看得到、可即时轮换/消费、离线不可用。与 App 审批（v3.5.94）区别：审批是点「批准」（需验证点能轮询我方），实时码是读码手输（任何验证点都适用，含第三方应用/门户）。
+- **数据(db.js)**：`users.app_realtime_enabled`(0/1)；新表 `realtime_codes(user_id PK, code_hash=sha256 不存明文, created_at, expires_at epoch ms, attempts)`；`realtimeCodeStmts`(set 用 `ON CONFLICT(user_id) DO UPDATE` upsert 覆盖、get/clear/bumpAttempt/purgeOld)，导出 `realtimeCodes`；`userStmts.setAppRealtime`。
+- **后端(api.js)**：`rtHash`/`realtimeTtl()`(env `REALTIME_CODE_TTL` 默认 90、夹 30~600)/`issueRealtimeCode(uid)`(生成 6 位+存 hash+TTL，返回明文+expires_in)/`verifyRealtimeCode(uid,code)`(命中未过期未超限才过，过即消费删除；错码 bumpAttempt，`RT_MAX_ATTEMPTS=5` 超限作废)；每 10 分钟 purgeOld。开关依赖 TOTP（防锁死，同 App 审批）：`POST /user/2fa/realtime {enable}`（开需 twofa_enabled，关则清码）；`POST /user/realtime-code`（要求已开启，生成新码覆盖旧码，返回 code+expires_in）；`/user/2fa/status` 回 `realtime_enabled`；`/user/2fa/disable` 关 TOTP 时一并关实时码+清码。登录二段 `/2fa/login-verify`：code 分支 TOTP 不中且开了实时码则再按实时码校验（两者都 6 位，输哪个都行），`viaRealtime` 记日志「+实时确认码」。
+- **开放 API（新 scope `realtime:verify`）**：`GET /v1/users/:uid/realtime-code`(状态 enabled/has_active) + `POST /v1/users/:uid/realtime-code/verify {code}`(第三方应用/门户校验用户输入的实时码，通过即消费，审计 `realtime.verified`)。都有 sandbox 桩；dashboard ALL_SCOPES 加该 scope。
+- **前端(dashboard.html)**：账号设定 2FA 卡（已开 TOTP 时）加「📲 App 实时确认码」开关 + 开启后「🔐 实时确认（获取确认码）」入口 → `openRealtimePanel`/`rtRefresh`（弹窗大字显示码 + 倒计时 + 刷新，到期置灰）。login.html 二段文案提示「也可打开 App/控制台『实时确认』输入确认码」（code 字段本就接受）。
+- **iOS**：APIClient `twofaStatus` 加 realtimeEnabled、新增 `twofaRealtimeToggle`/`realtimeCode`；AccountSettings 加开关 + 入口；新 `RealtimeConfirmView.swift`（取码大字+倒计时+刷新）；MeTab「功能」加「实时确认」入口。CI 云编译。
+- 测试：`realtime-test.js` node:sqlite 16 项全过（无码失败、命中消费、再用失败、错码累计不消费、5 次超限作废、过期清除、upsert 覆盖旧码、login 二段走实时码通过、未开启不放行且不消费）；server(db/api)+dashboard/login 内联 JS 语法通过。
+- ⚠️ 真机 App 交互未端到端（iOS 靠 CI）；码为 6 位、TTL 90s、尝试上限 5 + 一次性消费防爆破；要求先开 TOTP（TOTP/恢复码兜底防锁死）。「按设定的验证规则」目前 = 用户在账号设定开启此方法；第三方应用按用户是否开启（GET 状态）决定是否要求，per-app 细粒度规则留后续。
 
 ## v3.5.102.1 导出/导入页写清敏感性提示（用户反馈）
 

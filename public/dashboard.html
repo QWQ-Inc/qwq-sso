@@ -3978,8 +3978,60 @@ async function loadTwofaCard() {
           </div>
           <button class="btn ${data.app_enabled?'':'primary'}" onclick="toggleApp2fa(${data.app_enabled?0:1})">${data.app_enabled?'关闭':'开启'}</button>
         </div>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--txt);">📲 App 实时确认码　<span class="badge ${data.realtime_enabled?'ok':''}" style="${data.realtime_enabled?'':'background:var(--bg);color:var(--txd);'}">${data.realtime_enabled?'已开启':'未开启'}</span></div>
+            <div style="font-size:11.5px;color:var(--txd);margin-top:3px;line-height:1.6;">服务端实时下发的滚动验证码，只在打开「实时确认」时显示；在本站登录二段或第三方应用/门户输入即可完成双重验证（与 TOTP 不同，离线不可用、可随时轮换）。</div>
+          </div>
+          <button class="btn ${data.realtime_enabled?'':'primary'}" onclick="toggleRealtime2fa(${data.realtime_enabled?0:1})">${data.realtime_enabled?'关闭':'开启'}</button>
+        </div>
+        ${data.realtime_enabled ? `<div style="margin-top:10px;"><button class="btn" onclick="openRealtimePanel()">🔐 实时确认（获取确认码）</button></div>` : ''}
       </div>`;
   }
+}
+// 实时确认面板：获取一枚实时确认码，大字显示 + 倒计时，到期自动失效，可刷新
+async function openRealtimePanel() {
+  document.getElementById('rt-panel')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'modal-mask show'; ov.id = 'rt-panel';
+  ov.innerHTML = `<div class="modal" style="min-width:300px;max-width:360px;text-align:center;">
+    <h3 style="margin-bottom:4px;">实时确认</h3>
+    <div style="font-size:12px;color:var(--txd);line-height:1.7;margin-bottom:14px;">在需要双重验证的地方输入下面的确认码。到期会自动更新。</div>
+    <div id="rt-code" style="font-size:34px;font-weight:800;letter-spacing:6px;color:var(--txt);font-variant-numeric:tabular-nums;">······</div>
+    <div id="rt-count" style="font-size:12px;color:var(--txm);margin-top:8px;">获取中…</div>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:16px;">
+      <button class="btn" onclick="rtRefresh()">刷新</button>
+      <button class="btn" onclick="(window._rtStop&&_rtStop());document.getElementById('rt-panel').remove()">关闭</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('mousedown', e => { if (e.target === ov) { if (window._rtStop) _rtStop(); ov.remove(); } });
+  rtRefresh();
+}
+async function rtRefresh() {
+  if (window._rtStop) _rtStop();
+  const codeEl = document.getElementById('rt-code'), cntEl = document.getElementById('rt-count');
+  if (!codeEl) return;
+  codeEl.textContent = '······'; if (cntEl) cntEl.textContent = '获取中…';
+  const { ok, data } = await api('POST', '/user/realtime-code', {});
+  if (!ok) { if (cntEl) cntEl.textContent = data?.error || '获取失败'; return; }
+  codeEl.textContent = String(data.code).replace(/(\d{3})(\d{3})/, '$1 $2');
+  let left = data.expires_in;
+  const tick = () => {
+    if (!document.getElementById('rt-code')) return _rtStop();
+    if (left <= 0) { cntEl.textContent = '已过期，请刷新'; codeEl.style.opacity = '.35'; return _rtStop(); }
+    cntEl.textContent = `${left} 秒后过期`; left--;
+  };
+  codeEl.style.opacity = '1'; tick();
+  window._rtTimer = setInterval(tick, 1000);
+  window._rtStop = () => { clearInterval(window._rtTimer); window._rtStop = null; };
+}
+async function toggleRealtime2fa(enable) {
+  const { ok, data } = await api('POST', '/user/2fa/realtime', { enable: !!enable });
+  if (!ok) { showToast(data?.error || '操作失败'); return; }
+  showToast(enable ? '✓ 已开启 App 实时确认码' : '已关闭 App 实时确认码');
+  loadTwofaCard();
 }
 async function toggleApp2fa(enable) {
   const { ok, data } = await api('POST', '/user/2fa/app', { enable: !!enable });
@@ -4340,6 +4392,7 @@ const ALL_SCOPES = [
   { key:'access:verify',label:'门禁校验',       desc:'POST /v1/access/verify（扫码开门）、/v1/access/check（刷卡/人脸）' },
   { key:'access:read', label:'读取门禁',        desc:'GET /v1/access/doors、/v1/access/logs（门列表 + 通行记录）' },
   { key:'device:read', label:'读取设备',        desc:'GET /v1/devices（设备台账同步）、POST /v1/devices/{id}/heartbeat（心跳上报）' },
+  { key:'realtime:verify',label:'实时确认码',    desc:'GET /v1/users/{uid}/realtime-code（状态）、POST .../verify（校验 App 实时确认码）' },
 ];
 
 const API_DOCS = [

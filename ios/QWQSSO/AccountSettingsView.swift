@@ -5,6 +5,7 @@ struct AccountSettingsView: View {
     @EnvironmentObject var state: AppState
     @State private var twofaEnabled = false
     @State private var appEnabled = false
+    @State private var realtimeEnabled = false
     @State private var recoveryLeft = 0
     @State private var showDisable = false
     @State private var disableCode = ""
@@ -43,6 +44,17 @@ struct AccountSettingsView: View {
                 } header: { Text("App 审批式 2FA") } footer: {
                     Text("开启后,登录时本机 App 会弹「批准/拒绝」,点批准即可登录,不用手输动态码(仍可回退动态码/恢复码)。")
                 }
+
+                Section {
+                    Toggle(isOn: Binding(get: { realtimeEnabled }, set: { v in setRealtime(v) })) {
+                        Label("App 实时确认码", systemImage: "number.circle")
+                    }
+                    if realtimeEnabled {
+                        NavigationLink { RealtimeConfirmView() } label: { Label("实时确认（获取确认码）", systemImage: "lock.rotation") }
+                    }
+                } header: { Text("App 实时确认码") } footer: {
+                    Text("服务端实时下发的滚动验证码,只在打开「实时确认」时显示;在本站登录二段或第三方应用/门户输入即可完成双重验证(与 TOTP 不同,离线不可用、可随时轮换)。")
+                }
             }
 
             Section("其它") {
@@ -63,7 +75,7 @@ struct AccountSettingsView: View {
 
     private func loadTwofa() async {
         if let s = try? await state.api().twofaStatus(token: state.token) {
-            await MainActor.run { twofaEnabled = s.enabled; appEnabled = s.appEnabled; recoveryLeft = s.recoveryLeft }
+            await MainActor.run { twofaEnabled = s.enabled; appEnabled = s.appEnabled; realtimeEnabled = s.realtimeEnabled; recoveryLeft = s.recoveryLeft }
         }
     }
     private func setApp2fa(_ v: Bool) {
@@ -72,6 +84,15 @@ struct AccountSettingsView: View {
             do {
                 let r = try await state.api().twofaAppToggle(enable: v, token: state.token)
                 await MainActor.run { appEnabled = r }
+            } catch { await MainActor.run { err = error.localizedDescription }; await loadTwofa() }
+        }
+    }
+    private func setRealtime(_ v: Bool) {
+        err = nil
+        Task {
+            do {
+                let r = try await state.api().twofaRealtimeToggle(enable: v, token: state.token)
+                await MainActor.run { realtimeEnabled = r }
             } catch { await MainActor.run { err = error.localizedDescription }; await loadTwofa() }
         }
     }

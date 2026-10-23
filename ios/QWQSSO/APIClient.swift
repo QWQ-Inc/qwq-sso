@@ -297,9 +297,19 @@ final class APIClient {
     }
 
     // ── 账号设定：两步验证 ──
-    func twofaStatus(token: String) async throws -> (enabled: Bool, appEnabled: Bool, recoveryLeft: Int) {
+    func twofaStatus(token: String) async throws -> (enabled: Bool, appEnabled: Bool, realtimeEnabled: Bool, recoveryLeft: Int) {
         let j = try await getJSON("/api/user/2fa/status", token: token)
-        return ((j["enabled"] as? Bool) ?? false, (j["app_enabled"] as? Bool) ?? false, (j["recoveryCodesLeft"] as? Int) ?? 0)
+        return ((j["enabled"] as? Bool) ?? false, (j["app_enabled"] as? Bool) ?? false, (j["realtime_enabled"] as? Bool) ?? false, (j["recoveryCodesLeft"] as? Int) ?? 0)
+    }
+    // App 实时确认码（v3.5.103）
+    @discardableResult
+    func twofaRealtimeToggle(enable: Bool, token: String) async throws -> Bool {
+        let j = try await postJSON("/api/user/2fa/realtime", body: ["enable": enable], token: token)
+        return (j["realtime_enabled"] as? Bool) ?? enable
+    }
+    func realtimeCode(token: String) async throws -> (code: String, expiresIn: Int) {
+        let j = try await postJSON("/api/user/realtime-code", body: [:], token: token)
+        return ((j["code"] as? String) ?? "", (j["expires_in"] as? Int) ?? 0)
     }
     // App 审批式 2FA（v3.5.94）
     @discardableResult

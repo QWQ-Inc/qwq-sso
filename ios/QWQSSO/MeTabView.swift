@@ -64,6 +64,7 @@ struct MeTabView: View {
                 }
 
                 Section("功能") {
+                    NavigationLink { RealtimeConfirmView() } label: { Label("实时确认", systemImage: "lock.rotation") }
                     NavigationLink { VaultView() } label: { Label("验证器 / 2FA 保管库", systemImage: "key.horizontal") }
                     NavigationLink { MyDevicesView() } label: { Label("我的设备", systemImage: "laptopcomputer.and.iphone") }
                     NavigationLink { PrintView() } label: { Label("打印", systemImage: "printer") }

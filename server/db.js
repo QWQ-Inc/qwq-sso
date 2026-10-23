@@ -330,6 +330,17 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS login_approvals (
   decided_at  TEXT
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_login_appr_user ON login_approvals(user_id, status)'); } catch(_) {}
+// App 实时确认码（v3.5.103）：服务器实时下发的滚动验证码，只在已登录 App 的「实时确认」面板显示；
+// 用户读出后在验证点（本站登录二段 / 第三方应用·门户经开放 API）输入校验。与 TOTP 区别：服务端实时生成校验、
+// 需活跃 App 会话才能看到、可即时轮换/消费。要求已开 TOTP 作兜底（防没手机时锁死）。
+try { db.exec('ALTER TABLE users ADD COLUMN app_realtime_enabled INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS realtime_codes (
+  user_id    TEXT PRIMARY KEY,
+  code_hash  TEXT NOT NULL,                     -- sha256(code)，不存明文
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at INTEGER NOT NULL,                  -- epoch ms
+  attempts   INTEGER NOT NULL DEFAULT 0         -- 校验尝试次数，超限即作废
+)`); } catch(_) {}
 // 应用内 TOTP 保管库（v3.5.95，端到端口令加密）：服务器只存密文,永远拿不到明文种子/口令。
 // vault 元数据:kdf_salt(口令派生盐) + verifier(用派生密钥加密的已知串,用于校验口令是否正确)。
 try { db.exec(`CREATE TABLE IF NOT EXISTS totp_vault (
@@ -1206,6 +1217,7 @@ const userStmts = {
   // 2FA
   set2fa:     db.prepare("UPDATE users SET twofa_enabled=?, twofa_secret=?, updated_at=datetime('now') WHERE id=?"),
   setAppTwofa:db.prepare("UPDATE users SET app_2fa_enabled=?, updated_at=datetime('now') WHERE id=?"),
+  setAppRealtime:db.prepare("UPDATE users SET app_realtime_enabled=?, updated_at=datetime('now') WHERE id=?"),
 };
 
 // ──────────────────────────────────────────
@@ -1302,6 +1314,16 @@ const loginApprovalStmts = {
   pendingByUser:db.prepare("SELECT * FROM login_approvals WHERE user_id=? AND status='pending' AND expires_at > datetime('now') ORDER BY created_at DESC"),
   setStatus:    db.prepare("UPDATE login_approvals SET status=?, decided_at=datetime('now') WHERE id=? AND status='pending'"),
   purgeOld:     db.prepare("DELETE FROM login_approvals WHERE expires_at < datetime('now','-1 day')"),
+};
+
+// App 实时确认码（v3.5.103）：每用户一条当前有效码（upsert 覆盖，消费/超限即删）
+const realtimeCodeStmts = {
+  set:        db.prepare(`INSERT INTO realtime_codes (user_id,code_hash,expires_at,attempts,created_at) VALUES (?,?,?,0,datetime('now'))
+                          ON CONFLICT(user_id) DO UPDATE SET code_hash=excluded.code_hash, expires_at=excluded.expires_at, attempts=0, created_at=datetime('now')`),
+  get:        db.prepare('SELECT * FROM realtime_codes WHERE user_id=?'),
+  clear:      db.prepare('DELETE FROM realtime_codes WHERE user_id=?'),
+  bumpAttempt:db.prepare('UPDATE realtime_codes SET attempts=attempts+1 WHERE user_id=?'),
+  purgeOld:   db.prepare('DELETE FROM realtime_codes WHERE expires_at < ?'),
 };
 
 const webauthnStmts = {
@@ -2055,6 +2077,7 @@ module.exports = {
   idp: idpStmts,
   twofa: twofaStmts,
   loginApprovals: loginApprovalStmts,
+  realtimeCodes: realtimeCodeStmts,
   totpVault: totpVaultStmts,
   printers: printerStmts,
   printJobs: printJobStmts,
