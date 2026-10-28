@@ -1041,7 +1041,7 @@
       <!-- 登录方式主 Tab -->
       <div class="login-modes">
         <button class="mode-btn active" onclick="switchMode('login')">账号登录</button>
-        <button class="mode-btn" onclick="switchMode('register')">注册账号</button>
+        <button class="mode-btn" id="mode-register-btn" onclick="switchMode('register')">注册账号</button>
       </div>
 
       <!-- ══ 登录面板 ══ -->
@@ -1088,10 +1088,10 @@
         <button class="btn-primary" id="passkey-login-btn" onclick="doPasskeyLogin()"
           style="display:none;margin-top:8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);">🔑 用 Passkey 登录</button>
         <div class="aux-links">
-          <button onclick="switchMode('register')">注册账号</button>
-          <span class="aux-dot">·</span>
-          <a href="javascript:void 0" onclick="showForgotPassword()">忘记密码</a>
-          <span class="aux-dot">·</span>
+          <button id="aux-register" onclick="switchMode('register')">注册账号</button>
+          <span class="aux-dot" id="aux-register-dot">·</span>
+          <a href="javascript:void 0" id="aux-forgot" onclick="showForgotPassword()">忘记密码</a>
+          <span class="aux-dot" id="aux-forgot-dot">·</span>
           <a href="javascript:void 0" onclick="showOrgLogin()">登录到组织（IAM 用户）</a>
         </div>
       </div>
@@ -1615,6 +1615,21 @@
   }
   initDomainPolicy();
 
+  // ── 注册 / 忘记密码 开关（v3.5.104）：管理员关闭后隐藏对应入口（后端也会拦）──
+  // 「注册」Tab 是账号密码注册面板，故按 register_password_enabled 判定（兼容老字段 registration_enabled）。
+  async function initAuthPolicy() {
+    let p = { register_password_enabled: true, password_reset_enabled: true };
+    try {
+      const r = await fetch('/api/public/auth-policy');
+      if (r.ok) p = await r.json();
+    } catch (_) { return; }   // 拿不到就保持原样（都显示），不影响登录
+    const hide = (id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; };
+    const pwReg = p.register_password_enabled !== undefined ? p.register_password_enabled : p.registration_enabled;
+    if (!pwReg) { hide('mode-register-btn'); hide('aux-register'); hide('aux-register-dot'); }
+    if (!p.password_reset_enabled) { hide('aux-forgot'); hide('aux-forgot-dot'); }
+  }
+  initAuthPolicy();
+
   // ── 注册面板：账号类型切换 ──
   function onRegTypeChange() {
     const type = document.getElementById('reg-type').value;
@@ -2102,6 +2117,7 @@
     const msgs={wechat_failed:'微信登录失败',wecom_failed:'企业微信登录失败',feishu_failed:'飞书登录失败',dingtalk_failed:'钉钉登录失败',douyin_failed:'抖音登录失败',kuaishou_failed:'快手登录失败',xiaohongshu_failed:'小红书登录失败',bilibili_failed:'Bilibili 登录失败',google_failed:'Google 登录失败',apple_failed:'Apple 登录失败',account_disabled:'账号已停用，请联系管理员',account_deleted:'这个三方账号对应的账号已注销 / 删除，不能再用它登录',invalid_state:'登录已过期，请重新发起',ip_denied:'当前网络（IP）不在该登录主体的允许范围内',time_denied:'当前时间不在该登录主体的允许登录时段内',need_2fa:'该登录主体要求两步验证，请先用其他方式登录并在账号设定里开启两步验证后再试'};
     msgs.wecom_not_member='你不是该企业微信企业的成员（或不在该应用的可见范围内），不能用企业微信登录';
     msgs.wecom_not_configured='企业微信登录未配置（缺企业 ID），请联系管理员';
+    msgs.registration_disabled='当前未开放注册，这个三方账号还没有对应的本系统账号，请联系管理员';
     const _qs = new URLSearchParams(location.search);
     const _hint = (_qs.get('hint') || '').slice(0, 200), _code = (_qs.get('code') || '').slice(0, 12);
     let _msg = msgs[urlErr]||('登录失败：'+urlErr);

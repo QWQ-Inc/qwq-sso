@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.103**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.104**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.104 管理端限制注册 / 自助改密 / 忘记密码（用户反馈）
+
+三级版本。用户：「目前注册的限制还是比较大，不能在管理端限制注册与改密等功能。」+「注册可以设置全关也可以部分关。」之前只有邮箱域名白/黑名单（v3.3.2）。本版加一组 env 开关（系统配置「注册与改密」组），默认全开（保持原行为），语义同 `devicesSelfEnabled`（fail-open，只有 off/false/no/关闭/禁用/停用 等显式关闭词才算关）。
+- **注册：总开关（全关）+ 分渠道（部分关）**。`registrationEnabled()` = `REGISTRATION_ENABLED`（总开关）；`regChannelEnabled(key)` = 总开关开 且 该渠道未被单独关。三个渠道：`registerPasswordEnabled`(`REGISTER_PASSWORD_ENABLED`，账号密码注册) / `registerCodeEnabled`(`REGISTER_CODE_ENABLED`，验证码自动建号) / `registerOauthEnabled`(`REGISTER_OAUTH_ENABLED`，三方 OAuth 自动建号)。总开关关 = 三渠道全关；总开关开时可单独关其中一两个。另有 `passwordChangeEnabled`(`PASSWORD_CHANGE_ENABLED`) / `passwordResetEnabled`(`PASSWORD_RESET_ENABLED`)。
+- **注册拦截点**（按渠道）：`handleRegister`（账号密码注册）受 `registerPasswordEnabled`；`/sms/verify` 与 `/email/verify-code` 的「未找到用户→自动建号」分支受 `registerCodeEnabled`；`oauth.js findOrCreate` 的两处 `createBoundUser`（主体内无同人 / env 默认全新用户）受 `registerOauthEnabled`。⚠️ 只拦**全新建号**：已存在账号登录、绑定模式、通讯录同步认到的成员（1b/1c corpUsers 命中）、`isShellAccount` 自助并号都在到达 createBoundUser 之前返回，不受影响；管理员建号 / dir-sync / 组织成员 / 组织密码也不受影响。OAuth 被拦时走 `regBlocked()`（置 `creq._regDisabled`），`loginSuccess` 跳 `/login.html?error=registration_disabled`。oauth.js 自带一份 `_featOff` + `registerOauthEnabled`（= 总开关 && 该渠道，两模块各读 env，不互相 require，避免循环依赖）。
+- **改密拦截点**：`/user/reset-password`（登录态自助改密，验证码式）受 `passwordChangeEnabled`；`/public/forgot-password/send` + `/reset`（公开忘记密码）受 `passwordResetEnabled`。⚠️ 管理员 `/admin/users/:id/reset-password` **不受开关影响**（管理员随时能代重置）。
+- **前端告知（非安全边界，后端才是）**：公开 `GET /api/public/auth-policy` 回 `registration_enabled` / `register_password_enabled` / `register_code_enabled` / `register_oauth_enabled` / `password_reset_enabled`。`login.html` `initAuthPolicy()` 据 `register_password_enabled`（注册面板是账号密码式，兼容老字段 `registration_enabled`）隐藏「注册账号」主 Tab + aux 注册入口；据 `password_reset_enabled` 隐藏「忘记密码」aux 链接；错误码 `registration_disabled` 文案已加。`/user/me` 多回 `password_change_enabled`，`dashboard.html` 的 `loadProfile` 据此隐藏「重置登录密码」区（`#reset-pw-section`；dev-mock 无此字段默认显示）。
+- 系统配置「系统与页脚」的「注册与改密」组（🔐）含 6 项：`REGISTRATION_ENABLED`(总) + 三个 `REGISTER_*_ENABLED`(渠道) + `PASSWORD_CHANGE_ENABLED` + `PASSWORD_RESET_ENABLED`；init.js ENV_KEYS 同步六键。
+- 测试：`scratchpad/auth-policy-test.js` 复刻 `_featOff` + 分渠道决策 27 项全过（默认全开、各关闭词、空值与未知值开、总开关关=三渠道全关、总开关开时单独关某渠道而其它渠道仍开、各建号分支拒绝新号而已存在账号放行、OAuth 新号拒绝而绑定/已存在/已同步放行、改密关时自助拒绝而管理员放行、忘记密码关拒绝）；server(api/oauth/init) `node --check` 通过；dashboard/login 内联 JS 语法通过。
+- ⚠️ 关「三方登录自动建号」会拦住「新员工首次用企业微信 / 飞书登录自动建号」——这类场景保持该渠道开启、或先走通讯录同步建号。已在开关说明里写明只拦公开自助入口。
 
 ## v3.5.103 App 实时确认码（服务端实时下发的滚动确认码，第二因子）（用户反馈）
 

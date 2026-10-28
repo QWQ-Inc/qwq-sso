@@ -154,6 +154,12 @@ function mergeScopeKeys(providerKey) {
   } else return null;
   return rows.map(r => `${r.platform}:${r.id}`);
 }
+// 注册开关（v3.5.104）：管理员关掉「三方登录自动建号」渠道（或注册总开关）后，三方 OAuth
+// 遇到全新身份不再自动建号（与 api.js 的 registerOauthEnabled 一致；两模块各自读 env，互不依赖）。
+// 绑定模式、已同步 / 已存在账号不受影响。
+const _featOff = v => ['off', '0', 'false', 'no', 'none', '关', '关闭', '禁用', '停用'].includes(String(v || '').trim().toLowerCase());
+const registerOauthEnabled = () => !_featOff(process.env.REGISTRATION_ENABLED) && !_featOff(process.env.REGISTER_OAUTH_ENABLED);
+
 // 建号并绑定本次三方身份
 // 建号和绑定在一个事务里：绑定失败就不留下一个没有任何登录方式的空账号（v3.5.58.1）
 const createBoundUser = db.transaction(({ provider, openId, unionId, name, email }) => {
@@ -175,6 +181,8 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   if (creq) creq._loginProviderKey = provider;   // 供 loginSuccess 解析登录主体 + 执行其策略
   // 属于已删除账号的三方身份（v3.5.49 封存）：保留期内不能登录、不能被绑到别的账号、也不会自动建新号
   const blocked = () => { if (creq) creq._blockedIdentity = true; return null; };
+  // 注册已关闭：遇到全新三方身份不建号，loginSuccess 跳回登录页提示
+  const regBlocked = () => { if (creq) creq._regDisabled = true; return null; };
   if (db.prepare("SELECT 1 FROM identity_blocks WHERE kind='oauth' AND provider=? AND ext_id=?").get(provider, openId)) {
     if (creq?.session?.bindUserId) { creq._bind = { error: '这个三方账号属于已删除的账号，不能绑定' }; return users.findById.get(creq.session.bindUserId) || null; }
     return blocked();
@@ -255,6 +263,7 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
       }
     }
     // 同主体内没有同人 → 新建（不做全局邮箱合并，保持主体间隔离）
+    if (!registerOauthEnabled()) return regBlocked();
     return createBoundUser({ provider, openId, unionId, name, email });
   }
 
@@ -269,6 +278,7 @@ function findOrCreate({ provider, openId, unionId = null, name, avatar = null, e
   }
 
   // 4. 全新用户
+  if (!registerOauthEnabled()) return regBlocked();
   return createBoundUser({ provider, openId, unionId, name, email });
 }
 
@@ -284,6 +294,7 @@ function loginSuccess(res, user) {
       : `/dashboard.html?bind=error&msg=${encodeURIComponent(b.error || '绑定失败')}`);
   }
   if (creq && creq._blockedIdentity) return res.redirect('/login.html?error=account_deleted');
+  if (creq && creq._regDisabled) return res.redirect('/login.html?error=registration_disabled');
   if (!user || user.status === 'disabled') {
     return res.redirect('/login.html?error=account_disabled');
   }

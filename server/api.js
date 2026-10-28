@@ -245,6 +245,25 @@ function checkEmailDomain(email) {
   }
   return null;
 }
+
+// ──────────────────────────────────────────
+// 注册 / 改密开关（v3.5.104）
+// 管理员在系统配置里关闭「自助注册」「自助改密」「忘记密码」。默认全开（保持原行为）。
+// 语义同其它开关（devicesSelfEnabled 等）：fail-open，只有显式关闭词才算关。
+// ⚠️ 只拦「公开的自助入口」：密码注册 / 验证码自动建号 / 三方 OAuth 自动建号 / 自助改密 / 忘记密码。
+//    管理员建号、通讯录同步、组织成员、组织密码、已存在账号登录都不受影响。
+// ──────────────────────────────────────────
+const _featOff = v => ['off', '0', 'false', 'no', 'none', '关', '关闭', '禁用', '停用'].includes(String(v || '').trim().toLowerCase());
+// 注册可「全关」（总开关 REGISTRATION_ENABLED）或「部分关」（分渠道开关）：
+// 某渠道开 = 总开关开 且 该渠道未被单独关。三个渠道互相独立，可只关其中一两个。
+const registrationEnabled     = () => !_featOff(process.env.REGISTRATION_ENABLED);
+const regChannelEnabled       = key => registrationEnabled() && !_featOff(process.env[key]);
+const registerPasswordEnabled = () => regChannelEnabled('REGISTER_PASSWORD_ENABLED');  // 账号密码注册
+const registerCodeEnabled     = () => regChannelEnabled('REGISTER_CODE_ENABLED');      // 邮箱 / 短信验证码遇新号自动建号
+const registerOauthEnabled    = () => regChannelEnabled('REGISTER_OAUTH_ENABLED');     // 三方 OAuth 遇全新身份自动建号
+const passwordChangeEnabled   = () => !_featOff(process.env.PASSWORD_CHANGE_ENABLED);
+const passwordResetEnabled    = () => !_featOff(process.env.PASSWORD_RESET_ENABLED);
+
 const genCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
 // ── App 实时确认码（v3.5.103）──
@@ -417,6 +436,7 @@ router.post('/sms/verify', (req, res) => {
   otp.del.run(`sms:${phone}`);
   let user = users.findByPhone.get(phone);
   if (!user) {
+    if (!registerCodeEnabled()) return res.status(403).json({ error: '当前未开放验证码注册，请联系管理员' });
     user = users.create({ name: `用户${phone.slice(-4)}`, phone });
   }
   if (user.status === 'disabled') return res.status(403).json({ error: '账号已停用，请联系管理员' });
@@ -464,8 +484,9 @@ router.post('/email/verify-code', (req, res) => {
   otp.del.run(`email:${email}`);
   let user = users.findByEmail.get(email);
   if (!user) {
-    // 这条路径会自动建号，等同注册，所以要过域名策略；
+    // 这条路径会自动建号，等同注册，所以要过注册开关 + 域名策略；
     // 已存在的账号不再校验，避免事后加黑名单把老用户锁死
+    if (!registerCodeEnabled()) return res.status(403).json({ error: '当前未开放验证码注册，请联系管理员' });
     const domainErr = checkEmailDomain(email);
     if (domainErr) return res.status(403).json({ error: domainErr });
     user = users.create({ name: email.split('@')[0], email });
@@ -476,6 +497,7 @@ router.post('/email/verify-code', (req, res) => {
 
 // ── 账号密码注册/登录（邮箱或手机号均可）──
 async function handleRegister(req, res) {
+  if (!registerPasswordEnabled()) return res.status(403).json({ error: '当前未开放账号密码注册，请联系管理员' });
   const { email, password, name } = req.body;
   const phone = normalizePhone(req.body?.phone);   // v3.5.71 裸 11 位补默认区号
 
@@ -911,6 +933,7 @@ router.post('/account/org-login-code', handleOrgCodeLogin);
 // 隐私：无论账号是否存在都返回同样的成功文案，不泄露账号存在性。
 // 验证码存在 reset:<userId> 下，重置时校验。
 router.post('/public/forgot-password/send', async (req, res) => {
+  if (!passwordResetEnabled()) return res.status(403).json({ error: '管理员已关闭「忘记密码」功能，请联系管理员重置' });
   const generic = { success: true, message: '若该账号存在且绑定了邮箱或手机，验证码已发送' };
   const identifier = String(req.body.account || '').trim();
   const user = identifier ? resolveUser(identifier) : null;
@@ -933,6 +956,7 @@ router.post('/public/forgot-password/send', async (req, res) => {
 });
 
 router.post('/public/forgot-password/reset', async (req, res) => {
+  if (!passwordResetEnabled()) return res.status(403).json({ error: '管理员已关闭「忘记密码」功能，请联系管理员重置' });
   const { account, code, new_password } = req.body;
   if (!new_password || new_password.length < 8) return res.status(400).json({ error: '新密码至少 8 位' });
   const badCode = { error: '验证码无效或已过期' };
@@ -1415,6 +1439,18 @@ router.get('/admin/api-call-logs', requireAdmin(2), (req, res) => {
 router.get('/public/email-domain-policy', (req, res) => {
   const { mode, list } = emailDomainPolicy();
   res.json({ success: true, mode: list.length ? mode : 'off', domains: list });
+});
+
+// 注册 / 忘记密码 开关（登录页据此隐藏「注册」入口与「忘记密码」链接；真正的拦截在后端）
+router.get('/public/auth-policy', (req, res) => {
+  res.json({
+    success: true,
+    registration_enabled: registrationEnabled(),            // 总开关（全关）
+    register_password_enabled: registerPasswordEnabled(),   // 账号密码注册（登录页「注册」Tab 靠它）
+    register_code_enabled: registerCodeEnabled(),           // 验证码自动建号
+    register_oauth_enabled: registerOauthEnabled(),         // 三方登录自动建号
+    password_reset_enabled: passwordResetEnabled(),
+  });
 });
 
 // ── 水印策略（管理员在系统配置里定，或经开放 API /v1/watermark 改）──
@@ -3712,7 +3748,7 @@ router.get('/user/me', requireAuth, (req, res) => {
   const user = users.findById.get(req.user.uid);
   if (!user) return res.status(404).json({ error: '用户不存在' });
   const oauthBinds = oauth.findByUser.all(user.id);
-  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), devices_self: devicesSelfEnabled(), limited_admin: !!limitedAdminOf(user), org_admin: !!(oauthSubjects.managedBy.all(user.id) || []).length });
+  res.json({ success: true, user: { ...safeUser(user), oauthBinds, has_password: !!user.password_hash }, memo_admin_level: memoAdminLevel(), kyc_user_delete: kycUserDeleteAllowed(), devices_self: devicesSelfEnabled(), password_change_enabled: passwordChangeEnabled(), limited_admin: !!limitedAdminOf(user), org_admin: !!(oauthSubjects.managedBy.all(user.id) || []).length });
 });
 
 router.post('/user/profile', requireAuth, noPublic, (req, res) => {
@@ -3853,6 +3889,7 @@ router.get('/user/points-history', requireAuth, (req, res) => {
 
 // ── 用户端：重置密码（邮箱/手机验证码）──
 router.post('/user/reset-password', requireAuth, async (req, res) => {
+  if (!passwordChangeEnabled()) return res.status(403).json({ error: '管理员已关闭自助修改密码' });
   const { new_password, code, via } = req.body;
   if (!new_password || new_password.length < 8) return res.status(400).json({ error: '新密码至少 8 位' });
   if (!code) return res.status(400).json({ error: '请提供验证码' });
