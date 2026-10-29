@@ -936,6 +936,10 @@ try { db.exec("ALTER TABLE access_doors ADD COLUMN code_mode TEXT NOT NULL DEFAU
 try { db.exec("ALTER TABLE access_doors ADD COLUMN sub_ttl INTEGER NOT NULL DEFAULT 0"); } catch(_) {}
 try { db.exec("ALTER TABLE access_doors ADD COLUMN escort_required INTEGER NOT NULL DEFAULT 0"); } catch(_) {}
 try { db.exec("ALTER TABLE access_doors ADD COLUMN blackout TEXT NOT NULL DEFAULT ''"); } catch(_) {}
+// 电子门（v3.5.105）：kind=physical（实体门，默认）| virtual（电子门/线上）。
+//   电子门没有物理扫码终端，只用门禁规则做「线上校验某人是否有权访问」——隐藏于扫码「我能通行的门」、
+//   在扫码/刷卡/人脸终端一律拒（reason virtual_door），改走线上门禁接口（/user/access/gate、/v1/access/gate）。
+try { db.exec("ALTER TABLE access_doors ADD COLUMN kind TEXT NOT NULL DEFAULT 'physical'"); } catch(_) {}
 try { db.exec("ALTER TABLE visitor_passes ADD COLUMN escort_user_id TEXT"); } catch(_) {}
 try { db.exec("ALTER TABLE visitor_passes ADD COLUMN blackout TEXT NOT NULL DEFAULT ''"); } catch(_) {}
 // 待陪同：访客在门口验码通过后挂一条，陪同人在有效期内到同一扇门扫自己的码即双双放行
@@ -1630,8 +1634,8 @@ const accessStmts = {
   allDoors:     db.prepare('SELECT * FROM access_doors ORDER BY created_at ASC'),
   doorById:     db.prepare('SELECT * FROM access_doors WHERE id=?'),
   enabledDoors: db.prepare("SELECT * FROM access_doors WHERE status='enabled' ORDER BY created_at ASC"),
-  insertDoor:   db.prepare('INSERT INTO access_doors (id,name,location,subject_id,status,note) VALUES (@id,@name,@location,@subject_id,@status,@note)'),
-  updateDoor:   db.prepare("UPDATE access_doors SET name=@name,location=@location,subject_id=@subject_id,status=@status,note=@note,updated_at=datetime('now') WHERE id=@id"),
+  insertDoor:   db.prepare('INSERT INTO access_doors (id,name,location,subject_id,status,note,kind) VALUES (@id,@name,@location,@subject_id,@status,@note,@kind)'),
+  updateDoor:   db.prepare("UPDATE access_doors SET name=@name,location=@location,subject_id=@subject_id,status=@status,note=@note,kind=@kind,updated_at=datetime('now') WHERE id=@id"),
   removeDoor:   db.prepare('DELETE FROM access_doors WHERE id=?'),
   setDoorPolicy:db.prepare('UPDATE access_doors SET code_mode=@code_mode, sub_ttl=@sub_ttl, escort_required=@escort_required, blackout=@blackout WHERE id=@id'),
   // 授权规则（deny 优先，故 ORDER BY effect DESC 让 deny 排前）

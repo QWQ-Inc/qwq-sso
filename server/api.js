@@ -8420,6 +8420,7 @@ router.post('/user/access/qr', requireAuth, (req, res) => {
   if (doorId) {
     const door = access.doorById.get(doorId);
     if (!door) return res.status(404).json({ error: '门不存在' });
+    if (accessCore.isVirtual(door)) return res.status(400).json({ error: '电子门无需出码，改用线上校验', reason: 'virtual_door' });   // v3.5.105
     const ev = accessCore.evaluateAccess(u, door);
     if (!ev.allow) return res.status(403).json({ error: accessCore.REASON_LABEL[ev.reason] || '无权通行此门', reason: ev.reason });
     const r = accessCore.signQr(u, accessCore.subTtl(door), door.id);
@@ -8434,7 +8435,26 @@ router.post('/user/access/qr', requireAuth, (req, res) => {
 router.get('/user/access/doors', requireAuth, (req, res) => {
   const u = users.findById.get(req.user.uid);
   if (!u) return res.status(404).json({ error: '用户不存在' });
-  res.json({ success: true, doors: accessCore.doorsForUser(u) });
+  // doors=可扫码通行的实体门；online=当前线上可访问的电子门（v3.5.105，展示用）
+  res.json({ success: true, doors: accessCore.doorsForUser(u), online: accessCore.onlineDoorsForUser(u) });
+});
+
+// 线上门禁校验（v3.5.105）：用门禁规则判定「当前登录用户是否有权访问某门」。
+// 持有用户会话的网页/场景据此放行线上资源；电子门或实体门皆可查（规则/禁入时段一致），结果记通行日志（method=online）。
+router.post('/user/access/gate', requireAuth, (req, res) => {
+  const u = users.findById.get(req.user.uid);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  const door = access.doorById.get(String(req.body?.door_id || ''));
+  if (!door) return res.status(404).json({ error: '门不存在' });
+  const ip = accessClientIp(req);
+  const black = door.blackout && accessCore.inBlackout(door.blackout) ? 'door_blackout' : null;
+  const ev = black ? { allow: false, reason: black } : accessCore.evaluateAccess(u, door);
+  writeAccessLog({ door, user: u, method: 'online', ev, ip });
+  res.json({
+    success: true, allow: ev.allow, reason: ev.reason,
+    reason_text: accessCore.REASON_LABEL[ev.reason] || ev.reason,
+    door: { id: door.id, name: door.name, kind: door.kind || 'physical' },
+  });
 });
 
 // ── 管理端：门 CRUD ──
@@ -8475,6 +8495,7 @@ router.post('/admin/access/doors', requireAdmin(2, { orgAdmin: true }), (req, re
     location: String(req.body?.location || '').trim().slice(0, 120),
     subject_id: req.body?.subject_id || null,
     status, note: String(req.body?.note || '').trim().slice(0, 300),
+    kind: req.body?.kind === 'virtual' ? 'virtual' : 'physical',   // v3.5.105 电子门
   });
   applyDoorPolicy(id, req.body, null);
   res.json({ success: true, door: access.doorById.get(id) });
@@ -8494,6 +8515,7 @@ router.patch('/admin/access/doors/:id', requireAdmin(2, { orgAdmin: true }), (re
     subject_id: req.body?.subject_id !== undefined ? (req.body.subject_id || null) : d.subject_id,
     status: ['enabled', 'disabled'].includes(req.body?.status) ? req.body.status : d.status,
     note: req.body?.note != null ? String(req.body.note).trim().slice(0, 300) : d.note,
+    kind: ['physical', 'virtual'].includes(req.body?.kind) ? req.body.kind : (d.kind || 'physical'),   // v3.5.105
   });
   applyDoorPolicy(d.id, req.body, d);
   res.json({ success: true, door: access.doorById.get(d.id) });
@@ -9072,6 +9094,8 @@ router.post('/v1/access/verify', requireApiKey('access:verify'), (req, res) => {
   const door = access.doorById.get(door_id);
   if (!door) return res.status(404).json({ error: '门不存在' });
   const ip = accessClientIp(req);
+  // 电子门没有物理终端，扫码一律拒；改走 /v1/access/gate 线上校验（v3.5.105）
+  if (accessCore.isVirtual(door)) { writeAccessLog({ door, user: null, method: 'qr', ev: { allow: false, reason: 'virtual_door' }, ip }); return res.json(denyBody(door, 'virtual_door')); }
   const c = String(code).trim();
   // 跨系统联邦码（ft1. 开头）：伙伴系统签发的跨域访客码，用登记的共享密钥验签（无子码机制，sub_only 门不收）
   if (c.startsWith('ft1.')) {
@@ -9142,6 +9166,7 @@ router.post('/v1/access/check', requireApiKey('access:verify'), (req, res) => {
   const door = access.doorById.get(door_id);
   if (!door) return res.status(404).json({ error: '门不存在' });
   const ip = accessClientIp(req);
+  if (accessCore.isVirtual(door)) { writeAccessLog({ door, user: null, method: 'card', ev: { allow: false, reason: 'virtual_door' }, ip }); return res.json(denyBody(door, 'virtual_door')); }   // v3.5.105 电子门改走 /v1/access/gate
   let user = null, reasonNoUser = 'no_user';
   let m = method;
   if (card_no) {
@@ -9166,9 +9191,29 @@ router.post('/v1/access/check', requireApiKey('access:verify'), (req, res) => {
     door: { id: door.id, name: door.name },
   });
 });
+// 线上门禁校验（v3.5.105）：后端服务持 API Key 校验「某用户此刻是否有权访问某门」，用门禁规则做线上授权。
+// 电子门与实体门皆可查（授权规则/禁入时段一致）；不「开门」，只回授权结论，记通行日志（method=online），供线上资源据此放行。
+router.post('/v1/access/gate', requireApiKey('access:verify'), (req, res) => {
+  if (req.isSandbox) return res.json({ ...SANDBOX.accessVerify(), _sandbox: true });
+  const { door_id, uid } = req.body || {};
+  if (!door_id || !uid) return res.status(400).json({ error: 'door_id 和 uid 必填' });
+  const door = access.doorById.get(door_id);
+  if (!door) return res.status(404).json({ error: '门不存在' });
+  const ip = accessClientIp(req);
+  const user = findRealUserByUid(uid);
+  const black = door.blackout && accessCore.inBlackout(door.blackout) ? 'door_blackout' : null;
+  const ev = !user ? { allow: false, reason: 'no_user' } : black ? { allow: false, reason: black } : accessCore.evaluateAccess(user, door);
+  writeAccessLog({ door, user, method: 'online', ev, ip });
+  res.json({
+    allow: ev.allow, result: ev.allow ? 'allow' : 'deny',
+    reason: ev.reason, reason_text: accessCore.REASON_LABEL[ev.reason] || ev.reason,
+    user: user ? { uid_seq: user.uid_seq, uid_code: user.uid_code || null, name: user.name } : null,
+    door: { id: door.id, name: door.name, kind: door.kind || 'physical' },
+  });
+});
 router.get('/v1/access/doors', requireApiKey('access:read'), (req, res) => {
   if (req.isSandbox) return res.json(SANDBOX.doors());
-  const rows = access.enabledDoors.all().map(d => ({ id: d.id, name: d.name, location: d.location, status: d.status }));
+  const rows = access.enabledDoors.all().map(d => ({ id: d.id, name: d.name, location: d.location, status: d.status, kind: d.kind || 'physical' }));
   res.json({ total: rows.length, data: rows });
 });
 router.get('/v1/access/logs', requireApiKey('access:read'), (req, res) => {

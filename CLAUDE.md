@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.104**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.105**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.105 电子门（线上门禁，用门禁规则做线上权限校验）（用户反馈）
+
+三级版本。用户：「上线电子门概念。某场景下可以使用门禁功能来校验线上人员是否有权限访问。」——把门禁规则引擎（`evaluateAccess`）从「扫码/刷卡」物理场景延伸到「线上校验已登录用户」。
+- **数据(db.js)**：`access_doors.kind`（`physical` 默认 | `virtual` 电子门，迁移区块 ALTER）。`insertDoor`/`updateDoor` 加 `kind`。
+- **核心(access.js)**：`isVirtual(door)`；`doorsForUser` 排除电子门（无扫码终端，不进「我能通行的门」QR 列表）；新 `onlineDoorsForUser(user)`（当前线上可访问的电子门=规则放行且不在禁入时段，展示用）；REASON_LABEL 加 `virtual_door`。导出三者。
+- **接口(api.js)**：门 CRUD 收 `kind`。**物理终端拒电子门**：`/v1/access/verify`（扫码）、`/v1/access/check`（刷卡/人脸）遇 `isVirtual` 直接 `virtual_door` 拒并记日志；`/user/access/qr` 带电子门 door_id 出子码 → 400。**线上校验（两个新口，method=online，记通行日志，不"开门"只回结论）**：`POST /user/access/gate {door_id}`（持用户 JWT 自查当前用户）、`POST /v1/access/gate {door_id, uid}`（后端持 API Key 校验某用户，复用 `access:verify` scope，有 sandbox 桩）。两者都按 `evaluateAccess` + 禁入时段(blackout) 判定；**实体门/电子门皆可查**（授权规则一致，对实体门即「某人是否有权进这扇门」的线上查询）。`/user/access/doors` 多回 `online`（电子门列表）；`/v1/access/doors` 回带 `kind`。
+- **前端(dashboard.html)**：门弹窗加「门类型」下拉（实体门/电子门），选电子门隐藏「开门码模式/子码有效期/陪同」（仅实体门有意义）、显示线上校验用法提示；禁入时段两类门都保留。门列表 🖥️「电子门」徽章。用户「门禁」页加「线上可访问（电子门）」卡（`loadMyAccess` 渲染 `online`）。dev mock 补 `kind` + `online` + `/user/access/gate`。
+- 🐛 **顺带修**：`saveDoor` 一直读 `document.getElementById('door-note').value`，但弹窗里从没有 `door-note` 输入框——`getElementById` 返回 null，`.value` 抛 TypeError，**从网页新建/编辑门每次都崩在 API 调用前**（存量 latent bug）。改为 `?.value || ''`。
+- ⚠️ 测试：`scratchpad/eletronic-door-test.js` node:sqlite 复刻 evaluateAccess + 新过滤/判定，19 项全过（电子门不入 doorsForUser、入 onlineDoorsForUser 且仅放行项、禁入时段排除、物理终端 virtual_door 决策、gate 对电子门/实体门按规则放行与拒绝、deny 优先、停用门拒）。server 三文件 `node --check`、dashboard/login 内联 JS 解析通过。
+- ⚠️ 线上校验是 opt-in 的「某场景」用法（第三方在 OIDC 之外额外调 gate，或持用户会话自查），**不强塞进每次 OIDC 登录**——正是用户说的"某场景下可以使用"。真实服务端 HTTP 链路未端到端跑（本机无 express），逻辑靠决策单测 + 复用既有 `evaluateAccess`/`writeAccessLog`（v3.5.0+ 已测路径）。
 
 ## v3.5.104 管理端限制注册 / 自助改密 / 忘记密码（用户反馈）
 

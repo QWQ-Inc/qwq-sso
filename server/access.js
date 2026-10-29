@@ -277,14 +277,25 @@ function evaluateFed(parsed, peer, door, now = new Date()) {
   return { allow: true, reason: 'ok' };
 }
 
-// 某用户当前能通行的门（用于 App「我能开的门」列表）
+const isVirtual = door => !!door && (door.kind || 'physical') === 'virtual';
+
+// 某用户当前能通行的门（用于 App「我能开的门」列表）——电子门没有扫码终端，排除（v3.5.105）
 function doorsForUser(user, now = new Date()) {
   return access.enabledDoors.all()
+    .filter(d => !isVirtual(d))
     .map(d => ({ door: d, ev: evaluateAccess(user, d, now) }))
     .filter(x => x.ev.allow)
     .map(x => ({ id: x.door.id, name: x.door.name, location: x.door.location,
                  code_mode: x.door.code_mode || 'any', sub_ttl: subTtl(x.door),
                  blackout_now: !!(x.door.blackout && inBlackout(x.door.blackout, now)) }));
+}
+
+// 某用户当前「线上可访问」的电子门（v3.5.105，展示用）：电子门 + 规则放行 + 不在禁入时段
+function onlineDoorsForUser(user, now = new Date()) {
+  return access.enabledDoors.all()
+    .filter(d => isVirtual(d) && !(d.blackout && inBlackout(d.blackout, now)))
+    .filter(d => evaluateAccess(user, d, now).allow)
+    .map(d => ({ id: d.id, name: d.name, location: d.location }));
 }
 
 const REASON_LABEL = {
@@ -298,10 +309,11 @@ const REASON_LABEL = {
   fed_code_expired: '跨域码已过期', fed_wrong_door: '跨域码不含此门', fed_bad_sig: '跨域码签名无效',
   door_blackout: '该门当前为禁入时段', need_subcode: '此门需出示该门的专属子码', wrong_door_code: '该子码不属于此门',
   pass_blackout: '访客码当前为禁入时段', need_escort: '需由陪同人扫码带入', escort_ok: '陪同带入',
+  virtual_door: '电子门仅限线上校验，不能扫码/刷卡', not_virtual_door: '该门不是电子门',
 };
 
 module.exports = {
-  QR_TTL, qrTtl, subTtl, signQr, verifyQr, evaluateAccess, evaluatePass, doorsForUser,
+  QR_TTL, qrTtl, subTtl, signQr, verifyQr, evaluateAccess, evaluatePass, doorsForUser, onlineDoorsForUser, isVirtual,
   normalizeWindows, inBlackout, doorPolicyCheck, signVisitorSub, verifyVisitorSub, doorTag, doorMatches,
   signFedCode, fedParse, fedVerifySig, evaluateFed,
   signFedLaunch, fedLaunchParse, makePairCode, parsePairCode,

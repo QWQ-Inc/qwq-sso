@@ -891,16 +891,17 @@ function _devApi(method, path, body) {
   if (method === 'PATCH' && path.startsWith('/admin/shop/')) return ok({ success:true });
 
   // 门禁（演示模式）
-  db._accessDoors = db._accessDoors || [{ id:'d-demo', name:'一楼大门', location:'总部一楼', subject_id:null, subject_name:null, status:'enabled', note:'', rule_count:1 },{ id:'d-s1', name:'示例集团侧门', location:'示例集团', subject_id:'S1', subject_name:'示例集团', status:'enabled', note:'', rule_count:0 }];
+  db._accessDoors = db._accessDoors || [{ id:'d-demo', name:'一楼大门', location:'总部一楼', subject_id:null, subject_name:null, status:'enabled', note:'', kind:'physical', rule_count:1 },{ id:'d-s1', name:'示例集团侧门', location:'示例集团', subject_id:'S1', subject_name:'示例集团', status:'enabled', note:'', kind:'physical', rule_count:0 },{ id:'d-v1', name:'内网管理后台', location:'线上', subject_id:null, subject_name:null, status:'enabled', note:'', kind:'virtual', rule_count:1 }];
   db._accessRules = db._accessRules || { 'd-demo':[{ id:'r-demo', door_id:'d-demo', grant_type:'all', grant_value:'', effect:'allow', weekdays:'', time_start:'', time_end:'', label:'所有登录用户' }] };
   db._accessLogs = db._accessLogs || [{ id:'al1', door_name:'一楼大门', user_name:'演示用户', uid_seq:1, method:'qr', result:'allow', reason:'ok', ip:'127.0.0.1', created_at:'2026-10-02 09:00:00' }];
   if (path === '/user/app-center') return ok({ success:true, tools:{ users:null, devices:null, access:{ admin:false, passes:true } }, pass_doors: db._accessDoors.filter(d=>d.status==='enabled').map(d=>({ id:d.id, name:d.name })) });
-  if (path === '/user/access/doors') return ok({ success:true, doors: db._accessDoors.filter(d=>d.status==='enabled').map(d=>({ id:d.id, name:d.name, location:d.location })) });
+  if (path === '/user/access/doors') return ok({ success:true, doors: db._accessDoors.filter(d=>d.status==='enabled'&&d.kind!=='virtual').map(d=>({ id:d.id, name:d.name, location:d.location })), online: db._accessDoors.filter(d=>d.status==='enabled'&&d.kind==='virtual').map(d=>({ id:d.id, name:d.name, location:d.location })) });
+  if (method === 'POST' && path === '/user/access/gate') { const d=db._accessDoors.find(x=>x.id===body.door_id); return ok({ success:true, allow:!!d&&d.status==='enabled', reason:d?'ok':'no_door', reason_text:d?'放行':'门不存在', door:d?{ id:d.id, name:d.name, kind:d.kind||'physical' }:null }); }
   if (method === 'POST' && path === '/user/access/qr') return ok({ success:true, code:'qr1.ZGVtbw.'+Math.random().toString(36).slice(2,10), expires_in:45, exp:Math.floor(Date.now()/1000)+45 });
   if (path.split('?')[0] === '/admin/access/doors' && method === 'GET') { const org = decodeURIComponent((path.split('?org=')[1] || '').split('&')[0] || ''); const doors = org ? (db._accessDoors||[]).filter(d => d.subject_id === org) : db._accessDoors; return ok({ success:true, doors }); }
-  if (path === '/admin/access/doors' && method === 'POST') { const d={ id:'d'+Date.now(), name:body.name, location:body.location||'', subject_id:body.subject_id||null, subject_name:null, status:body.status||'enabled', note:body.note||'', rule_count:0 }; db._accessDoors.push(d); db._accessRules[d.id]=[]; return ok({ success:true, door:d }); }
+  if (path === '/admin/access/doors' && method === 'POST') { const d={ id:'d'+Date.now(), name:body.name, location:body.location||'', subject_id:body.subject_id||null, subject_name:null, status:body.status||'enabled', note:body.note||'', kind:body.kind==='virtual'?'virtual':'physical', rule_count:0 }; db._accessDoors.push(d); db._accessRules[d.id]=[]; return ok({ success:true, door:d }); }
   let ad = path.match(/^\/admin\/access\/doors\/([^/]+)$/);
-  if (ad && method === 'PATCH') { const d=db._accessDoors.find(x=>x.id===ad[1]); if(d)Object.assign(d,{ name:body.name??d.name, location:body.location??d.location, status:body.status??d.status, note:body.note??d.note }); return ok({ success:true, door:d }); }
+  if (ad && method === 'PATCH') { const d=db._accessDoors.find(x=>x.id===ad[1]); if(d)Object.assign(d,{ name:body.name??d.name, location:body.location??d.location, status:body.status??d.status, note:body.note??d.note, kind:body.kind??d.kind }); return ok({ success:true, door:d }); }
   if (ad && method === 'DELETE') { db._accessDoors=db._accessDoors.filter(x=>x.id!==ad[1]); delete db._accessRules[ad[1]]; return ok({ success:true }); }
   let arr = path.match(/^\/admin\/access\/doors\/([^/]+)\/rules$/);
   if (arr && method === 'GET') return ok({ success:true, rules: db._accessRules[arr[1]]||[] });
@@ -1682,6 +1683,13 @@ async function loadMe() {
         <div class="card">
           <div class="card-header"><h3>我能通行的门</h3></div>
           <div class="card-body"><div id="access-my-doors" style="font-size:13px;color:var(--txd);">加载中…</div></div>
+        </div>
+        <!-- 线上门禁（电子门，v3.5.105）：当前线上可访问的区域，无需扫码 -->
+        <div class="card" id="access-online-card" style="display:none;">
+          <div class="card-header"><h3>线上可访问（电子门）</h3></div>
+          <div class="card-body"><div id="access-online-doors" style="font-size:13px;color:var(--txd);"></div>
+            <div style="font-size:11px;color:var(--txd);margin-top:8px;">🖥️ 这些是你当前有权访问的线上区域（电子门），由门禁规则实时判定，无需扫码。</div>
+          </div>
         </div>
         <!-- 我签发的访客码（分组/组织管理员入口，v3.5.31；系统管理员在管理端「门禁管理」签发） -->
         <div class="card" id="my-pass-card" style="display:none;">
@@ -8072,6 +8080,15 @@ async function loadMyAccess() {
         <button class="btn" style="font-size:11px;" data-id="${esc(d.id)}" data-name="${esc(d.name)}" onclick="showAccessQr(this.dataset.id, this.dataset.name)">该门子码</button>
       </div>`).join('')
     : '<div style="color:var(--txd);">暂无你有权限通行的门。如需开通请联系管理员。</div>';
+  // 线上可访问的电子门（v3.5.105）
+  const onCard = document.getElementById('access-online-card');
+  const onBox = document.getElementById('access-online-doors');
+  const online = data.online || [];
+  if (onCard) onCard.style.display = online.length ? '' : 'none';
+  if (onBox && online.length) onBox.innerHTML = online.map(d => `<div style="padding:10px 12px;border:1px solid var(--bd);border-radius:8px;margin-bottom:8px;">
+      <div style="font-weight:600;color:var(--tx);">🖥️ ${esc(d.name)} <span style="font-size:10px;color:#1a7f37;margin-left:4px;">可访问</span></div>
+      ${d.location ? `<div style="font-size:12px;color:var(--txd);margin-top:2px;">${esc(d.location)}</div>` : ''}
+    </div>`).join('');
   loadFaceStatus();
   loadMyPassCard();
 }
@@ -9356,7 +9373,8 @@ function renderDoorList(doors) {
   box.innerHTML = doors.map(d => `<div style="padding:12px;border:1px solid var(--bd);border-radius:10px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div>
-          <span style="font-weight:600;color:var(--tx);">🚪 ${esc(d.name)}</span>
+          <span style="font-weight:600;color:var(--tx);">${d.kind === 'virtual' ? '🖥️' : '🚪'} ${esc(d.name)}</span>
+          ${d.kind === 'virtual' ? '<span style="font-size:10px;color:#0a84ff;background:rgba(10,132,255,.14);padding:1px 6px;border-radius:6px;margin-left:6px;">电子门</span>' : ''}
           ${d.status === 'enabled' ? '<span style="font-size:11px;color:#1a7f37;margin-left:6px;">启用</span>' : '<span style="font-size:11px;color:var(--err);margin-left:6px;">停用</span>'}
           ${d.location ? `<span style="font-size:12px;color:var(--txd);margin-left:8px;">${esc(d.location)}</span>` : ''}
           ${d.subject_name ? `<span style="font-size:11px;color:var(--txd);margin-left:8px;">组织：${esc(d.subject_name)}</span>` : ''}
@@ -9385,6 +9403,11 @@ function openDoorModal(door) {
         <option value="enabled"${d.status==='enabled'?' selected':''}>启用</option>
         <option value="disabled"${d.status==='disabled'?' selected':''}>停用</option>
       </select>
+      <label style="font-size:12px;color:var(--txd);">门类型</label>
+      <select id="door-kind" onchange="toggleDoorKind()" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+        <option value="physical"${d.kind!=='virtual'?' selected':''}>实体门（扫码 / 刷卡 / 人脸）</option>
+        <option value="virtual"${d.kind==='virtual'?' selected':''}>电子门（仅线上校验，无扫码终端）</option>
+      </select>
       <label style="font-size:12px;color:var(--txd);">归属组织${adminRole === 'orgadmin' ? '' : '（空 = 全局门，不归属任何组织）'}</label>
       ${(() => {
         const orgs = window._adminOrgsCache || [];
@@ -9401,16 +9424,21 @@ function openDoorModal(door) {
         </select>`;
       })()}
       <div style="border-top:1px solid var(--bd);margin-top:4px;padding-top:10px;">
-        <div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:6px;">开门码规则（本门独立）</div>
-        <label style="font-size:12px;color:var(--txd);">开门码模式</label>
-        <select id="door-codemode" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
-          <option value="any"${d.code_mode!=='sub_only'?' selected':''}>主码 / 子码都可（默认）</option>
-          <option value="sub_only"${d.code_mode==='sub_only'?' selected':''}>只认本门子码（主码、静态访客码、跨域码都不收）</option>
-        </select>
-        <label style="font-size:12px;color:var(--txd);">本门子码有效期（秒，15~600；留空/0 = 跟随全局，默认 60）</label>
-        <input id="door-subttl" type="number" min="0" max="600" value="${d.sub_ttl||''}" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx);margin-bottom:10px;"><input type="checkbox" id="door-escort"${d.escort_required?' checked':''}> 访客须陪同带入（访客验码后，由陪同人在 2 分钟内于此门扫码才放行）</label>
-        <div style="font-size:12px;color:var(--txd);margin-bottom:4px;">禁入时段（对所有人生效，含访客 / 跨域访客；刷卡人脸同样拦）</div>
+        <div style="font-size:12px;font-weight:600;color:var(--tx);margin-bottom:6px;">门策略（本门独立）</div>
+        <div id="door-virtual-hint" style="display:${d.kind==='virtual'?'block':'none'};font-size:12px;color:var(--txd);background:rgba(10,132,255,.08);border:1px solid rgba(10,132,255,.25);border-radius:8px;padding:9px 11px;margin-bottom:10px;line-height:1.6;">
+          🖥️ 电子门用门禁规则做<b>线上权限校验</b>，没有扫码终端。线上资源持用户会话调 <code>POST /api/user/access/gate {door_id}</code>，或后端持 API Key 调 <code>POST /api/v1/access/gate {door_id, uid}</code>（scope <code>access:verify</code>）即得放行/拒绝结论。授权规则、禁入时段与实体门完全一致。
+        </div>
+        <div id="door-phys-opts" style="display:${d.kind==='virtual'?'none':'block'};">
+          <label style="font-size:12px;color:var(--txd);">开门码模式</label>
+          <select id="door-codemode" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+            <option value="any"${d.code_mode!=='sub_only'?' selected':''}>主码 / 子码都可（默认）</option>
+            <option value="sub_only"${d.code_mode==='sub_only'?' selected':''}>只认本门子码（主码、静态访客码、跨域码都不收）</option>
+          </select>
+          <label style="font-size:12px;color:var(--txd);">本门子码有效期（秒，15~600；留空/0 = 跟随全局，默认 60）</label>
+          <input id="door-subttl" type="number" min="0" max="600" value="${d.sub_ttl||''}" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:var(--tx);">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx);margin-bottom:10px;"><input type="checkbox" id="door-escort"${d.escort_required?' checked':''}> 访客须陪同带入（访客验码后，由陪同人在 2 分钟内于此门扫码才放行）</label>
+        </div>
+        <div style="font-size:12px;color:var(--txd);margin-bottom:4px;">禁入时段（对所有人生效：实体门含访客 / 跨域 / 刷卡人脸，电子门含线上校验）</div>
         ${bwEditorHtml('door', d.blackout)}
       </div>
     </div>
@@ -9421,17 +9449,26 @@ function openDoorModal(door) {
   </div>`;
   document.body.appendChild(ov);
 }
+function toggleDoorKind() {
+  const virtual = document.getElementById('door-kind')?.value === 'virtual';
+  const phys = document.getElementById('door-phys-opts'); if (phys) phys.style.display = virtual ? 'none' : 'block';
+  const hint = document.getElementById('door-virtual-hint'); if (hint) hint.style.display = virtual ? 'block' : 'none';
+}
 async function saveDoor(id) {
+  const kind = document.getElementById('door-kind')?.value === 'virtual' ? 'virtual' : 'physical';
   const body = {
     name: document.getElementById('door-name').value.trim(),
     location: document.getElementById('door-loc').value.trim(),
     status: document.getElementById('door-status').value,
-    note: document.getElementById('door-note').value.trim(),
-    code_mode: document.getElementById('door-codemode').value,
-    sub_ttl: parseInt(document.getElementById('door-subttl').value, 10) || 0,
-    escort_required: document.getElementById('door-escort').checked,
+    note: document.getElementById('door-note')?.value.trim() || '',
+    kind,
     blackout: bwCollect('door'),
   };
+  if (kind !== 'virtual') {   // 开门码模式 / 子码 / 陪同仅实体门有意义
+    body.code_mode = document.getElementById('door-codemode').value;
+    body.sub_ttl = parseInt(document.getElementById('door-subttl').value, 10) || 0;
+    body.escort_required = document.getElementById('door-escort').checked;
+  }
   const subjEl = document.getElementById('door-subject');   // 归属组织（v3.5.79；组织管理员锁定为其组织）
   if (subjEl) body.subject_id = subjEl.value || null;
   if (!body.name) { showToast('请填写门名称'); return; }

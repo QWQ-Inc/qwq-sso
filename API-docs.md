@@ -800,6 +800,7 @@ GET /api/apps/authed
 | 消息 | POST | `/v1/sms/send` | `sms:send` | 代发短信 |
 | 门禁 | POST | `/v1/access/verify` | `access:verify` | 扫码开门：校验动态二维码（code 一次性消费防重放） |
 | 门禁 | POST | `/v1/access/check` | `access:verify` | 直查校验（刷卡/人脸：设备解析出 uid 后调；card_no 预留） |
+| 门禁 | POST | `/v1/access/gate` | `access:verify` | 线上门禁（电子门）：按门禁规则校验某用户此刻是否有权访问（不开门，只回结论） |
 | 门禁 | GET | `/v1/access/doors` | `access:read` | 已启用的门/通道列表 |
 | 门禁 | GET | `/v1/access/logs` | `access:read` | 通行记录（`door_id`/`limit`，最多 500） |
 | 门禁 | GET | `/v1/access/faces` | `access:read` | 人脸库同步（`?since=` 增量；只给 uid/name/updated_at） |
@@ -1436,11 +1437,25 @@ GET /api/v1/access/faces              scope: access:read   # [{uid_seq,uid_code,
 GET /api/v1/access/faces/<uid>/image  scope: access:read   # 该用户人脸图片原始字节
 # 用户在控制台/App「门禁」页自愿录入人脸（POST /api/user/access/face），可随时删除。
 
-GET  /api/v1/access/doors      scope: access:read      # 已启用的门列表 → { total, data:[{id,name,location,status}] }
+GET  /api/v1/access/doors      scope: access:read      # 已启用的门列表 → { total, data:[{id,name,location,status,kind}] }
 GET  /api/v1/access/logs       scope: access:read      # 通行记录（?door_id= &limit=，最多 500）
 ```
 
-> 授权规则（谁能过某扇门）在管理端「门禁管理」页配置：可按**组织/分组/标签/等级批量放行**，再叠加**逐人允许/拒绝**（**拒绝优先**），每条规则可限**时段 + 星期**。
+**电子门（线上门禁，v3.5.105）**：门有 `kind`——`physical`（实体门，默认）或 `virtual`（电子门）。电子门没有物理扫码终端，**复用同一套门禁规则**做「线上权限校验」：某场景要判定一个已登录的人能否访问某线上资源时，调下面的接口得到放行/拒绝结论（不「开门」，只回授权结果，并记一条通行日志 `method=online`）。电子门在扫码/刷卡/人脸终端（`/v1/access/verify`、`/v1/access/check`）一律拒，`reason=virtual_door`。
+
+```
+POST /api/v1/access/gate       scope: access:verify   # 后端服务持 API Key 校验某用户
+{ "door_id": "...", "uid": "142" }
+# → { allow, result:"allow"|"deny", reason, reason_text, user:{uid_seq,uid_code,name}, door:{id,name,kind} }
+
+POST /api/user/access/gate     （用户 JWT，非 /v1）   # 持用户会话的网页自查当前用户
+{ "door_id": "..." }
+# → { success, allow, reason, reason_text, door:{id,name,kind} }
+```
+
+> 实体门与电子门的授权规则完全一致：`/v1/access/gate` 两类门都能查（对实体门即「这个人是否有权进这扇门」的线上查询），电子门则是专供线上校验、不可扫码的门。禁入时段对电子门同样生效。
+
+> 授权规则（谁能过某扇门）在管理端「门禁管理」页配置：可按**组织/分组/标签/等级批量放行**，再叠加**逐人允许/拒绝**（**拒绝优先**），每条规则可限**时段 + 星期**；新建门时选「电子门」即为线上校验用途。
 > 也可直接用现成的扫码终端页 `/access-terminal.html`（填 Key + 选门 → 浏览器原生扫码），把旧平板/手机变成门禁机。
 
 ---
