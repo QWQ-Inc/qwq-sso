@@ -9216,6 +9216,30 @@ router.get('/v1/access/doors', requireApiKey('access:read'), (req, res) => {
   const rows = access.enabledDoors.all().map(d => ({ id: d.id, name: d.name, location: d.location, status: d.status, kind: d.kind || 'physical' }));
   res.json({ total: rows.length, data: rows });
 });
+// 某扇门当前有权通过的人（v3.5.106）：按授权规则（含规则时段）批量判定，供接入方对账「谁有权限」。
+// 不记通行日志（不是一次通行）；门级禁入时段只用 blackout 字段说明、不清空名单。
+// 默认只回 id(=OIDC sub)/uid_seq/uid_code/name；密钥同时有 users:read 才带 email。公共账号、停用账号不在其中。
+router.get('/v1/access/doors/:id/members', requireApiKey('access:read'), (req, res) => {
+  if (req.isSandbox) return res.json({ _sandbox: true, door: { id: 'sb-door', name: '沙盒大门', kind: 'virtual' }, blackout: false,
+    total: 1, page: 1, data: [{ id: 'sb-user', uid_seq: 142, uid_code: null, name: '沙盒测试用户' }] });
+  const door = access.doorById.get(req.params.id);
+  if (!door) return res.status(404).json({ error: '门不存在' });
+  const lim = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  let withEmail = false;
+  try { withEmail = JSON.parse(req.apiKey.scopes || '[]').includes('users:read'); } catch (_) {}
+  const candidates = db.prepare("SELECT * FROM users WHERE is_public=0 AND status='active' ORDER BY uid_seq").all();
+  const members = accessCore.membersOfDoor(candidates, door);
+  const slice = members.slice((page - 1) * lim, page * lim).map(u => ({
+    id: u.id, uid_seq: u.uid_seq, uid_code: u.uid_code || null, name: u.name,
+    ...(withEmail ? { email: u.email || null } : {}),
+  }));
+  res.json({
+    door: { id: door.id, name: door.name, kind: door.kind || 'physical', status: door.status },
+    blackout: !!(door.blackout && accessCore.inBlackout(door.blackout)),
+    total: members.length, page, data: slice,
+  });
+});
 router.get('/v1/access/logs', requireApiKey('access:read'), (req, res) => {
   if (req.isSandbox) return res.json(SANDBOX.accessLogs());
   const lim = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);

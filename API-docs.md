@@ -802,6 +802,7 @@ GET /api/apps/authed
 | 门禁 | POST | `/v1/access/check` | `access:verify` | 直查校验（刷卡/人脸：设备解析出 uid 后调；card_no 预留） |
 | 门禁 | POST | `/v1/access/gate` | `access:verify` | 线上门禁（电子门）：按门禁规则校验某用户此刻是否有权访问（不开门，只回结论） |
 | 门禁 | GET | `/v1/access/doors` | `access:read` | 已启用的门/通道列表 |
+| 门禁 | GET | `/v1/access/doors/:id/members` | `access:read` | 某扇门此刻按授权规则放行的人（名单对账；有 `users:read` 才带 email） |
 | 门禁 | GET | `/v1/access/logs` | `access:read` | 通行记录（`door_id`/`limit`，最多 500） |
 | 门禁 | GET | `/v1/access/faces` | `access:read` | 人脸库同步（`?since=` 增量；只给 uid/name/updated_at） |
 | 门禁 | GET | `/v1/access/faces/:uid/image` | `access:read` | 拉某用户的人脸图片（供一体机建本地库） |
@@ -1438,6 +1439,10 @@ GET /api/v1/access/faces/<uid>/image  scope: access:read   # 该用户人脸图�
 # 用户在控制台/App「门禁」页自愿录入人脸（POST /api/user/access/face），可随时删除。
 
 GET  /api/v1/access/doors      scope: access:read      # 已启用的门列表 → { total, data:[{id,name,location,status,kind}] }
+GET  /api/v1/access/doors/<门ID>/members?page=1&limit=100   scope: access:read   # 此刻有权通过这扇门的人（v3.5.106）
+# → { door:{id,name,kind,status}, blackout, total, page, data:[{ id, uid_seq, uid_code, name, email? }] }
+#   id 即 OIDC sub；密钥同时有 users:read 才带 email；只看授权规则（含规则时段），门级禁入时段不清空名单（看 blackout）；
+#   公共账号、停用账号不在其中；不写通行记录。适合接入方定时整份对账「谁有权限」（如用电子门管理某系统的管理员）。
 GET  /api/v1/access/logs       scope: access:read      # 通行记录（?door_id= &limit=，最多 500）
 ```
 

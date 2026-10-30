@@ -4398,7 +4398,7 @@ const ALL_SCOPES = [
   { key:'config:read', label:'读取系统配置',   desc:'GET /v1/watermark（水印策略）' },
   { key:'config:write',label:'修改系统配置',   desc:'PUT /v1/watermark（改水印策略）' },
   { key:'access:verify',label:'门禁校验',       desc:'POST /v1/access/verify（扫码开门）、/v1/access/check（刷卡/人脸）' },
-  { key:'access:read', label:'读取门禁',        desc:'GET /v1/access/doors、/v1/access/logs（门列表 + 通行记录）' },
+  { key:'access:read', label:'读取门禁',        desc:'GET /v1/access/doors、/v1/access/doors/:id/members、/v1/access/logs（门列表 + 门的放行名单 + 通行记录）' },
   { key:'device:read', label:'读取设备',        desc:'GET /v1/devices（设备台账同步）、POST /v1/devices/{id}/heartbeat（心跳上报）' },
   { key:'realtime:verify',label:'实时确认码',    desc:'GET /v1/users/{uid}/realtime-code（状态）、POST .../verify（校验 App 实时确认码）' },
 ];

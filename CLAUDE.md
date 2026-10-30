@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.105**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.106**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.106 开放 API 列出某扇门当前放行的人（门禁名单对账）
+
+三级版本。接入方（例：用 QWQ SSO 电子门管理平台团队的 Super Enigma）要把「谁有权限」整份对账，而不只是逐人 `access/gate`——否则新被授权的人要等他先登录一次才会出现。
+- **核心(access.js)**：`evaluateAccess` 加可选第 4 参 `rules`（批量判定同一扇门时只查一次规则，行为不变）；新 `membersOfDoor(users, door, now)`：停用的门 / 没有任何放行规则 → 空；否则逐人 `evaluateAccess(…, rules).allow`。**只看授权规则（含规则自己的时段 / 星期 / 生效日期），门级禁入时段不排除**——名单表达「谁有权限」，不是「此刻门开不开」。导出 `membersOfDoor`。
+- **接口(api.js)**：`GET /v1/access/doors/:id/members`（scope `access:read`，有 sandbox 桩）：候选 = 非公共、`status='active'` 的用户（按 uid_seq），`?page=&limit=`（默认 100，最多 500）；返回 `{door{id,name,kind,status}, blackout, total, page, data:[{id(=OIDC sub), uid_seq, uid_code, name, email?}]}`——**密钥同时有 `users:read` 才带 email**（与 `/v1/users` 同级的个人信息）。**不写通行日志**（不是一次通行，避免对账轮询刷爆日志）。门不存在 404。
+- **前端(dashboard.html)**：API 密钥 scope 说明 `access:read` 补上名单接口。
+- **文档**：API-docs.md 速查表 + 6.14 节。
+- ⚠️ 测试：`scratchpad/door-members-test.js` 12 项全过（无放行规则无人且不逐人判定、分组 + 组织放行与逐人拒绝优先、同门只查一次规则、与 evaluateAccess 逐人一致、停用门 / 停用账号、规则时段内外、门级禁入时段不影响名单）；`access-test.js` 29 项回归全过；server `node --check` 通过。逐人判定 org/tag/dept 规则时仍各查一次库，用户量很大时名单接口会慢一些（O(用户数)），接入方应低频调用（Super Enigma 每 10 分钟一次）。
 
 ## v3.5.105 电子门（线上门禁，用门禁规则做线上权限校验）（用户反馈）
 

@@ -117,13 +117,14 @@ function withinSchedule(rule, now = new Date()) {
 }
 
 // 判定用户能否在 now 通过 door。返回 { allow, reason }
-function evaluateAccess(user, door, now = new Date()) {
+// rules 可预先传入（批量判定同一扇门时只查一次规则，见 membersOfDoor）
+function evaluateAccess(user, door, now = new Date(), rules = null) {
   if (!user) return { allow: false, reason: 'no_user' };
   if (user.status && user.status !== 'active') return { allow: false, reason: 'user_disabled' };
   if (!door) return { allow: false, reason: 'no_door' };
   if (door.status !== 'enabled') return { allow: false, reason: 'door_disabled' };
 
-  const rules = access.rulesByDoor.all(door.id);
+  if (!rules) rules = access.rulesByDoor.all(door.id);
   // 拒绝优先：命中任一 deny 规则（且在其时段内）→ 直接拒
   for (const r of rules) {
     if (r.effect === 'deny' && ruleMatchesUser(r, user) && withinSchedule(r, now)) {
@@ -139,6 +140,16 @@ function evaluateAccess(user, door, now = new Date()) {
     }
   }
   return { allow: false, reason: matchedButOffHours ? 'out_of_schedule' : 'not_authorized' };
+}
+
+// 某扇门此刻按授权规则放行的人（v3.5.106，供 /v1/access/doors/:id/members 名单对账）。
+// 只看授权规则（含规则自己的时段 / 星期 / 生效日期）；门级禁入时段不在这里排除，由调用方另行说明，
+// 名单表达的是「谁有权限」而不是「此刻这扇门开不开」。停用的门没有人。
+function membersOfDoor(users, door, now = new Date()) {
+  if (!door || door.status !== 'enabled') return [];
+  const rules = access.rulesByDoor.all(door.id);
+  if (!rules.some(r => r.effect !== 'deny')) return [];   // 没有任何放行规则 → 没有人
+  return (users || []).filter(u => evaluateAccess(u, door, now, rules).allow);
 }
 
 // ── 禁入时段（v3.5.29）──
@@ -313,7 +324,7 @@ const REASON_LABEL = {
 };
 
 module.exports = {
-  QR_TTL, qrTtl, subTtl, signQr, verifyQr, evaluateAccess, evaluatePass, doorsForUser, onlineDoorsForUser, isVirtual,
+  QR_TTL, qrTtl, subTtl, signQr, verifyQr, evaluateAccess, evaluatePass, doorsForUser, onlineDoorsForUser, isVirtual, membersOfDoor,
   normalizeWindows, inBlackout, doorPolicyCheck, signVisitorSub, verifyVisitorSub, doorTag, doorMatches,
   signFedCode, fedParse, fedVerifySig, evaluateFed,
   signFedLaunch, fedLaunchParse, makePairCode, parsePairCode,
