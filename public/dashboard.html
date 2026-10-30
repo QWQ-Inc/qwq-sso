@@ -11421,6 +11421,7 @@ async function saveAppEdit() {
     deprovision_url: document.getElementById('ae-deprov')?.value.trim(),
     handover_required: !!document.getElementById('ae-handover')?.checked,
     backchannel_logout_uri: document.getElementById('ae-bcl')?.value.trim(),
+    id_token_alg: document.getElementById('ae-alg')?.value || 'HS256',
     required_scopes: collectReqScopes('ae'),
     visible: document.getElementById('ae-visible')?.value === 'true',
     status: document.getElementById('ae-status')?.value,
@@ -11533,6 +11534,7 @@ async function openAppEdit(id) {
           <div class="form-row full"><label>账号撤销回调（可选，SSO 主动推停用/删除事件，应用据此停用本地账号。用 client_secret HMAC 签名于 X-QWQ-Signature）</label><input type="text" id="ae-deprov" value="${esc(a.deprovision_url||'')}" placeholder="https://yourapp.com/sso/deprovision" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="ae-handover" ${a.handover_required ? 'checked' : ''} style="width:auto;"> 重要应用：授权过它的用户注销 / 被删除前，必须先标记「已交接」</label></div>
           <div class="form-row full"><label>Back-Channel Logout 地址（可选，OIDC 标准登出通知；SSO 用 client_secret 签 logout_token 推来）</label><input type="text" id="ae-bcl" value="${esc(a.backchannel_logout_uri||'')}" placeholder="https://yourapp.com/oidc/backchannel-logout" style="font-family:monospace;font-size:12px;"/></div>
+          <div class="form-row full"><label>ID Token 签名算法（HS256 = 用 client_secret，现成 OIDC 库都支持；RS256 = 用平台私钥，公钥见 /oauth/jwks，给 kube-apiserver 等只认非对称签名的验证方）</label><select id="ae-alg"><option value="HS256" ${a.id_token_alg === 'RS256' ? '' : 'selected'}>HS256（默认）</option><option value="RS256" ${a.id_token_alg === 'RS256' ? 'selected' : ''}>RS256</option></select></div>
           <div class="form-row full"><label>必传字段（用户授权时不可取消，openid 天然必传）</label>${reqScopeBoxes('ae', a.required_scopes)}</div>
           <div class="form-row full"><label>开放给组织（都不勾 = 全局通用应用；勾选后仅所选组织的成员可见可登）</label><div id="ae-orgs" style="display:flex;flex-wrap:wrap;gap:10px;font-size:13px;">加载中…</div></div>
           <div class="form-row"><label>用户端可见</label>

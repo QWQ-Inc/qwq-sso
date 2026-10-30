@@ -438,6 +438,7 @@ try { db.exec("ALTER TABLE apps ADD COLUMN required_scopes TEXT"); } catch(_) {}
 try { db.exec("ALTER TABLE apps ADD COLUMN category TEXT"); } catch(_) {}   // 应用分类（v3.4.44）
 try { db.exec("ALTER TABLE apps ADD COLUMN deprovision_url TEXT"); } catch(_) {}   // 账号撤销回调（v3.5.11，SSO 主动推送停用/删除事件）
 try { db.exec("ALTER TABLE apps ADD COLUMN backchannel_logout_uri TEXT"); } catch(_) {}
+try { db.exec("ALTER TABLE apps ADD COLUMN id_token_alg TEXT NOT NULL DEFAULT 'HS256'"); } catch(_) {}   // id_token / logout_token 签名算法（v3.5.107：HS256 用 client_secret | RS256 用平台私钥，公钥经 JWKS）
 // 应用图片图标（v3.5.28）：图片本体放独立表 app_icons（别塞进 apps——到处都 SELECT * FROM apps 下发，BLOB 会被序列化进 JSON）；
 // apps.icon_url 只存公开地址（带版本参数防缓存），有值则前端/App 显示图片，否则回退 emoji icon。
 try { db.exec("ALTER TABLE apps ADD COLUMN icon_url TEXT"); } catch(_) {}

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.106**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.107**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.107 OIDC id_token 可选 RS256（平台私钥签名 + JWKS 公开公钥）
+
+三级版本。HS256 用 client_secret 签名，只有持有 secret 的应用自己能验；kube-apiserver 等验证方只认非对称签名、靠 JWKS 取公钥（Super Enigma 要用 QWQ SSO 给平台成员发集群短期凭据就卡在这里）。
+- **新文件 `server/oidc-keys.js`**：表 `oidc_signing_keys(kid PK, private_pem, created_at, retired_at)`（模块里 `CREATE TABLE IF NOT EXISTS`）；`activeKey()` = 环境变量 `OIDC_RSA_PRIVATE_KEY`（PEM，`\n` 转义可用，解析失败告警并回落库里的钥）> 库里未退役的最新一把 > 现生成 2048 位 RSA 存库；`kid` = 公钥 SPKI DER 的 SHA-256 前 16 位十六进制；`rotate()` 生成新钥、其余退役（环境变量钥时拒绝）；`jwks()` = 环境变量钥 + 未退役 / 退役 7 天内的公钥（RS256、use=sig，绝不含私钥分量）；`algFor(app)` 只认 RS256，其他一律 HS256；`signForApp(payload, app)`。
+- **数据(db.js)**：`apps.id_token_alg TEXT NOT NULL DEFAULT 'HS256'`（老应用行为不变）。
+- **provider.js**：两处 id_token（普通 + 联邦）与 Back-Channel Logout 的 logout_token 都改走 `oidcKeys.signForApp`；发现文档 `id_token_signing_alg_values_supported: ['HS256','RS256']` + `jwks_uri`；新路由 `GET /oauth/jwks`、`GET /.well-known/jwks.json`（`Cache-Control: max-age=300`）。
+- **api.js**：应用新建 / 修改收 `id_token_alg`（`safeTokenAlg`）；`GET /admin/oidc/keys`（当前 kid、是否环境变量钥、JWKS）与 `POST /admin/oidc/keys/rotate`（`requireAdmin(1)`，审计 `oidc.key_rotated`）。
+- **前端(dashboard.html)**：应用编辑弹窗加「ID Token 签名算法」下拉（HS256 默认 / RS256）。`init.js` ENV_KEYS 加 `OIDC_RSA_PRIVATE_KEY`。
+- ⚠️ 测试：`scratchpad/oidc-rs256-test.js`（node:sqlite 替身 ./db + 真 jsonwebtoken）16 项全过：生成与复用、JWKS 只含公钥、RS256 头带 kid 且用 JWKS 公钥验过、RS256 令牌不能当 HS256 验、HS256 应用照旧、非法值回落、轮换后新钥签名而旧公钥保留且旧令牌可验、退役超 7 天移出、环境变量钥优先 / 不可轮换 / 解析失败回落。server 各文件 `node --check` 通过。
+- ⚠️ 多实例部署（多个副本各自生成密钥会互相验不过）务必设 `OIDC_RSA_PRIVATE_KEY`；单实例自动生成即可。
 
 ## v3.5.106 开放 API 列出某扇门当前放行的人（门禁名单对账）
 

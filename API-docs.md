@@ -2239,8 +2239,10 @@ GET https://qwqsso.zeabur.app/.well-known/openid-configuration
 | token_endpoint | `/oauth/token` |
 | userinfo_endpoint | `/oauth/userinfo` |
 | revocation_endpoint | `/oauth/revoke` |
+| jwks_uri | `/oauth/jwks`（同 `/.well-known/jwks.json`，v3.5.107） |
 
-- `id_token` 签名算法为 **HS256**，密钥就是你的 `client_secret`（因此不需要 JWKS 端点）
+- `id_token` 签名算法默认 **HS256**，密钥就是你的 `client_secret`（这种应用不需要 JWKS）
+- **RS256（v3.5.107）**：管理端「应用管理」里把该应用的「ID Token 签名算法」改成 RS256，id_token / logout_token 改用平台私钥签名、头部带 `kid`，用 `jwks_uri` 里的公钥验签——给不持有 `client_secret`、只认非对称签名的验证方用，例如 Kubernetes kube-apiserver 的 OIDC 认证（`issuer` 填本系统地址、`audience` 填 client_id）。私钥来自环境变量 `OIDC_RSA_PRIVATE_KEY`（PEM，多实例部署请设它），否则首次使用时自动生成存库；超级管理员可 `POST /api/admin/oidc/keys/rotate` 轮换，旧公钥在 JWKS 里再保留 7 天
 - 支持 **PKCE**（`S256` / `plain`），强烈建议移动端和 SPA 启用
 - `client_secret` 支持 `client_secret_post`（放 body）和 `client_secret_basic`（HTTP Basic）两种传法
 

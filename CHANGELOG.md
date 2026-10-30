@@ -4,6 +4,11 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.107 — OIDC id_token 可选 RS256（JWKS 公开公钥）
+
+- **应用可改用 RS256 签名**：管理端「应用管理」编辑应用，「ID Token 签名算法」选 RS256 后，id_token 与 Back-Channel Logout 的 logout_token 改用平台私钥签名（头部带 `kid`），公钥经 **`/oauth/jwks`**（同 `/.well-known/jwks.json`，发现文档里的 `jwks_uri`）公开。适合不持有 `client_secret`、只认非对称签名的验证方，例如 Kubernetes kube-apiserver 的 OIDC 认证。默认仍是 HS256，已接入的应用不受影响。
+- 私钥：设了环境变量 `OIDC_RSA_PRIVATE_KEY`（PEM）就用它（**多实例部署请务必设置**）；否则首次使用时自动生成并保存。超级管理员可经 `POST /api/admin/oidc/keys/rotate` 轮换，旧公钥在 JWKS 中再保留 7 天。
+
 ## v3.5.106 — 开放 API 列出某扇门当前放行的人
 
 - **新接口 `GET /api/v1/access/doors/:id/members`**（scope `access:read`）：按这扇门的授权规则（含规则时段），列出此刻有权通过的人——`id`（即 OIDC `sub`）/ `uid_seq` / `uid_code` / `name`，密钥同时有 `users:read` 时附带 `email`；支持 `page` / `limit`（最多 500）。接入方可以整份对账「谁有权限」，不必等每个人先登录一次。

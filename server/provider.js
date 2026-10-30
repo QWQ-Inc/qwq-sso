@@ -6,8 +6,9 @@
  *   - provider.js（本文件）= 第三方应用反过来「用 QWQ SSO 登录」
  *
  * 实现标准 OAuth2 授权码流程 + OIDC，支持 PKCE。
- * id_token 用 HS256 以应用自己的 client_secret 签名（OIDC 对私密客户端允许的做法），
- * 好处是不需要维护 RSA 密钥对和 JWKS 端点，接入方用现成的 OIDC 客户端库即可验签。
+ * id_token 默认用 HS256 以应用自己的 client_secret 签名（OIDC 对私密客户端允许的做法），
+ * 接入方用现成的 OIDC 客户端库即可验签。v3.5.107 起应用可改选 RS256：用平台私钥签名、带 kid，
+ * 公钥经 JWKS（/oauth/jwks）公开，供只认非对称签名的验证方（如 kube-apiserver）使用，见 oidc-keys.js。
  */
 const express = require('express');
 const crypto  = require('crypto');
@@ -16,6 +17,7 @@ const { db, idp, users, apps, groups, tags, appVisibleToUser, appVisibleInSessio
 const { audit } = require('./audit');
 const { requireAuth } = require('./auth');
 const accessCore = require('./access');
+const oidcKeys = require('./oidc-keys');
 
 const router = express.Router();
 
@@ -156,7 +158,8 @@ router.get('/.well-known/openid-configuration', (req, res) => {
     response_types_supported:             ['code'],
     grant_types_supported:                ['authorization_code'],
     subject_types_supported:              ['public'],
-    id_token_signing_alg_values_supported:['HS256'],
+    id_token_signing_alg_values_supported:['HS256', 'RS256'],
+    jwks_uri:                             `${b}/oauth/jwks`,
     token_endpoint_auth_methods_supported:['client_secret_post', 'client_secret_basic'],
     code_challenge_methods_supported:     ['S256', 'plain'],
     claims_supported: ['sub','name','preferred_username','picture','uid','uid_code','level_tag',
@@ -165,6 +168,14 @@ router.get('/.well-known/openid-configuration', (req, res) => {
                        'group','groups','tags','auth_time','nonce','account_type','valid_until','from_peer'],
   });
 });
+
+// JWKS（v3.5.107）：RS256 签名的公钥。HS256 的应用用 client_secret 验签，与此无关。
+const sendJwks = (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json(oidcKeys.jwks());
+};
+router.get('/oauth/jwks', sendJwks);
+router.get('/.well-known/jwks.json', sendJwks);
 
 // ──────────────────────────────────────────
 // 1) 授权端点：第三方把用户跳到这里
@@ -379,7 +390,7 @@ router.post('/oauth/token', (req, res) => {
   };
   // 只有请求了 openid 才是 OIDC → 才签发 id_token；否则是纯 OAuth2，只给 access_token
   if (scopeArr.includes('openid')) {
-    resp.id_token = jwt.sign({
+    resp.id_token = oidcKeys.signForApp({
       ...claimsFor(user, scopeArr),
       iss: baseUrl(req),
       aud: app.client_id,
@@ -387,7 +398,7 @@ router.post('/oauth/token', (req, res) => {
       auth_time: now,     // 本系统换码即视为完成认证的时刻
       exp: now + Math.floor(TOKEN_TTL / 1000),
       ...(row.nonce ? { nonce: row.nonce } : {}),
-    }, app.client_secret, { algorithm: 'HS256' });
+    }, app);
   }
   noStore().json(resp);
 });
@@ -541,10 +552,10 @@ function handleFedToken(req, res, row, app, { redirect_uri, code_verifier }, noS
   const now = Math.floor(Date.now() / 1000);
   const resp = { access_token: accessToken, token_type: 'Bearer', expires_in: Math.floor(TOKEN_TTL / 1000), scope: row.scope };
   if (scopeArr.includes('openid')) {
-    resp.id_token = jwt.sign({
+    resp.id_token = oidcKeys.signForApp({
       ...claims, iss: baseUrl(req), aud: app.client_id, iat: now, auth_time: now,
       exp: now + Math.floor(TOKEN_TTL / 1000), ...(row.nonce ? { nonce: row.nonce } : {}),
-    }, app.client_secret, { algorithm: 'HS256' });
+    }, app);
   }
   noStore().json(resp);
 }
@@ -613,17 +624,17 @@ router.post('/fed/pair/receive', express.json(), (req, res) => {
 });
 
 // ── OIDC Back-Channel Logout（v3.5.13）：SSO 主动通知应用「该用户已登出/失效」──
-// 用应用自己的 client_secret 签 logout_token（HS256），POST 到应用登记的 backchannel_logout_uri。
+// 按应用的签名算法签 logout_token（默认 HS256 用 client_secret；选了 RS256 用平台私钥），POST 到应用登记的 backchannel_logout_uri。
 // 用标准 OIDC 客户端库的应用天然支持，比自定义 webhook 更通用。
 async function backchannelLogout(app, sub) {
   if (!app || !app.backchannel_logout_uri || !/^https?:\/\//i.test(app.backchannel_logout_uri)) return false;
   const now = Math.floor(Date.now() / 1000);
-  const token = jwt.sign({
+  const token = oidcKeys.signForApp({
     iss: (process.env.BASE_URL || '').replace(/\/$/, '') || undefined,
     aud: app.client_id, iat: now, jti: crypto.randomBytes(12).toString('hex'),
     sub: String(sub),
     events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
-  }, app.client_secret, { algorithm: 'HS256' });
+  }, app);
   try {
     const body = new URLSearchParams({ logout_token: token }).toString();
     const r = await fetch(app.backchannel_logout_uri, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });

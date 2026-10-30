@@ -6581,6 +6581,22 @@ const safeRequiredScopes = v => {
   const arr = Array.isArray(v) ? v : String(v || '').split(/[\s,]+/);
   return [...new Set(arr.map(s => s.trim()).filter(s => VALID_SCOPES.includes(s) && s !== 'openid'))].join(' ');
 };
+// id_token 签名算法（v3.5.107）：只认 RS256 / HS256，其他一律 HS256
+const safeTokenAlg = v => (String(v || '').toUpperCase() === 'RS256' ? 'RS256' : 'HS256');
+// OIDC 签名密钥（RS256）：查看当前 kid / 轮换（仅超级管理员；轮换后旧公钥在 JWKS 里再留 7 天）
+router.get('/admin/oidc/keys', requireAdmin(1), (req, res) => {
+  const oidcKeys = require('./oidc-keys');
+  const k = oidcKeys.activeKey();
+  res.json({ success: true, kid: k.kid, from_env: !!k.env, jwks: oidcKeys.jwks(), retired_keep_days: oidcKeys.RETIRED_KEEP_DAYS });
+});
+router.post('/admin/oidc/keys/rotate', requireAdmin(1), (req, res) => {
+  const oidcKeys = require('./oidc-keys');
+  try {
+    const kid = oidcKeys.rotate();
+    audit('oidc.key_rotated', { subject: kid, actor: actorOf(req) });
+    res.json({ success: true, kid });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
 router.get('/admin/apps', requireAdmin(3), (req, res) => { res.json({ success: true, apps: apps.findAll.all() }); });
 router.post('/admin/apps', requireAuth, (req, res) => {
   if (!guardAppWrite(req, res, null)) return;
@@ -6596,6 +6612,7 @@ router.post('/admin/apps', requireAuth, (req, res) => {
   if (req.body.category !== undefined) db.prepare('UPDATE apps SET category=? WHERE id=?').run(String(req.body.category || '').trim(), id);
   if (req.body.deprovision_url !== undefined) db.prepare('UPDATE apps SET deprovision_url=? WHERE id=?').run(safeLaunchUrl(req.body.deprovision_url), id);
   if (req.body.backchannel_logout_uri !== undefined) db.prepare('UPDATE apps SET backchannel_logout_uri=? WHERE id=?').run(safeLaunchUrl(req.body.backchannel_logout_uri), id);
+  if (req.body.id_token_alg !== undefined) db.prepare('UPDATE apps SET id_token_alg=? WHERE id=?').run(safeTokenAlg(req.body.id_token_alg), id);
   res.json({ success: true, app: apps.findById.get(id) });
 });
 // 重新生成 client_secret（密钥泄露时轮换；旧密钥立即失效）
@@ -6617,6 +6634,7 @@ router.patch('/admin/apps/:id', requireAuth, (req, res) => {
   if (req.body.deprovision_url !== undefined) db.prepare('UPDATE apps SET deprovision_url=? WHERE id=?').run(safeLaunchUrl(req.body.deprovision_url), app.id);
   if (req.body.handover_required !== undefined) db.prepare('UPDATE apps SET handover_required=? WHERE id=?').run(req.body.handover_required ? 1 : 0, app.id);
   if (req.body.backchannel_logout_uri !== undefined) db.prepare('UPDATE apps SET backchannel_logout_uri=? WHERE id=?').run(safeLaunchUrl(req.body.backchannel_logout_uri), app.id);
+  if (req.body.id_token_alg !== undefined) db.prepare('UPDATE apps SET id_token_alg=? WHERE id=?').run(safeTokenAlg(req.body.id_token_alg), app.id);
   res.json({ success: true, app: apps.findById.get(app.id) });
 });
 // 手动把「撤销某用户账号」推给某应用（SSO 主动控制）
