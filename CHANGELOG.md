@@ -4,6 +4,15 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.119 — 钉钉 / 企业微信 图标换成 Iconify 官方品牌字形（用户反馈）
+
+- 承接 v3.5.118。用户指向 Iconify（iconify.design，聚合 150+ 图标集、20 万+ 图标）。查实：钉钉 / 企业微信**没有多色官方标**（商标 logo 各库都不收），但有**官方品牌字形**（单色），而这俩的真实 logo 本就基本是「蓝底白字形」近单色——于是用官方字形 + 品牌蓝渲染，接近真实标。
+  - 钉钉 = `ant-design:dingtalk`（官方钉钉翼/d 标），品牌蓝 #1684FC。
+  - 企业微信 = `tdesign:logo-wecom-filled`（官方企业微信聊天气泡标），品牌蓝 #2E77F0。
+  - 经 Iconify API（`?color=` 直接烧色）取 SVG、归一化 20×20 嵌入。
+- 至此 **14 个登录平台图标全部用官方资源**：Simple Icons（微信/QQ/微博/GitHub/Apple/快手/小红书/B站）+ Dashboard Icons（飞书/抖音全彩）+ Iconify（钉钉/企业微信官方字形）+ Google 四色 G、Microsoft 四色方块（官方多色）。无自绘近似版。
+- ⚠️ 测试：node 校验 14 键全是合法 SVG；dev 浏览器渲染实测钉钉翼标 / 企微气泡标均为官方字形、品牌蓝正确。纯前端资源。
+
 ## v3.5.118 — 飞书 / 抖音 图标换成 Dashboard Icons 官方全彩（用户反馈）
 
 - 承接 v3.5.117。用户指向 dashboardicons.com（homarr-labs/dashboard-icons，服务 / 应用 logo 合集）。查实：该库有 **飞书(lark) 与 抖音(tiktok 同款音符标)的官方全彩矢量**，于是把 `brand-icons.js` 里这两个从手绘近似版换成官方资源（经 jsDelivr 取 raw SVG、原样嵌入）。

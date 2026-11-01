@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.118**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.119**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.119 钉钉 / 企业微信 图标换 Iconify 官方品牌字形（用户反馈）
+
+三级版本（纯前端资源）。承接 v3.5.118。用户指向 Iconify（iconify.design / github.com/iconify/icon-sets，聚合 150+ 图标集）。
+- `brand-icons.js`：钉钉、企业微信从手绘换成 Iconify 官方品牌字形（单色 glyph + 品牌蓝；这俩真实 logo 本就近单色蓝，渲染接近官方标）。
+  - 钉钉 = `ant-design:dingtalk`（#1684FC）、企业微信 = `tdesign:logo-wecom-filled`（#2E77F0）。
+  - Node `fetch` Iconify API `https://api.iconify.design/<prefix>/<name>.svg?color=<hex>`（`?color=` 直接把 currentColor 烧成品牌色）→ 去掉自带 width/height、注入 20×20 → 替换 brand-icons.js 的 wecom/dingtalk 条目。
+- ⚠️ **查实：钉钉/企业微信没有多色官方矢量**（Simple Icons/LobeHub/svgl/Dashboard Icons 都没有；Iconify 里只有单色品牌字形：钉钉 ant-design/mingcute/tabler、企业微信 tdesign:logo-wecom(-filled)/arcticons）。渲染对比后选了最像真实标的两个（ant-design 钉钉翼标、tdesign 企微气泡标）。
+- 至此 **14 个登录平台图标全部官方资源**：Simple Icons（微信/QQ/微博/GitHub/Apple/快手/小红书/bilibili）+ Dashboard Icons（飞书=lark、抖音=tiktok，全彩）+ Iconify（钉钉/企业微信官方字形）+ Google 四色 G / Microsoft 四色方块（官方多色绘制）。
+- ⚠️ **Iconify API 速记**：搜索 `api.iconify.design/search?query=X`；某集合清单 `.../collection?prefix=tdesign`（logo-* 是品牌标，多为单色）；取图标 `.../<prefix>/<name>.svg?color=%23hex&height=N`。颜色多写在 `style="fill:…"` 或靠 currentColor，判断彩色别只看 `fill=` 属性、最稳是渲染看。
+- ⚠️ 测试：node 校验 14 键均合法 SVG；dev 浏览器渲染实测钉钉/企微为官方字形、品牌蓝正确。见 [[ui-design-preference]]。
 
 ## v3.5.118 飞书 / 抖音 图标换 Dashboard Icons 官方全彩（用户反馈）
 
