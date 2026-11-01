@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.118 — 飞书 / 抖音 图标换成 Dashboard Icons 官方全彩（用户反馈）
+
+- 承接 v3.5.117。用户指向 dashboardicons.com（homarr-labs/dashboard-icons，服务 / 应用 logo 合集）。查实：该库有 **飞书(lark) 与 抖音(tiktok 同款音符标)的官方全彩矢量**，于是把 `brand-icons.js` 里这两个从手绘近似版换成官方资源（经 jsDelivr 取 raw SVG、原样嵌入）。
+  - 飞书 = `lark.svg`（蓝 #3370ff + 青 #00d6b9 的真实「飞书」标）。
+  - 抖音 = `tiktok.svg`（黑音符 + 青 #26f4ee + 红 #fb2c53 偏移，抖音 / TikTok 同一音符标的全彩版）。
+- ⚠️ **钉钉 / 企业微信仍保留手绘版**：四个图标库都没有它们的官方矢量——Simple Icons 404、LobeHub（991 个，仅 `bytedance` 公司标）、svgl（仅 TikTok 单色）、Dashboard Icons（无 dingtalk / wecom）。要官方标只能等用户贴各家开放平台的 SVG。
+- ⚠️ 测试：node 校验 14 键全是合法 SVG + 飞书/抖音含品牌色；dev 浏览器渲染实测两个都是真实全彩官方标。纯前端资源。
+
 ## v3.5.117 — 登录平台品牌图标改用 Simple Icons 官方矢量（用户反馈）
 
 - 用户：各家登录凭证 / 外部服务的 icon 参考 simpleicons.org 与 lobehub.com/icons。把 `public/brand-icons.js`（login + dashboard 共用）里能对上的品牌标**换成 Simple Icons 的官方 CC0 矢量**（各自品牌色）：微信 / QQ / 微博 / GitHub / Apple / 快手 / 小红书 / 哔哩哔哩（8 个，之前是手绘近似版，小红书原来只是「书」字）。

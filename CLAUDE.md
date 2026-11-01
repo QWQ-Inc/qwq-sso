@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.117**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.118**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.118 飞书 / 抖音 图标换 Dashboard Icons 官方全彩（用户反馈）
+
+三级版本（纯前端资源）。承接 v3.5.117。用户指向 dashboardicons.com（`homarr-labs/dashboard-icons`，服务 / 应用 logo 合集，用于仪表盘展示服务图标）。
+- `brand-icons.js`：飞书、抖音从手绘换成**官方全彩矢量**——Node `fetch` 从 jsDelivr 取 `.../gh/homarr-labs/dashboard-icons/svg/lark.svg`、`.../tiktok.svg`，注入 `width/height=20`、原样嵌为 backtick 模板。飞书=lark（蓝 #3370ff + 青 #00d6b9）、抖音=tiktok 音符标（黑 + 青 #26f4ee + 红 #fb2c53）。
+- ⚠️ **坑**：这些库的 SVG 颜色写在 `style="fill:#…"` 里，不是 `fill="#…"` 属性——用正则按 `fill="` 判断「是否彩色」会误判成单色（我差点据此跳过 lark）。**判断图标是否彩色别只看 `fill=` 属性，要看 `style=`/`<style>`/gradient，最稳是渲染出来看。**
+- ⚠️ **四个图标库对照（这轮查实，省得以后再找）**：钉钉 / 企业微信官方矢量**哪个库都没有**——Simple Icons（SI slug 全 404）、LobeHub `@lobehub/icons-static-svg`（991 个，中国平台只有 `bytedance` 公司标）、svgl（676 个，仅 `TikTok` 单色）、Dashboard Icons（有 `lark`/`tiktok`/`wechat`/`bilibili`，无 dingtalk/wecom/douyin/feishu——飞书用国际名 `lark`、抖音用 `tiktok`）。钉钉 / 企业微信保留品牌色手绘版，要官方标只能等用户贴开放平台 SVG。
+- ⚠️ 品牌 logo 仅用于标识对应登录服务（登录按钮等标称性用途），正是这些服务图标库的用途。
+- ⚠️ 测试：node 校验 14 键均合法 SVG + 飞书/抖音含品牌色；dev 浏览器渲染实测两者为真实全彩官方标。见 [[ui-design-preference]]。
 
 ## v3.5.117 登录平台品牌图标改用 Simple Icons 官方矢量（用户反馈）
 
