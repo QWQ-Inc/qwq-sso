@@ -464,6 +464,24 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 .tabs .tab,.env-gtab{border-radius:var(--r-sm);}
 /* 键盘可达性：全局聚焦环（鼠标点击不出现，仅键盘聚焦） */
 a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--ring);border-radius:var(--r-sm);}
+
+/* ══════════ v3.5.111 组件细化：下拉箭头 + 弹窗入场动画 + toast ══════════ */
+/* 原生 select 去掉 OS 三角，换统一的柔灰 chevron（与前面规则同特异性、后置，赢 background-image/padding 长手） */
+/* 自定义 chevron 用 !important 覆盖各处内联 background（否则 appearance:none 去掉原生箭头后会无箭头） */
+select{
+  -webkit-appearance:none;appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8l4-3.5' fill='none' stroke='%238A8C7E' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat:no-repeat !important;background-position:right 11px center !important;padding-right:30px !important;}
+select:focus{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8l4-3.5' fill='none' stroke='%235A8A00' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;}
+/* 弹窗入场：遮罩淡入 + 弹窗轻微上浮缩放（不再生硬弹出） */
+@keyframes maskFade{from{opacity:0}to{opacity:1}}
+@keyframes modalPop{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+.modal-mask.show{animation:maskFade .16s ease;}
+.modal{animation:modalPop .22s cubic-bezier(.2,.8,.2,1);}
+.ui-dlg{animation:modalPop .2s cubic-bezier(.2,.8,.2,1);}
+/* toast：圆角 + 阴影，更现代 */
+.toast{border-radius:var(--r-md);box-shadow:var(--sh-3);padding:11px 18px;}
 </style>
 <script>
 // ════════════════════════════════════════
@@ -3621,7 +3639,7 @@ async function loadAdminOrgSelect() {
   const cur = _curAdminOrg();
   box.innerHTML = `
     <label style="font-size:12px;color:var(--txd);white-space:nowrap;">当前组织</label>
-    <select id="admin-org-select" onchange="onAdminOrgChange()" style="padding:6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:13px;background:var(--sf);color:var(--tx);max-width:220px;">
+    <select id="admin-org-select" onchange="onAdminOrgChange()" style="padding:6px 30px 6px 10px;border:1px solid var(--bd);border-radius:6px;font-size:13px;color:var(--tx);max-width:220px;">
       ${isOrgAdmin ? '' : '<option value="">全部</option>'}
       ${orgs.map(o => `<option value="${esc(o.id)}" ${o.id === cur ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}
     </select>`;

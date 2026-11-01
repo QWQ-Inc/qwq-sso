@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.110**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.111**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.111 UI 细化·组件级（下拉箭头 + 弹窗入场动画 + toast）（用户反馈）
+
+三级版本。承接页面级细化，做组件级——正对用户最初点名的"下拉/弹窗/动画"糙点。纯 CSS。
+- **自定义下拉箭头**：原生 `<select>` 各浏览器三角样式不一，`appearance:none` 去掉后换统一柔灰 chevron（data-uri SVG，聚焦变绿 `#5A8A00`）。⚠️ **坑**：dashboard 有 29 个 select 带**内联 `background` 简写**（`style="…background:var(--sf)…"`），内联会把 `background-image` 重置成 none → 去了原生箭头又没自定义箭头 = **无箭头裸露(回归)**。解法:chevron 的 `background-image/repeat/position` + `padding-right` 全用 **`!important`** 覆盖内联(强制自定义控件箭头的标准做法)，一条 `select{…}` 规则覆盖全站，不用逐个改 29 个内联。顺带把 `#admin-org-select` 内联的 `background:var(--sf)` 去掉(它是 id 级内联、最顽固)。**以后给 select 加样式记得：内联 background 简写 + 全局 appearance:none = 无箭头，要么别在内联写 background、要么 chevron 用 !important。**
+- **弹窗入场动画**：`@keyframes modalPop`(上浮 14px + scale .985→1) 给 `.modal`/`.ui-dlg`；`maskFade` 给 `.modal-mask.show`。不再生硬弹出。
+- **toast**：圆角 `--r-md` + 阴影 `--sh-3`。
+- 范围:dashboard(主) + login/setup 的 select 同步加 chevron(同一条 !important 规则)。
+- ⚠️ 测试：dev 浏览器 JS 核验 dashboard **15/15 select 都有自定义箭头、0 裸露**(含顶部「当前组织」内联 select 与各 filter)；弹窗开启平滑、磨砂遮罩正常；三页内联 JS 解析通过。零新增报错。
 
 ## v3.5.110 UI 细化·收尾（登录成功页 + 全站页面一致核对）（用户反馈）
 

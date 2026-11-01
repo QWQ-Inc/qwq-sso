@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.111 — UI 细化·组件级（下拉箭头 + 弹窗入场动画 + toast）
+
+- 原生 `<select>` 去掉各 OS 的默认三角，换统一的柔灰 chevron（聚焦变绿）；用 `!important` 覆盖各处内联 background，一处规则覆盖全站下拉，修掉"appearance:none 后无箭头"的回归。dashboard 15/15 下拉、login/setup 同步。
+- 弹窗不再生硬弹出：遮罩淡入 + 弹窗轻微上浮缩放入场（modal / ui-dlg）。
+- toast 提示圆角 + 阴影，更现代。
+- 纯 CSS，dev 实测下拉/弹窗正常、全部 select 自定义箭头，零新增报错。
+
 ## v3.5.110 — UI 细化收尾（登录成功页 + 确认全站页面一致）
 
 - 登录成功中转页 login-success：浅色荧光绿→柔和、卡片 14px 圆角+软阴影、成功图标柔绿、主按钮绿色软阴影（修掉又一个跑偏的紫色辉光）。
