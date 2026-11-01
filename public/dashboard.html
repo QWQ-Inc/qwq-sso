@@ -1105,6 +1105,15 @@ const ICON_PATHS = {
   lock:   '<rect x="4" y="9" width="12" height="8" rx="1.5"/><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9"/>',
   move:   '<path d="M3 5.6a1 1 0 011-1h3.4l1.4 2H16a1 1 0 011 1V15a1 1 0 01-1 1H4a1 1 0 01-1-1V5.6z"/><path d="M10 9.5v4M8 11.5l2-2 2 2"/>',
   info:   '<circle cx="10" cy="10" r="7"/><path d="M10 9.2v4.3M10 6.6h.01"/>',
+  user:   '<circle cx="10" cy="6.8" r="3"/><path d="M4 16.5c0-3 2.7-4.8 6-4.8s6 1.8 6 4.8"/>',
+  door:   '<path d="M5 3h8a1 1 0 011 1v13H5z"/><path d="M3.5 17h13"/><path d="M11 10h.01"/>',
+  tag:    '<path d="M3 3.5h6.2l7.3 7.3-5.7 5.7L3.5 9.2V3.5z"/><path d="M6.4 6.4h.01"/>',
+  printer:'<path d="M5.5 7.5V3.5h9v4"/><rect x="3" y="7.5" width="14" height="6.5" rx="1"/><path d="M5.5 12h9v4.5h-9z"/><path d="M14.5 10h.01"/>',
+  phone:  '<rect x="6" y="2.5" width="8" height="15" rx="1.5"/><path d="M8.8 15h2.4"/>',
+  dice:   '<rect x="3.5" y="3.5" width="13" height="13" rx="2.5"/><path d="M7 7h.01M13 7h.01M10 10h.01M7 13h.01M13 13h.01"/>',
+  laptop: '<rect x="3.5" y="4" width="13" height="8.5" rx="1"/><path d="M2 15.5h16"/>',
+  file:   '<path d="M5.5 2.5h5l4 4V17a.5.5 0 01-.5.5H5.5A.5.5 0 015 17V3a.5.5 0 01.5-.5z"/><path d="M10.5 2.5V6.5h4"/>',
+  chart:  '<path d="M3 3v14h14"/><path d="M6.5 13.5V9M10 13.5V6M13.5 13.5v-3"/>',
 };
 // 静态 HTML 里用 <span data-ic="name"></span> 占位，启动时一次性填入 SVG（无法在静态 HTML 里调 ic()）
 function hydrateIcons(root) {
@@ -2771,7 +2780,7 @@ async function loadMe() {
         </div>
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <h3>🖨️ 打印机 / 打印代理</h3>
+            <h3><span data-ic="printer" style="margin-right:6px;"></span>打印机 / 打印代理</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn" style="font-size:11px;" onclick="openPrintAgentModal()">+ 登记打印代理</button>
               <button class="btn primary" style="font-size:11px;" onclick="openPrinterModal()">+ 登记打印机</button>
@@ -2785,7 +2794,7 @@ async function loadMe() {
         </div>
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <h3>🖨️ 打印规则 / 审批 / 配额</h3>
+            <h3><span data-ic="printer" style="margin-right:6px;"></span>打印规则 / 审批 / 配额</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openPrintRuleModal()">+ 新建类别</button>
           </div>
           <div class="card-body"><div id="print-rules-admin"><div style="color:var(--txd);">加载中…</div></div></div>
@@ -2794,12 +2803,12 @@ async function loadMe() {
           </div>
         </div>
         <div class="card" id="print-approvals-card" style="display:none;">
-          <div class="card-header"><h3>⏳ 待审打印</h3></div>
+          <div class="card-header"><h3><span data-ic="clock" style="margin-right:6px;"></span>待审打印</h3></div>
           <div class="card-body"><div id="print-approvals-admin"></div></div>
         </div>
         <div class="card" id="print-audit-card" style="display:none;">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <h3>📊 打印审计</h3>
+            <h3><span data-ic="chart" style="margin-right:6px;"></span>打印审计</h3>
             <button class="btn" style="font-size:11px;" onclick="loadPrintAudit()">刷新</button>
           </div>
           <div class="card-body"><div id="print-audit-admin"></div></div>
@@ -8379,9 +8388,9 @@ function renderDevices(ctx) {
   if (q) rows = rows.filter(d => (d.name||'').toLowerCase().includes(q) || (d.serial||'').toLowerCase().includes(q));
   if (!rows.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">没有设备。点「+ 登记设备」添加。</div>'; return; }
   box.innerHTML = rows.map(d => {
-    const owner = d.owner_name ? `👤 ${esc(d.owner_name)}` : '';
-    const org = d.subject_name ? `🏢 ${esc(d.subject_name)}` : '';
-    const door = d.door_name ? `🚪 ${esc(d.door_name)}` : '';
+    const owner = d.owner_name ? `${ic('user')} ${esc(d.owner_name)}` : '';
+    const org = d.subject_name ? `${ic('org')} ${esc(d.subject_name)}` : '';
+    const door = d.door_name ? `${ic('door')} ${esc(d.door_name)}` : '';
     const seen = d.last_seen ? `· 心跳 ${esc(d.last_seen)}` : '';
     const stColor = d.status === 'active' ? '#1a7f37' : (d.status === 'lost' ? 'var(--err)' : 'var(--txd)');
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
@@ -8390,7 +8399,7 @@ function renderDevices(ctx) {
         <span style="font-size:10px;background:var(--bg);padding:1px 6px;border-radius:3px;margin-left:4px;">${esc(DEVICE_KIND_LABEL[d.kind] || d.kind)}</span>
         <span style="color:${stColor};font-size:11px;margin-left:4px;">${esc(DEVICE_STATUS_LABEL[d.status] || d.status)}</span>
         <br><span style="color:var(--txd);font-size:11px;">${d.serial?('SN:'+esc(d.serial)+' '):''}${owner} ${org} ${door} ${seen}</span>
-        ${d.tags?`<br><span style="color:var(--txd);font-size:10px;">🏷 ${esc(d.tags)}</span>`:''}
+        ${d.tags?`<br><span style="color:var(--txd);font-size:10px;">${ic('tag')} ${esc(d.tags)}</span>`:''}
       </span>
       ${['apple','google','microsoft'].includes(d.kind) ? `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openMdmPanel(${JSON.stringify(d).replace(/'/g,"&#39;")},${JSON.stringify(ctx)})'>MDM${d.enroll_status==='enrolled'?' ✅':(d.enroll_status==='pending'?' …':'')}${d.lock_state==='locked'?' 🔒':''}</button>` : ''}
       <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openDeviceModal(${JSON.stringify(d).replace(/'/g,"&#39;")},${JSON.stringify(ctx)})'>编辑</button>
@@ -8489,7 +8498,7 @@ async function loadPrinters() {
     const agentName = (_printerCache.agents.find(a => a.id === p.agent_id) || {}).name || p.agent_id || '';
     const via = p.transport === 'ipp' ? ('IPP ' + esc(p.ipp_url || '')) : ('代理「' + esc(agentName) + '」队列 ' + esc(p.queue_name || ''));
     return `<div style="border:1px solid var(--bd);border-radius:3px;padding:9px;margin-bottom:7px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-      <div><b>🖨️ ${esc(p.name)}</b> <span style="font-size:11px;color:var(--txd);">· ${esc(p.subject_name || '')} · ${p.status === 'active' ? '可用' : esc(p.status)}</span>
+      <div><b>${ic('printer')} ${esc(p.name)}</b> <span style="font-size:11px;color:var(--txd);">· ${esc(p.subject_name || '')} · ${p.status === 'active' ? '可用' : esc(p.status)}</span>
         <div style="font-size:11px;color:var(--txd);">${via} · ${p.color ? '彩色' : '黑白'}${p.duplex ? ' · 双面' : ''} · ${esc(p.default_media || 'A4')}</div></div>
       <div style="display:flex;gap:6px;">
         <button class="btn" style="font-size:11px;" onclick="openPrinterModal('${esc(p.id)}')">编辑</button>
@@ -8580,7 +8589,7 @@ async function loadPrintRules() {
        <span style="font-size:11px;color:var(--txd);">0 = 不限（按估算页数×份数计）</span>
      </div>
      <div style="margin-top:10px;font-size:12px;">
-       <div style="font-weight:600;margin-bottom:4px;">⏰ 允许打印的时段</div>
+       <div style="font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:5px;">${ic('clock')}允许打印的时段</div>
        <div id="print-win">${(data.windows || []).map(pwRowHtml).join('')}</div>
        <button class="btn" style="font-size:11px;" onclick="document.getElementById('print-win').insertAdjacentHTML('beforeend', pwRowHtml())">＋ 添加时段</button>
        <div style="font-size:11px;color:var(--txd);margin-top:4px;">不加任何时段 = 全天可打印；加了则只在命中的时段内放行（星期不勾=每天；可跨夜如 22:00–06:00）。</div>
@@ -8765,11 +8774,11 @@ async function refreshMdmPanel() {
           :'厂商通道：已配凭据则下发时直接经厂商 API 执行；未配则入队待配置。iPhone 需 Apple MDM 推送证书，Chromebook/Android 需 Google 服务账号。'}
       </div>
       ${(tKey==='android_mgmt'||tKey==='google_chrome')?`<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="btn" style="${btn}" onclick="mdmPullVendorDevices('${tKey}')">📥 从 Google 拉取设备</button>
-        ${tKey==='android_mgmt'?`<button class="btn" style="${btn}" onclick="mdmAndroidToken()">📲 生成纳管二维码</button>`:''}
+        <button class="btn" style="${btn}" onclick="mdmPullVendorDevices('${tKey}')">${ic('import')}从 Google 拉取设备</button>
+        ${tKey==='android_mgmt'?`<button class="btn" style="${btn}" onclick="mdmAndroidToken()">${ic('phone')}生成纳管二维码</button>`:''}
       </div>`:''}
       ${dev.kind==='apple'?`<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-        <button class="btn" style="${btn}" onclick="mdmAppleProfile()">🍎 下载纳管描述文件 (.mobileconfig)</button>
+        <button class="btn" style="${btn}" onclick="mdmAppleProfile()">${ic('import')}下载纳管描述文件 (.mobileconfig)</button>
         <span style="font-size:10px;color:var(--txd);">${((_devCache.transports||[]).find(t=>t.key==='apple_mdm')||{}).configured?'已配 APNs 推送':'未配 APNs：描述文件仍可装，但唤醒推送不可用'}</span>
       </div>`:''}
       <div id="mdm-enroll-out"></div>
@@ -8884,7 +8893,7 @@ async function mdmAndroidToken() {
     <b>Android 纳管 token</b>（${data.expiration?('有效至 '+esc(data.expiration)):'限时有效'}）：<br>
     <code>${esc(data.value||'')}</code>
     ${qrHtml}
-    <div style="font-size:10px;color:var(--txd);margin-top:6px;">纳管后点上面「📥 从 Google 拉取设备」把该设备绑定到这里。</div>
+    <div style="font-size:10px;color:var(--txd);margin-top:6px;">纳管后点上面「从 Google 拉取设备」把该设备绑定到这里。</div>
   </div>`;
 }
 // v3.5.88：下载 Apple 纳管描述文件（.mobileconfig）。返回的是文件不是 JSON，用裸 fetch+Bearer→blob 下载
@@ -9495,7 +9504,7 @@ function openCardModal() {
       <label style="font-size:12px;color:var(--txd);">卡号 *（门禁机读到的卡片编号）</label>
       <div style="display:flex;gap:6px;margin:4px 0 10px;">
         <input id="card-no" style="flex:1;padding:9px;border:1px solid var(--bd);border-radius:3px;background:var(--sf);color:var(--tx);font-family:monospace;">
-        <button class="btn" type="button" style="flex:0 0 auto;" onclick="genCardNo()">🎲 随机</button>
+        <button class="btn" type="button" style="flex:0 0 auto;" onclick="genCardNo()">${ic('dice')}随机</button>
       </div>
       <label style="font-size:12px;color:var(--txd);">绑定用户 *（邮箱 / 手机 / UID / 用户名）</label>
       <input id="card-acct" style="width:100%;padding:9px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:3px;background:var(--sf);color:var(--tx);">
@@ -9545,7 +9554,7 @@ function renderDoorList(doors) {
   box.innerHTML = doors.map(d => `<div style="padding:12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div>
-          <span style="font-weight:600;color:var(--tx);">${d.kind === 'virtual' ? '🖥️' : '🚪'} ${esc(d.name)}</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--tx);">${d.kind === 'virtual' ? ic('laptop') : ic('door')}${esc(d.name)}</span>
           ${d.kind === 'virtual' ? '<span style="font-size:10px;color:#0a84ff;background:rgba(10,132,255,.14);padding:1px 6px;border-radius:3px;margin-left:6px;">电子门</span>' : ''}
           ${d.status === 'enabled' ? '<span style="font-size:11px;color:#1a7f37;margin-left:6px;">启用</span>' : '<span style="font-size:11px;color:var(--err);margin-left:6px;">停用</span>'}
           ${d.location ? `<span style="font-size:12px;color:var(--txd);margin-left:8px;">${esc(d.location)}</span>` : ''}

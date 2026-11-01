@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.115**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.116**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.116 emoji→小图标续：设备 / 门禁 / 打印页（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.114（只做了组织管理视图），把**设备管理 / 门禁 / 打印**页的 UI-chrome emoji 换成行内 `ic()` 小图标。
+- `ICON_PATHS` 扩 9 个：`user`（单人，区别于 `users` 群组）/ `door` / `tag` / `printer` / `phone` / `dice` / `laptop`（屏幕 = 电子门）/ `file` / `chart`。共 28 个图标。
+- 转换：`renderDevices` 设备卡元信息（👤🏢🚪🏷）、`loadPrinters` 标题 🖨️、MDM 面板按钮（📥📲🍎，`mdmPullVendorDevices`/`mdmAndroidToken`/`mdmAppleProfile`）、门列表 `🖥️/🚪` 按 `d.kind==='virtual'`、`genCardNo` 的 🎲、打印时段 ⏰；静态卡头（`🖨️ 打印机/打印代理`、`🖨️ 打印规则/审批/配额`、`⏳ 待审打印`、`📊 打印审计`）用 `<span data-ic>` 占位 + `hydrateIcons()`。
+- ⚠️ **刻意不转**：① `⚠️`/`💡` 散文提示标记（标准警示符，非装饰 emoji，全站 149+22 处，转了反而噪）；② **MDM 命令图标映射**（`COMMAND_TYPES` 的 lock/unlock/restart/clear_passcode/locate/push_profile/remove_profile/wipe/retire 各用不同 emoji）——换线性 SVG 会多条命令撞同一图标、丢语义，emoji 在此更合适。
+- ⚠️ 测试：dev 浏览器实测设备页 7 个 svg.ic / 0 未 hydrate / 仅剩 3 处 💡 / 零相关报错；UTF-8 + 内联 JS 解析通过。见 [[ui-design-preference]]。
+- 📌 其它页（商城 / 公告 / 备份 / 核验 / 门禁访客 / 跨域联邦 等）仍有 chrome emoji，图标库已够用，后续「继续」逐页收；转换时注意区分**chrome emoji**（按钮/卡头/元信息 → 换图标）与**散文提示 / 功能性命令图标**（保留）。
 
 ## v3.5.115 UI 回「方方正正」：收紧圆角 + 压扁阴影（用户反馈）
 
