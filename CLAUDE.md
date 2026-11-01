@@ -430,10 +430,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 ## Git / 部署注意事项
 
 - 远程仓库：`https://github.com/QWQ-Inc/qwq-sso.git`（v3.4.21.1 起，原 `uesrbai/qwq-sso` 已弃用）
-- **该仓库启用了 GitHub Secret Scanning + Tag Protection**，历史上有一次真实的腾讯云 Secret ID 被误提交进某次历史（具体在哪个 commit 未彻底定位清楚），导致后续所有推送/打 tag 反复被拦截
-- 用户最终采用的工作流：**每次发布新版本时 `rm -rf .git && git init` 重新开始**，不保留连续提交历史，只保留 tag 快照（v2.0.0、v3.0.0、v3.1.0、v3.2.0 等），`git push --force` 覆盖 main 分支
-- **不要尝试"保留完整连续 git 历史"的方案**——之前尝试过，因为主目录曾经有个误建的 `.git`（在 `C:\Users\xurui` 根目录，混入了大量个人文件和 Codex 运行时缓存），排查耗费大量精力，最终放弃，回到"每次重新初始化"的简单方案
-- 部署路径确认：本地解压 zip 到某个 `sso-deploy_XX/sso-system` 目录后，直接在**该子目录**里 `git init`，不要在上层目录操作
+- **现行工作流（v3.5.105 起）= 普通线性提交**：每次发版就是 main 上一条普通 commit + `git push origin main` + 打 tag `git push origin vX.Y.Z`，历史连续、不重开。见 `git log` 从 v3.5.105→106→107→108 一条直线。
+  ```bash
+  cd /c/Users/xurui/Documents/sso-system
+  git add -A
+  git commit -m "vX.Y.Z: 描述"     # 提交信息结尾按会话 system-reminder 附 Co-Authored-By
+  git push origin main
+  git tag vX.Y.Z && git push origin vX.Y.Z
+  ```
+- ⚠️ **不要再 `rm -rf .git && git init`、不要 `git push --force`、不要 rebase 已推送的提交**——那会断掉/改写线性历史。推 tag 后 `release.yml` 会据 CHANGELOG 自动建 Release。
+- 📜 历史背景（已过去，别被旧做法误导）：早期因误提交过一次腾讯云 Secret + 仓库开了 Secret Scanning/Tag Protection 老被拦，曾用"每次 `rm -rf .git` 重开 + force 覆盖 main"的权宜之计（只保留 tag 快照）。现已走出，回到正常线性提交。
+- 换行符：根目录有 `.gitattributes`（`* text=auto eol=lf`），仓库一律存 LF；Windows 下 `git add` 不再刷 "LF will be replaced by CRLF" 警告。**别跑 `git add --renormalize .`**（会把每个文件的换行全部重写成一次巨大 diff）。
+- 部署路径确认：本地若从 zip 解压工作，直接在 `sso-system` 子目录里操作，不要在上层目录 `git init`
 - Zeabur 会自动从 GitHub 拉取部署，`git push` 成功后无需额外操作
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
@@ -3544,16 +3552,12 @@ token 仍照常存进 `localStorage.sso_token`（会话需要），只是不再�
 
 - 项目所有者主要用中文交流，代码注释、commit message、用户可见文案统一用简体中文
 - 每次代码改动后期望：语法校验（`node --check`）→ 打包成 zip → 用 `present_files` 交付
-- 每次改动后期望立刻收到可复制粘贴的 git 提交命令，格式基本固定：
+- 每次改动后期望立刻收到可复制粘贴的 git 提交命令。**现行是线性提交**（不再 `rm -rf .git`，见上方「Git / 部署注意事项」）：
   ```bash
-  cd 项目目录
-  rm -rf .git
-  git init
-  git add .
-  git commit -m "描述"
-  git remote add origin https://github.com/QWQ-Inc/qwq-sso.git
-  git branch -M main
-  git push -u origin main --force
+  cd /c/Users/xurui/Documents/sso-system
+  git add -A
+  git commit -m "vX.Y.Z: 描述"
+  git push origin main
   git tag vX.Y.Z
   git push origin vX.Y.Z
   ```

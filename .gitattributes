@@ -1,0 +1,17 @@
+# 统一换行符：仓库里一律存 LF，消除 Windows 下 "LF will be replaced by CRLF" 警告。
+* text=auto eol=lf
+
+# 明确二进制（不做换行符转换）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
