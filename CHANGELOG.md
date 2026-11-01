@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.117 — 登录平台品牌图标改用 Simple Icons 官方矢量（用户反馈）
+
+- 用户：各家登录凭证 / 外部服务的 icon 参考 simpleicons.org 与 lobehub.com/icons。把 `public/brand-icons.js`（login + dashboard 共用）里能对上的品牌标**换成 Simple Icons 的官方 CC0 矢量**（各自品牌色）：微信 / QQ / 微博 / GitHub / Apple / 快手 / 小红书 / 哔哩哔哩（8 个，之前是手绘近似版，小红书原来只是「书」字）。
+- **保留**：① Google 四色 G、Microsoft 四色方块（本就是官方多色版，Simple Icons 的单色版反而更差）；② 企业微信 / 飞书 / 钉钉 / 抖音（Simple Icons 未收录，保留品牌色手绘版；需更精确可后续参考 LobeHub 替换）。新增 `weibo` 键。
+- 实现：`si(label,hex,d)` 小助手包成 `<svg viewBox="0 0 24 24" fill="#hex"><path d="…"/></svg>`，路径取自 Simple Icons CDN（仅用于标识对应登录服务的标称性用途）。
+- ⚠️ 测试：node 校验 14 个键全是合法 SVG；dev 浏览器把全部图标渲染在白底方角片上实测——官方标清晰、品牌色正确、与方正几何一致。纯前端资源，无逻辑改动。
+
 ## v3.5.116 — emoji→小图标续：设备 / 门禁 / 打印页（用户反馈「继续」）
 
 - 承接 v3.5.114（只做了组织管理视图），把**设备管理 / 门禁 / 打印**页的 UI-chrome emoji 换成行内描边小图标 `ic()`，风格同左侧导航、与 v3.5.115 的方正几何一致。

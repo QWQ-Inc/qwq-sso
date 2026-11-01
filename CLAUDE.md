@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.116**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.117**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.117 登录平台品牌图标改用 Simple Icons 官方矢量（用户反馈）
+
+三级版本（纯前端资源）。用户：各家登录凭证 / 外部服务 icon 参考 simpleicons.org 与 lobehub.com/icons。
+- `public/brand-icons.js`（login.html + dashboard.html 共用 `window.BRAND_ICONS`）：把能对上的品牌标换成 **Simple Icons（图标文件 CC0）官方单路径矢量 + 官方品牌色**——wechat #07C160 / qq #1EBAFC / weibo(sinaweibo) #E6162D / github #181717 / apple #000 / kuaishou #FF4906 / xiaohongshu #FF2442 / bilibili #00A1D6（共 8 个）。路径从 `https://cdn.simpleicons.org/<slug>` 取（浏览器 fetch，CORS `*`）。
+- 新 `si(label,hex,d)` 助手 → `<svg viewBox="0 0 24 24" width=20 height=20 fill="#hex"><path d="…"/></svg>`，fill 设在 svg 上让单路径继承。
+- **保留**：① Google 四色 G、Microsoft 四色方块（官方就是多色，SI 单色更差）；② 企业微信 / 飞书 / 钉钉 / 抖音——**Simple Icons CDN 对这几个 slug 返回 404（未收录）**，保留品牌色手绘版（后续要更准可参考 LobeHub）。新增 `weibo` 键（SI slug 是 `sinaweibo`）。
+- ⚠️ 品牌 logo 仅用于标识对应登录服务（登录按钮等标称性用途），这正是 Simple Icons CC0 图标的用途。
+- ⚠️ SI slug 对照：QQ=`qq`、微博=`sinaweibo`、小红书=`xiaohongshu`、抖音=`tiktok`(国际版同 logo，但本项目抖音保留手绘)；`wecom`/`feishu`/`lark`/`dingtalk`/`douyin` 均 404。渲染上下文：登录页白底片 / dashboard `.cred-ic`(18px，`svg{width:18px}` 覆盖) / 默认凭证列表 20px 槽。
+- ⚠️ 测试：node 校验 14 键全是合法 `<svg>…</svg>`；dev 浏览器把全部图标渲染到白底 3px 方角片实测官方标清晰、品牌色正确。见 [[ui-design-preference]]。
 
 ## v3.5.116 emoji→小图标续：设备 / 门禁 / 打印页（用户「继续」）
 
