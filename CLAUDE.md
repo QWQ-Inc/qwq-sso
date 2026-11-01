@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.109**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.110**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.110 UI 细化·收尾（登录成功页 + 全站页面一致核对）（用户反馈）
+
+三级版本。承接 v3.5.109，把最后一个带荧光绿的页面收掉，并核对剩余页面。
+- **login-success.html**（登录中转页，与 login 同款深/浅双主题）：浅色 `--surface2` 荧光绿 `#ECFFAF`→`#EEF1E8`；主按钮一个跑偏的**紫色辉光** `rgba(120,100,255,.3)`→绿色软阴影；追加块柔化 `.card`(14px)/`.user-info`(10px)/`.avatar`(8px)/`.btn`(10px) 圆角。
+- **核对未动的页面**：`authorize.html`（Apple 风、卡片 18px、有暗色）、`pass.html`（访客码，`--accent:#0071e3` 蓝、中性灰、有暗色）、`access-terminal.html`（门禁终端，深 slate `#0f172a`、蓝强调、圆角已 10px）——都已是干净的中性/深色设计，无荧光绿无硬圆角，**不动**。
+- 至此**全部用户页面视觉一致**：dashboard / login / setup / login-success 已细化，其余三页本就精致。dev 实测 login-success 渲染正常。纯 CSS。
+- ⚠️ 下一批（更深、治本）仍是候选：抽 `public/theme.css` 多页共享 token；组件级（表单栅格对齐、密度开关、动效）。
 
 ## v3.5.109 UI 细化·第一批（控制台 + 登录 + 安装）（用户反馈）
 
