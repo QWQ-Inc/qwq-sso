@@ -464,6 +464,20 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 .tabs .tab,.env-gtab{border-radius:var(--r-sm);}
 /* 键盘可达性：全局聚焦环（鼠标点击不出现，仅键盘聚焦） */
 a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--ring);border-radius:var(--r-sm);}
+/* ══════════ v3.5.114 行内小图标 ic()：统一替代散落的 emoji ══════════ */
+.ic{width:15px;height:15px;flex:none;vertical-align:-2.5px;display:inline-block;}
+.btn .ic{margin-right:5px;vertical-align:-2px;}
+.btn.icon-btn .ic{margin-right:0;}
+.ic-lg{width:17px;height:17px;vertical-align:-3px;}
+/* 登录凭证子区：从主体卡片里分出来的一个浅色分组，不再是浮在底部的裸行 */
+.cred-section{background:var(--sf2);border-top:1px solid var(--bd);}
+.cred-head{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:600;color:var(--txm);padding:9px 16px 3px;}
+.cred-head .ic{color:var(--txd);}
+.cred-row{display:flex;align-items:center;gap:9px;padding:7px 16px;}
+.cred-row + .cred-row{border-top:1px solid var(--bd);}
+.cred-ic{width:18px;height:18px;flex:none;display:inline-flex;align-items:center;justify-content:center;}
+.cred-ic .ic{width:16px;height:16px;color:var(--txd);vertical-align:0;}
+.cred-ic svg{width:18px;height:18px;}
 
 /* ══════════ v3.5.111 组件细化：下拉箭头 + 弹窗入场动画 + toast ══════════ */
 /* 原生 select 去掉 OS 三角，换统一的柔灰 chevron（与前面规则同特异性、后置，赢 background-image/padding 长手） */
@@ -1068,6 +1082,37 @@ function uidOf(u) { if (!u) return '—'; if (u.uid_code) return u.uid_code; ret
 // HTML 转义：拼接 innerHTML 时用于用户可控/管理员可控的文本
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// ── 行内小图标（v3.5.114）：统一替换散落的 emoji，描边风格与左侧导航一致（viewBox 20 / currentColor / 1.6）──
+const ICON_PATHS = {
+  org:    '<path d="M4 17V4.5a1 1 0 011-1h6a1 1 0 011 1V17"/><path d="M12 8.5h3.5a1 1 0 011 1V17"/><path d="M2.5 17h15"/><path d="M6.5 6.5h.01M9.5 6.5h.01M6.5 9.5h.01M9.5 9.5h.01M6.5 12.5h.01M9.5 12.5h.01"/>',
+  users:  '<circle cx="7.3" cy="7" r="2.6"/><path d="M2.8 16c0-2.7 2-4.3 4.5-4.3S11.8 13.3 11.8 16"/><path d="M12.6 4.9a2.4 2.4 0 010 4.4M13.6 11.9c2 .5 3.6 1.9 3.6 4.1"/>',
+  apps:   '<rect x="2.5" y="2.5" width="6" height="6" rx="1.2"/><rect x="11.5" y="2.5" width="6" height="6" rx="1.2"/><rect x="2.5" y="11.5" width="6" height="6" rx="1.2"/><rect x="11.5" y="11.5" width="6" height="6" rx="1.2"/>',
+  shield: '<path d="M10 2.5l6 2.2v4.6c0 3.6-2.5 6.4-6 8.2-3.5-1.8-6-4.6-6-8.2V4.7l6-2.2z"/><path d="M7.5 10l1.8 1.8L13 8"/>',
+  key:    '<circle cx="7" cy="13" r="3.1"/><path d="M9.2 10.8l6-6M12.8 4.8l1.8 1.8M15.2 2.4l1.8 1.8"/>',
+  folder: '<path d="M3 5.6a1 1 0 011-1h3.4l1.4 2H16a1 1 0 011 1V15a1 1 0 01-1 1H4a1 1 0 01-1-1V5.6z"/>',
+  plus:   '<path d="M10 4.2v11.6M4.2 10h11.6"/>',
+  edit:   '<path d="M13.3 3.4l3.3 3.3L7 16.3l-3.4.4.4-3.4 9.3-9.9z"/>',
+  trash:  '<path d="M3.5 6h13M8 6V4.2h4V6M5.2 6l.8 10.5a1 1 0 001 .9h6a1 1 0 001-.9L15 6M8.3 9v5M11.7 9v5"/>',
+  link:   '<path d="M8.2 11.2a3 3 0 004.3.2l2.5-2.5a3 3 0 10-4.2-4.3l-1 .9"/><path d="M11.8 8.8a3 3 0 00-4.3-.2L5 11.1a3 3 0 104.2 4.3l1-.9"/>',
+  power:  '<path d="M10 2.8v7"/><path d="M6 5.4a6 6 0 108 0"/>',
+  sync:   '<path d="M4.2 9A6 6 0 0115 6.2M15.8 11A6 6 0 015 13.8"/><path d="M15 3v3.2h-3.2M5 17v-3.2h3.2"/>',
+  warn:   '<path d="M10 3.2l7.3 12.6a.8.8 0 01-.7 1.2H3.4a.8.8 0 01-.7-1.2L10 3.2z"/><path d="M10 8v3.5M10 14.2h.01"/>',
+  clock:  '<circle cx="10" cy="10" r="7"/><path d="M10 6.2V10l2.6 1.8"/>',
+  import: '<path d="M10 3v8.3M6.4 8.4L10 12l3.6-3.6"/><path d="M3.5 12.5V16a1 1 0 001 1h11a1 1 0 001-1v-3.5"/>',
+  bolt:   '<path d="M11 2.5L4.5 11h4.3l-1 6.5L15 9h-4.3l.3-6.5z"/>',
+  lock:   '<rect x="4" y="9" width="12" height="8" rx="1.5"/><path d="M6.5 9V6.5a3.5 3.5 0 017 0V9"/>',
+  move:   '<path d="M3 5.6a1 1 0 011-1h3.4l1.4 2H16a1 1 0 011 1V15a1 1 0 01-1 1H4a1 1 0 01-1-1V5.6z"/><path d="M10 9.5v4M8 11.5l2-2 2 2"/>',
+  info:   '<circle cx="10" cy="10" r="7"/><path d="M10 9.2v4.3M10 6.6h.01"/>',
+};
+// 静态 HTML 里用 <span data-ic="name"></span> 占位，启动时一次性填入 SVG（无法在静态 HTML 里调 ic()）
+function hydrateIcons(root) {
+  (root || document).querySelectorAll('[data-ic]:empty').forEach(el => { el.innerHTML = ic(el.dataset.ic); });
+}
+document.addEventListener('DOMContentLoaded', () => hydrateIcons());
+function ic(name, cls) {
+  const p = ICON_PATHS[name]; if (!p) return '';
+  return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 }
 // 格式化时间
 // 当前用户生效的时区：账号设定里选的，或 auto 时跟随设备
@@ -3348,14 +3393,14 @@ async function loadMe() {
     <!-- 添加成员：两种方式并排，都展开突出 -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px;margin-bottom:12px;">
       <div style="border:1px solid var(--bd);border-radius:var(--r-md);padding:13px 15px;background:var(--sf4);">
-        <div style="font-weight:600;font-size:13px;margin-bottom:4px;">🔗 加入已有账号</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px;"><span data-ic="link" style="margin-right:5px;"></span>加入已有账号</div>
         <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">把平台上已有的人拉进本组织。</div>
         <input id="orgmem-account" placeholder="邮箱 / 手机 / UID / 用户名" style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;margin-bottom:8px;">
         <input id="orgmem-uid" placeholder="组织内 UID（留空按规则）" style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;margin-bottom:10px;">
         <button class="btn primary" style="width:100%;justify-content:center;" onclick="addOrgMember()">加入组织</button>
       </div>
       <div style="border:1px solid var(--bd);border-radius:var(--r-md);padding:13px 15px;background:var(--sf4);">
-        <div style="font-weight:600;font-size:13px;margin-bottom:4px;">➕ 新建账号并加入</div>
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px;"><span data-ic="plus" style="margin-right:5px;"></span>新建账号并加入</div>
         <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">给还没账号的人直接建号 + 入组。姓名必填，邮箱/手机至少一个；密码可空。</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
           <input id="orgmem-new-name" placeholder="姓名 *" style="box-sizing:border-box;padding:8px 10px;font-size:13px;">
@@ -3384,12 +3429,12 @@ async function loadMe() {
     <div id="orgmem-creds" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--ac);border-radius:6px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;">加载中…</div>
     <details id="orgmem-pending" style="margin-top:10px;font-size:12px;border:1px solid #E8C26A;border-radius:6px;padding:8px 10px;" ontoggle="if(this.open)loadPendingMembers()">
-      <summary style="cursor:pointer;color:#8a6d3b;">⏳ 待分配成员</summary>
+      <summary style="cursor:pointer;color:#8a6d3b;"><span data-ic="clock" style="margin-right:5px;"></span>待分配成员</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">这些成员在同步源的「待分配部门」里，还没分到实际部门。给每个成员选部门后「分配」（会同步回飞书/企微），或「挂起」暂不处理。</div>
       <div id="orgmem-pending-list" style="max-height:24vh;overflow:auto;"></div>
     </details>
     <details style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadOrgMembers()">
-      <summary style="cursor:pointer;color:var(--txm);">🏢 部门（树状）</summary>
+      <summary style="cursor:pointer;color:var(--txm);"><span data-ic="org" style="margin-right:5px;"></span>部门（树状）</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">组织下的树状部门。通讯录同步（企微/飞书）会自动建部门并把成员归进去；也可手动建顶级部门。成员可在上方成员行的「部门」下拉里改归属。</div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
         <span style="font-size:11px;color:var(--txd);">部门列表（缩进表示层级）</span>
@@ -3398,13 +3443,13 @@ async function loadMe() {
       <div id="orgmem-depts" style="max-height:24vh;overflow:auto;font-size:12px;">加载中…</div>
     </details>
     <details style="margin-top:10px;font-size:12px;">
-      <summary style="cursor:pointer;color:var(--txm);">📇 批量导入（外部通讯录）</summary>
+      <summary style="cursor:pointer;color:var(--txm);"><span data-ic="import" style="margin-right:5px;"></span>批量导入（外部通讯录）</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">每行一条：<code>邮箱或手机, 姓名, 组织内UID</code>（姓名/UID 可省，UID 留空按规则自动生成）。已存在的用户直接加入，不存在的按邮箱/手机建号。<br>第一列可填<b>多个手机/邮箱</b>，用分号 <code>;</code> 隔开（第一个做主，其余进成员多联系方式）：<code>13800138000;a@x.com;a@corp.com, 张三, EMP0001</code>。</div>
       <textarea id="orgmem-import" rows="4" placeholder="13800138000;zhang@x.com;zhang@corp.com, 张三, EMP0001&#10;li@x.com, 李四" style="width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--bd);border-radius:4px;font-size:12px;font-family:monospace;background:var(--sf);color:var(--tx);"></textarea>
       <div style="display:flex;justify-content:flex-end;margin-top:6px;"><button class="btn primary" style="font-size:12px;" onclick="doOrgImport()">导入</button></div>
     </details>
     <details id="orgmem-dirsync" style="margin-top:10px;font-size:12px;" ontoggle="if(this.open)loadDirSources()">
-      <summary style="cursor:pointer;color:var(--txm);">🔄 通讯录同步（企业微信等，可多个）</summary>
+      <summary style="cursor:pointer;color:var(--txm);"><span data-ic="sync" style="margin-right:5px;"></span>通讯录同步（企业微信等，可多个）</summary>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:8px;">
         <span style="font-size:11px;color:var(--txd);">每个同步源对应一个外部通讯录（如一家企业微信），可分别启停、同步。</span>
         <button class="btn primary" style="font-size:11px;flex:none;" onclick="openDirSourceModal(_orgMemSid)">+ 添加同步源</button>
@@ -3412,7 +3457,7 @@ async function loadMe() {
       <div id="orgmem-dirsrc" style="font-size:12px;">加载中…</div>
     </details>
     <details style="margin-top:10px;font-size:12px;">
-      <summary style="cursor:pointer;color:var(--txm);">🔗 从开放组织复用成员（v3.5.18）</summary>
+      <summary style="cursor:pointer;color:var(--txm);"><span data-ic="users" style="margin-right:5px;"></span>从开放组织复用成员（v3.5.18）</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">其他已开启「成员开放」的组织里的成员，可直接复用（同一自然人账号），避免重复建号。联系方式脱敏显示。</div>
       <div style="display:flex;gap:8px;margin-bottom:8px;">
         <input id="orgmem-share-q" placeholder="搜索姓名 / 邮箱 / 手机 / UID" style="flex:1;padding:6px 9px;border:1px solid var(--bd);border-radius:4px;font-size:13px;background:var(--sf);color:var(--tx);">
@@ -7002,7 +7047,7 @@ async function renderDefaultSubjectCreds() {
   box.innerHTML = list.length ? list.map(p => {
     const g = ENV_GROUPS.find(x => x.key === p.platform);
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
-      <span style="font-size:15px;flex:none;">${g ? g.icon : '🔑'}</span>
+      <span style="width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;">${(window.BRAND_ICONS && BRAND_ICONS[p.platform]) || ic('key', 'ic-lg')}</span>
       <span style="flex:1;min-width:120px;color:var(--txt);font-size:13px;">${esc(p.label)} <span style="color:var(--txd);font-size:11px;">${esc(p.primary)}：${esc((p.fields.find(f => f.key === p.primary) || {}).value || '')}</span></span>
       ${_credBadge(p.enabled)}
       ${_INAPP_PLATFORMS.includes(p.platform) ? `<button class="btn" style="${_rowBtn}" title="填到${esc(p.label)}自建应用的主页地址：在${esc(p.label)}里打开即自动登录" onclick="copyInappLoginUrl(null)">应用内登录地址</button>` : ''}
@@ -7087,8 +7132,8 @@ function dirSourceRowsHtml(sid, sources, indent) {
   _dirSourcesBySid[sid] = sources || [];
   if (!(sources || []).length) return indent ? '' : '<div style="color:var(--txd);padding:8px 4px;font-size:12px;">还没有同步源，点「+ 添加同步源」。</div>';
   return sources.map(x => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${pad}">
-    <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
-    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} ${x.parent_id ? `<span title="套用文件夹通讯录：企业 ID / Secret / 回调在文件夹上" style="font-size:11px;color:${x.parent_missing || x.parent_enabled === false ? 'var(--err)' : 'var(--ac)'};">📁 ${x.parent_missing ? '套用的文件夹通讯录已删除' : '套用「' + esc(x.parent_label || '') + '」' + (x.parent_enabled === false ? '（已停用）' : '')}</span> ` : ''}<span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · 🔑 默认密码' : ''}${x.callback_ready ? ` · <span title="已配置${x.type === 'feishu' ? '事件订阅：飞书' : '接收事件服务器：企业微信'}通讯录变动会实时触发同步" style="color:#1F7A3A;">⚡ 实时</span>` : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
+    <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:999px;flex:none;">${ic('sync')}${esc(x.type_label)}</span>
+    <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} ${x.parent_id ? `<span title="套用文件夹通讯录：企业 ID / Secret / 回调在文件夹上" style="font-size:11px;color:${x.parent_missing || x.parent_enabled === false ? 'var(--err)' : 'var(--ac)'};">${ic('folder')} ${x.parent_missing ? '套用的文件夹通讯录已删除' : '套用「' + esc(x.parent_label || '') + '」' + (x.parent_enabled === false ? '（已停用）' : '')}</span> ` : ''}<span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · ' + ic('key') + '默认密码' : ''}${x.callback_ready ? ` · <span title="已配置${x.type === 'feishu' ? '事件订阅：飞书' : '接收事件服务器：企业微信'}通讯录变动会实时触发同步" style="color:#1F7A3A;">${ic('bolt')}实时</span>` : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
     <span style="font-size:11px;">${_dirStateText(x.state)}</span>
     ${_credBadge(x.enabled)}
     ${x.enabled ? `<button class="btn" style="${_rowBtn}" onclick="runDirSource('${x.id}','${esc(sid)}')">立即同步</button>` : ''}
@@ -7184,7 +7229,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
     </div>
 
     <div id="dsm-cb-box" style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
-      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 接收事件服务器（实时同步 · 可选）</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--txt);">${ic('bolt')}接收事件服务器（实时同步 · 可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">企业微信里成员 / 部门一有变动就推送过来，约 10 秒后自动同步一次（一阵批量变动只同步一次）；不配置则只靠定时 / 手动同步。<br>
         步骤：① 在下面生成 Token 和 EncodingAESKey，<b>先复制</b>再保存本页 ② 企业微信后台「管理工具 → 通讯录同步 → 设置接收事件服务器」填入 URL、Token、EncodingAESKey 并保存（企业微信会立即校验这个地址，需要公网可访问）。<br>
         企业微信若要求先验证<b>可信域名</b>（下载 WW_verify_xxx.txt 放到域名根目录），到管理端「域名验证文件」上传即可${adminRole === 'superadmin' ? '' : '（需超级管理员）'}。</div>
@@ -7201,7 +7246,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-idonly" ${c.idonly_create !== false ? 'checked' : ''}> 只拿到 UserId 的成员也建账号（Secret 受限时；姓名先用 UserId，拿到真名后自动替换）</label>
     <label id="dsm-suspend-row" style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-suspend" ${c.push_suspend ? 'checked' : ''}> 本系统停用 / 删除账号时，同步禁用对应的企业微信成员（恢复时再启用；需要填上面的「通讯录同步 Secret（管理用）」）</label>
     <label style="display:block;margin-top:6px;font-size:13px;color:var(--tx);"><input type="checkbox" id="dsm-enabled" ${!src || src.enabled ? 'checked' : ''}> 启用</label>
-    ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? '🔐 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : 'ℹ️ 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
+    ${src ? `<div style="font-size:11px;color:var(--txd);margin-top:8px;">${(src.bind_providers || []).length ? ic('lock') + ' 同步的成员会绑定其 UserId 到 ' + (src.bind_providers.length) + ' 个企业微信登录凭证，之后用企业微信登录进同一账号。' : ic('info') + ' 当前不绑定登录凭证（没找到同一企业的企业微信登录，或选了「不绑定」）——同步照常。'}</div>
       <div style="font-size:12px;margin-top:6px;">上次同步：${_dirStateText(src.state)}${src.state && !src.state.ok ? ' <span style="color:var(--err);font-size:11px;">' + esc(src.state.error || '') + '</span>' : ''}</div>
       ${src.state && src.state.warning ? '<div style="font-size:11px;color:var(--warn);margin-top:4px;line-height:1.6;">⚠️ ' + esc(src.state.warning) + (src.state.unmatched ? `（本次有 ${src.state.unmatched} 人只拿到 UserId、认不出是谁，没有建号）` : '') + (src.state.created_idonly ? `（本次有 ${src.state.created_idonly} 人只拿到 UserId，已建号、姓名暂用 UserId，换成自建应用 Secret 后再同步会自动换成真名；同一人的多个号可在成员列表合并）` : '') + '</div>' : ''}` : ''}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
@@ -7345,7 +7390,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
       ${c.has_default_pw ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="fsm-pwclear"> 清除默认组织密码（已给成员设的不受影响）</label>' : ''}
     </div>
     <div id="fsm-cb-box" style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
-      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 事件订阅（实时同步 · 可选）</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--txt);">${ic('bolt')}事件订阅（实时同步 · 可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">飞书通讯录一有变动就推送过来，约 10 秒后自动同步一次；不配置则只靠定时 / 手动同步。<br>
         步骤：① 飞书开发者后台「事件与回调 → 加密策略」复制 Verification Token（和 Encrypt Key，如果设了）填到下面并<b>先保存本页</b> ②「事件配置」请求地址填下面的 URL 并保存（飞书会立即校验，需要公网 HTTPS）③ 添加事件：员工信息变化、员工离职、员工入职、部门新建 / 修改 / 删除、通讯录权限范围变更（开对应权限后才能选）。</div>
       ${lab('请求地址 URL（填到飞书）')}
@@ -7445,7 +7490,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
 }
 // 接收事件服务器：最近一次校验 / 事件
 function _dirEventText(src) {
-  if (!src.callback_ready) return src.type === 'feishu' ? 'ℹ️ 未配置事件订阅。' : 'ℹ️ 未配置接收事件服务器。';
+  if (!src.callback_ready) return (src.type === 'feishu' ? ic('info') + ' 未配置事件订阅。' : ic('info') + ' 未配置接收事件服务器。');
   const ev = src.event_state || {};
   const t = v => esc(String(v || '').replace('T', ' ').slice(5, 16));
   const lv = ev.last_verify;
@@ -7574,55 +7619,54 @@ async function loadOauthSubjects() {
     ? '<span style="font-size:10px;color:#1a7f37;background:#e6f4ea;padding:1px 7px;border-radius:10px;">启用</span>'
     : '<span style="font-size:10px;color:var(--txd);background:var(--sf2);padding:1px 7px;border-radius:10px;">停用</span>';
   const cardHtml = s => {
-    const creds = (s.credentials || []).map(c => {
+    const credRow = (c, isFolder, on) => {
       const meta = _oauthPlatforms.find(p => p.key === c.platform);
       const pname = meta ? meta.label : c.platform;
-      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px 7px 30px;border-top:1px solid var(--bd);">
-        <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">${esc(pname)}</span>
-        <span style="flex:1;color:var(--txt);">${esc(c.label || pname)}</span>
-        ${badge(c.enabled)}
-        ${_INAPP_PLATFORMS.includes(c.platform) ? `<button class="btn" style="font-size:11px;padding:2px 8px;" title="填到${esc(pname)}自建应用的主页地址：在${esc(pname)}里打开即用这个凭证自动登录" onclick='copyInappLoginUrl(${JSON.stringify(c.id)})'>应用内登录地址</button>` : ''}
-        <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='toggleOauthProvider(${JSON.stringify(c.id)},${!c.enabled})'>${c.enabled ? '停用' : '启用'}</button>
-        <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='openOauthModal(${JSON.stringify(s.id)},${JSON.stringify(c).replace(/'/g,"&#39;")})'>编辑</button>
-        <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>删除</button>
-      </div>`;
-    }).join('') + (() => {
-      // v3.5.51：所在文件夹的登录凭证——组织自己设定用不用
-      const fcs = ((_orgFolders.find(f => f.id === s.folder_id) || {}).credentials || []);
-      const rows = fcs.map(c => {
-        const meta = _oauthPlatforms.find(p => p.key === c.platform);
-        const pname = meta ? meta.label : c.platform;
-        const on = (c.orgs || []).some(o => o.id === s.id);
-        return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px 7px 30px;border-top:1px solid var(--bd);">
-          <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">📁 ${esc(pname)}</span>
-          <span style="flex:1;color:${on ? 'var(--txt)' : 'var(--txd)'};">${esc(c.label || pname)} <span style="font-size:11px;color:var(--txd);">文件夹凭证 · ${on ? '本组织在用' : '本组织未使用'}</span></span>
-          <button class="btn" style="font-size:11px;padding:2px 8px;" onclick='useFolderCred(${JSON.stringify(s.id)},${JSON.stringify(c.id)},${!on})'>${on ? '不再使用' : '使用'}</button>
+      const brand = (window.BRAND_ICONS && BRAND_ICONS[c.platform]) || '';
+      if (isFolder) {
+        return `<div class="cred-row"><span class="cred-ic">${brand || ic('folder')}</span>
+          <span style="flex:1;color:${on ? 'var(--txt)' : 'var(--txd)'};">${esc(c.label || pname)} <span style="font-size:11px;color:var(--txd);">${esc(pname)} · 文件夹凭证 · ${on ? '本组织在用' : '未使用'}</span></span>
+          <button class="btn" style="font-size:11px;padding:3px 10px;" onclick='useFolderCred(${JSON.stringify(s.id)},${JSON.stringify(c.id)},${!on})'>${on ? '不再使用' : '使用'}</button>
         </div>`;
-      }).join('');
-      return rows || ((s.credentials || []).length ? '' : '<div style="padding:7px 14px 7px 30px;border-top:1px solid var(--bd);color:var(--txd);font-size:11px;">（该主体下还没有凭证）</div>');
-    })();
-    const statPill = 'font-size:11px;color:var(--txm);background:var(--sf2);padding:3px 10px;border-radius:999px;white-space:nowrap;';
+      }
+      return `<div class="cred-row"><span class="cred-ic">${brand || ic('key')}</span>
+        <span style="flex:1;color:var(--txt);">${esc(c.label || pname)} <span style="font-size:11px;color:var(--txd);">${esc(pname)}</span></span>
+        ${badge(c.enabled)}
+        ${_INAPP_PLATFORMS.includes(c.platform) ? `<button class="btn" style="font-size:11px;padding:3px 10px;" title="填到${esc(pname)}自建应用的主页地址：在${esc(pname)}里打开即用这个凭证自动登录" onclick='copyInappLoginUrl(${JSON.stringify(c.id)})'>应用内登录地址</button>` : ''}
+        <button class="btn" style="font-size:11px;padding:3px 9px;" onclick='toggleOauthProvider(${JSON.stringify(c.id)},${!c.enabled})'>${ic('power')}${c.enabled ? '停用' : '启用'}</button>
+        <button class="btn icon-btn" style="padding:4px 7px;" title="编辑" onclick='openOauthModal(${JSON.stringify(s.id)},${JSON.stringify(c).replace(/'/g,"&#39;")})'>${ic('edit')}</button>
+        <button class="btn icon-btn" style="padding:4px 7px;color:var(--err);border-color:var(--err);" title="删除" onclick='delOauthProvider(${JSON.stringify(c.id)},${JSON.stringify(c.label||pname)})'>${ic('trash')}</button>
+      </div>`;
+    };
+    const ownCreds = (s.credentials || []).map(c => credRow(c, false)).join('');
+    // v3.5.51：所在文件夹的登录凭证——组织自己设定用不用
+    const fcs = ((_orgFolders.find(f => f.id === s.folder_id) || {}).credentials || []);
+    const folderCreds = fcs.map(c => credRow(c, true, (c.orgs || []).some(o => o.id === s.id))).join('');
+    const credCount = (s.credentials || []).length;
+    const credBody = (ownCreds + folderCreds) || '<div style="padding:9px 16px 9px 34px;color:var(--txd);font-size:11px;">该主体下还没有凭证，点上方「+ 凭证」添加。</div>';
+    const creds = `<div class="cred-section"><div class="cred-head">${ic('key')}登录凭证${credCount ? ' · ' + credCount : ''}</div>${credBody}</div>`;
+    const statPill = 'display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--txm);background:var(--sf2);padding:3px 10px;border-radius:999px;white-space:nowrap;';
     const actBtn = 'font-size:12px;padding:6px 12px;';
     return `<div style="border:1px solid var(--bd);border-radius:var(--r-md);margin:0 12px 14px;overflow:hidden;background:var(--sf);box-shadow:var(--sh-1);">
       <div style="display:flex;align-items:center;gap:10px;padding:14px 16px 12px;border-bottom:1px solid var(--bd);flex-wrap:wrap;">
-        <span style="font-weight:700;font-size:15.5px;color:var(--txt);">🏢 ${esc(s.name)}</span>${_dupNames.has(_orgNameKey(s.name)) ? '<span title="有同名组织：新建 / 改名已不允许重名，请把多余的改名或删掉" style="font-size:11px;color:var(--warn);border:1px solid var(--warn);border-radius:999px;padding:1px 8px;">⚠️ 重名</span>' : ''}
+        <span style="display:inline-flex;align-items:center;gap:7px;font-weight:700;font-size:15.5px;color:var(--txt);">${ic('org','ic-lg')}${esc(s.name)}</span>${_dupNames.has(_orgNameKey(s.name)) ? `<span title="有同名组织：新建 / 改名已不允许重名，请把多余的改名或删掉" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--warn);border:1px solid var(--warn);border-radius:999px;padding:1px 8px;">${ic('warn')}重名</span>` : ''}
         ${badge(s.enabled)}
         <span style="flex:1;"></span>
-        <span style="${statPill}">👥 成员 ${s.member_count||0}</span>
-        <span style="${statPill}">📦 开放应用 ${s.open_app_count||0}</span>
-        <span style="${statPill}">🛡️ 管理员 ${s.admin_count||0}</span>
+        <span style="${statPill}">${ic('users')}成员 ${s.member_count||0}</span>
+        <span style="${statPill}">${ic('apps')}开放应用 ${s.open_app_count||0}</span>
+        <span style="${statPill}">${ic('shield')}管理员 ${s.admin_count||0}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;padding:11px 16px;flex-wrap:wrap;">
-        <button class="btn primary" style="${actBtn}" onclick='openOrgMembers(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>👥 成员管理</button>
-        <button class="btn" style="${actBtn}" onclick='openOrgAdmins(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>🛡️ 组织管理员</button>
-        <button class="btn" style="${actBtn}" onclick='openSubjectApps(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>📦 开放应用</button>
+        <button class="btn primary" style="${actBtn}" onclick='openOrgMembers(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>${ic('users')}成员管理</button>
+        <button class="btn" style="${actBtn}" onclick='openOrgAdmins(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>${ic('shield')}组织管理员</button>
+        <button class="btn" style="${actBtn}" onclick='openSubjectApps(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>${ic('apps')}开放应用</button>
         <span style="width:1px;height:20px;background:var(--bd);margin:0 3px;"></span>
-        <button class="btn" style="${actBtn}" onclick='openOauthModal(${JSON.stringify(s.id)})'>+ 凭证</button>
-        <button class="btn" style="${actBtn}" onclick='openDirSourceModal(${JSON.stringify(s.id)})'>+ 通讯录同步</button>
-        <button class="btn" style="${actBtn}" onclick='openOrgMoveMenu(event,${JSON.stringify(s.id)})'>📁 移到</button>
-        <button class="btn" style="${actBtn}" onclick='openSubjectModal(${JSON.stringify(s).replace(/'/g,"&#39;")})'>编辑</button>
+        <button class="btn" style="${actBtn}" onclick='openOauthModal(${JSON.stringify(s.id)})'>${ic('plus')}凭证</button>
+        <button class="btn" style="${actBtn}" onclick='openDirSourceModal(${JSON.stringify(s.id)})'>${ic('sync')}通讯录同步</button>
+        <button class="btn" style="${actBtn}" onclick='openOrgMoveMenu(event,${JSON.stringify(s.id)})'>${ic('folder')}移到</button>
+        <button class="btn" style="${actBtn}" onclick='openSubjectModal(${JSON.stringify(s).replace(/'/g,"&#39;")})'>${ic('edit')}编辑</button>
         <span style="flex:1;"></span>
-        <button class="btn" style="${actBtn}color:var(--err);border-color:var(--err);" onclick='delSubject(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>删除</button>
+        <button class="btn" style="${actBtn}color:var(--err);border-color:var(--err);" onclick='delSubject(${JSON.stringify(s.id)},${JSON.stringify(s.name)})'>${ic('trash')}删除</button>
       </div>
       ${creds}
       ${dirSourceRowsHtml(s.id, s.dir_sources, true)}
@@ -7745,7 +7789,7 @@ function renderOrgFolderBar() {
   const unfiled = _oauthSubjects.filter(s => !s.folder_id).length;
   const chip = (v, label, n) => `<button class="btn" style="font-size:11px;padding:3px 10px;border-radius:14px;${sel === v ? 'background:var(--ac);color:#fff;border-color:var(--ac);' : ''}" onclick='selectOrgFolder(${JSON.stringify(v)})'>${label} <span style="opacity:.7;">${n}</span></button>`;
   let html = chip('all', '全部', _oauthSubjects.length);
-  html += _orgFolders.map(f => chip(f.id, '📁 ' + esc(f.name), f.org_count || 0)).join('');
+  html += _orgFolders.map(f => chip(f.id, ic('folder') + esc(f.name), f.org_count || 0)).join('');
   if (_orgFolders.length) html += chip('_none', '未归类', unfiled);
   html += `<button class="btn" style="font-size:11px;padding:3px 10px;border-radius:14px;border-style:dashed;" onclick="newOrgFolder()">+ 新建文件夹</button>`;
   const f = _orgFolders.find(x => x.id === sel);
@@ -7757,7 +7801,7 @@ function renderOrgGroups(cardHtml) {
   const inF = id => _oauthSubjects.filter(s => (s.folder_id || null) === id);
   const empty = t => `<div style="color:var(--txd);padding:6px 16px 12px;font-size:12px;">${t}</div>`;
   if (sel === '_none') return inF(null).map(cardHtml).join('') || empty('没有未归类的组织。');
-  if (sel !== 'all') { const f = _orgFolders.find(x => x.id === sel); return (f ? folderResourcesHtml(f) : '') + (inF(sel).map(cardHtml).join('') || empty('这个文件夹里还没有组织：在组织卡片上点「📁 移到」放进来。')); }
+  if (sel !== 'all') { const f = _orgFolders.find(x => x.id === sel); return (f ? folderResourcesHtml(f) : '') + (inF(sel).map(cardHtml).join('') || empty('这个文件夹里还没有组织：在组织卡片上点「移到」放进来。')); }
   if (!_orgFolders.length) return _oauthSubjects.map(cardHtml).join('');
   // 「全部」：按文件夹分组，可折叠；最后是未归类
   const collapsed = new Set(_orgFolderCollapsed());
@@ -7765,12 +7809,12 @@ function renderOrgGroups(cardHtml) {
     const shut = collapsed.has(key);
     return `<div style="margin:0 0 6px;">
       <div style="display:flex;align-items:center;gap:6px;padding:6px 14px;cursor:pointer;user-select:none;color:var(--tx);font-weight:700;font-size:13px;" onclick='toggleOrgFolderCollapse(${JSON.stringify(key)})'>
-        <span style="width:12px;color:var(--txd);">${shut ? '▸' : '▾'}</span>${title}<span style="font-weight:400;color:var(--txd);font-size:11px;">${list.length} 个组织</span>
+        <span style="width:12px;color:var(--txd);">${shut ? '▸' : '▾'}</span><span style="display:inline-flex;align-items:center;gap:6px;">${title}</span><span style="font-weight:400;color:var(--txd);font-size:11px;">${list.length} 个组织</span>
       </div>
       ${shut ? '' : ((f && ((f.dir_connections || []).length || (f.credentials || []).length || (f.migrations || []).length) ? folderResourcesHtml(f) : '') + (list.map(cardHtml).join('') || empty('（空）')))}
     </div>`;
   };
-  return _orgFolders.map(f => section(f.id, '📁 ' + esc(f.name), inF(f.id), f)).join('')
+  return _orgFolders.map(f => section(f.id, ic('folder') + esc(f.name), inF(f.id), f)).join('')
     + section('_none', '未归类', inF(null));
 }
 // ── 文件夹共用资源（v3.5.47）：一份通讯录 / 一套登录凭证放在文件夹上，文件夹里的组织套用 ──
@@ -7780,8 +7824,8 @@ function folderResourcesHtml(f) {
   const connRows = conns.map(x => {
     const uses = (x.uses || []).map(u => `${esc(u.org_name)}<span style="color:var(--txd);">（${esc(_dirScopeText({ dept_ids: u.dept_ids, dept_names: u.dept_names }))}${u.enabled ? '' : ' · 停用'}）</span>`).join('、');
     return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 14px;border-top:1px solid var(--bd);">
-      <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔄 ${esc(x.type_label)}</span>
-      <span style="flex:1;min-width:160px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')}${x.callback_ready ? ' · <span style="color:#1F7A3A;">⚡ 实时</span>' : ''}${x.config.push_suspend ? ' · 停用同步' : ''}</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:999px;flex:none;">${ic('sync')}${esc(x.type_label)}</span>
+      <span style="flex:1;min-width:160px;color:var(--txt);">${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')}${x.callback_ready ? ' · <span style="color:#1F7A3A;">' + ic('bolt') + '实时</span>' : ''}${x.config.push_suspend ? ' · 停用同步' : ''}</span>
         <div style="font-size:11px;color:var(--tx);margin-top:2px;">${uses ? '套用：' + uses : '<span style="color:var(--txd);">还没有组织套用——点「套用到组织…」或「按部门建组织…」</span>'}</div></span>
       ${_credBadge(x.enabled)}
       <button class="btn" style="${_rowBtn}" onclick='openConnUseModal(${fid},${JSON.stringify(x.id)})'>套用到组织…</button>
@@ -7796,7 +7840,7 @@ function folderResourcesHtml(f) {
     const meta = _oauthPlatforms.find(p => p.key === c.platform);
     const pname = meta ? meta.label : c.platform;
     return `<div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid var(--bd);">
-      <span style="font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">🔑 ${esc(pname)}</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:999px;flex:none;">${ic('key')}${esc(pname)}</span>
       <span style="flex:1;color:var(--txt);">${esc(c.label || pname)} <span style="color:var(--txd);font-size:11px;">${(c.orgs || []).length ? '使用的组织：' + c.orgs.map(o => esc(o.name)).join('、') : '还没有组织使用'}</span></span>
       ${_credBadge(c.enabled)}
       <button class="btn" style="${_rowBtn}" onclick='openFolderCredOrgs(${fid},${JSON.stringify(c.id)})'>设定使用的组织…</button>
@@ -7811,13 +7855,13 @@ function folderResourcesHtml(f) {
       ? `通讯录「${esc(m.label)}」<span style="color:var(--txd);">${esc(m.corp_id)}</span> → ${m.attach_to ? '并入文件夹已有的「' + esc(m.attach_to.label) + '」' + (m.secret_differs ? ' <span style="color:var(--warn);">（Secret 不同，以文件夹的为准）</span>' : '') : '新建一份文件夹通讯录'}`
       : `登录凭证 ${esc(m.platform_name)}「${esc(m.label || m.platform_name)}」 → 文件夹共用${m.has_policy ? ' <span style="color:var(--warn);">（该组织的登录 IP / 时段 / 强制两步验证策略不再作用于这套凭证）</span>' : ''}`;
     return `<div style="display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:12px;color:var(--tx);">
-      <span style="flex:1;">🏢 ${esc(m.org_name)} · ${what}</span>
+      <span style="flex:1;display:inline-flex;align-items:baseline;gap:5px;"><span style="align-self:center;">${ic('org')}</span>${esc(m.org_name)} · ${what}</span>
       <button class="btn" style="${_rowBtn}" onclick='migrateToFolder(${fid},${JSON.stringify(m.kind)},${JSON.stringify(m.id)})'>迁移…</button>
     </div>`;
   }).join('');
   return `<div style="border:1px dashed var(--ac);border-radius:6px;margin:0 12px 12px;overflow:hidden;">
     <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;flex-wrap:wrap;">
-      <span style="font-weight:700;color:var(--txt);font-size:13px;">📁 文件夹共用</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--txt);font-size:13px;">${ic('folder')}文件夹共用</span>
       <span style="font-size:11px;color:var(--txd);flex:1;min-width:180px;">通讯录、登录凭证放在这里，密钥只存一份；文件夹里的组织要用，需设定套用（各自选部门）/ 使用</span>
       <button class="btn" style="${_rowBtn}" onclick='openDirConnModal(${fid})'>+ 通讯录</button>
       <button class="btn" style="${_rowBtn}" onclick='openOauthModal(null,null,${fid})'>+ 登录凭证</button>
@@ -7960,7 +8004,7 @@ async function openDirConnModal(fid, connId, type) {
     ${lab('读取通讯录用的 Secret（推荐自建应用的 Secret，可见范围要覆盖各组织要同步的部门）')}<input id="dcm-secret" type="password" autocomplete="new-password" placeholder="${x ? '已配置，留空不修改' : ''}" style="${inp}">
     ${lab('通讯录同步 Secret（管理用，可选）：企业微信后台 管理工具 → 通讯录同步 的 Secret，开启「API 编辑通讯录」并把本服务器出口 IP 加进它的可信 IP。只用来<b>停用 / 启用 / 删除成员</b>（注销与删除、停用同步）；不填则用上面那个 Secret 去改，自建应用 Secret 没有改通讯录的权限会报 48002')}<input id="dcm-wsecret" type="password" autocomplete="new-password" placeholder="${c.write_secret ? '已配置，留空不修改' : '不填 = 只读，不能在企业微信里停用 / 删除成员'}" style="${inp}">${c.write_secret ? '<label style="display:block;margin-top:4px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dcm-wsecret-clear"> 清除管理用 Secret</label>' : ''}
     <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
-      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 接收事件服务器（可选）</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--txt);">${ic('bolt')}接收事件服务器（可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">一份通讯录只能在企业微信后台填一个地址：变动推过来后，套用它的各组织都会自动同步一次。</div>
       ${lab('URL（填到企业微信）')}
       <div style="display:flex;gap:6px;"><input id="dcm-cb-url" readonly value="${x ? esc(location.origin + x.callback_path) : ''}" placeholder="保存后生成" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" ${x ? '' : 'disabled'} onclick="_dsmCopy('dcm-cb-url')">复制</button></div>
@@ -8007,7 +8051,7 @@ function openFeishuConnModal(fid, connId) {
     ${x ? '<div style="font-size:11px;color:var(--txd);margin-top:2px;">App ID 不能改（open_id 跟着应用走）；换应用请另建一份。</div>' : ''}
     ${lab('App Secret')}<input id="fcm-secret" type="password" autocomplete="new-password" placeholder="${x ? '已配置，留空不修改' : ''}" style="${inp}">
     <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px;">
-      <div style="font-size:13px;font-weight:600;color:var(--txt);">⚡ 事件订阅（可选）</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--txt);">${ic('bolt')}事件订阅（可选）</div>
       <div style="font-size:11px;color:var(--txd);line-height:1.7;margin:2px 0 6px;">飞书后台「事件与回调 → 事件配置」填下面的请求地址，订阅通讯录的员工 / 部门变更事件；推过来后套用它的各组织都会自动同步一次。</div>
       ${lab('请求地址（填到飞书）')}
       <div style="display:flex;gap:6px;"><input id="fcm-cb-url" readonly value="${x ? esc(location.origin + x.callback_path) : ''}" placeholder="保存后生成" style="${inp}flex:1;"><button class="btn" style="flex:none;font-size:12px;" ${x ? '' : 'disabled'} onclick="_dsmCopy('fcm-cb-url')">复制</button></div>
@@ -8080,7 +8124,7 @@ function openOrgMoveMenu(ev, sid) {
   m.id = 'org-move-menu';
   m.style.cssText = 'position:fixed;z-index:1200;background:var(--sf);border:1px solid var(--bd);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.15);min-width:160px;max-height:300px;overflow:auto;padding:4px 0;';
   m.innerHTML = `<div style="padding:4px 12px 6px;font-size:11px;color:var(--txd);">把「${esc(s.name)}」移到</div>`
-    + _orgFolders.map(f => item(f.id, '📁 ' + esc(f.name))).join('')
+    + _orgFolders.map(f => item(f.id, ic('folder') + ' ' + esc(f.name))).join('')
     + item(null, '未归类')
     + `<div style="border-top:1px solid var(--bd);margin-top:4px;padding:7px 12px;cursor:pointer;font-size:12px;color:var(--ac);" onclick='document.getElementById("org-move-menu").remove();newOrgFolder(${JSON.stringify(sid)})'>+ 新建文件夹并移入</div>`;
   document.body.appendChild(m);

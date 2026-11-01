@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.113**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.114**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.114 UI 细化·行内小图标 ic() 替代散落 emoji + 凭证整理（用户反馈）
+
+三级版本（纯前端）。用户：「很多奇怪的 emoji 其实可以换成小图标。凭证也整理一下。」
+- **`ic(name[,cls])` 图标助手**（dashboard.html，紧随 `esc()`）：返回描边 SVG 字符串，风格对齐左侧导航（`viewBox 0 0 20 20` / `fill=none` / `stroke=currentColor` / `1.6`）。`ICON_PATHS` 收录 org/users/apps/shield/key/folder/plus/edit/trash/link/power/sync/warn/clock/import/bolt/lock/move/info。CSS `.ic`（15px，vertical-align）+ `.btn .ic`（右 5px）+ `.ic-lg`（17px）。
+- **静态 HTML 用 `<span data-ic="name"></span>` 占位**，`hydrateIcons()` 在 `DOMContentLoaded` 一次性 `innerHTML = ic(...)` 填入（静态 HTML 里调不到 JS）。成员弹窗 7 个标题（加入已有账号 link / 新建账号并加入 plus / 待分配 clock / 部门 org / 批量导入 import / 通讯录同步 sync / 复用成员 users）靠它。
+- **组织管理视图去 emoji**（`loadOauthSubjects` cardHtml、`renderOrgFolderBar`/`renderOrgGroups`、`folderResourcesHtml`、`dirSourceRowsHtml`、`openDir/FeishuSourceModal` 事件标题、`_dirEventText`、`openOrgMoveMenu`）：🏢👥📦🛡️🔑📁🔄⚡🔐ℹ️➕🔗⏳📇 全部换 `ic()`。浏览器实测组织页 0 emoji、17 个 SVG。
+- **登录凭证整理**：组织卡片凭证行归入浅色「登录凭证 · N」子分组（`.cred-section`/`.cred-head`/`.cred-row`/`.cred-ic`），不再是浮在卡片底部的裸行；每行以**真实品牌图标**起头（`window.BRAND_ICONS[c.platform]`，复用登录页那套；回退 `ic('key')`），平台名改为 label 后的淡色小字（去掉冗余文字 chip），编辑 / 删除改图标按钮（`.icon-btn`，带 title）。本站「默认主体」凭证列表的 `g.icon` emoji 也换成 `BRAND_ICONS`（20px 全彩）。
+- ⚠️ 本次只扫了**组织管理视图**；其它页面（门禁 / 设备 / 商城 / MDM 等）仍有 emoji，`ic()` 已就位，后续按需逐页替换。brand-icons.js 的 SVG 固定 `width/height=20`，放进 `.cred-ic`（18px 容器）/ 默认凭证 20px 槽。
 
 ## v3.5.113 UI 细化·组织管理 / 成员管理 / 账号添加布局重排（用户反馈）
 
