@@ -154,6 +154,12 @@ code{border-radius:var(--r-sm)!important;}
 select{ -webkit-appearance:none;appearance:none;cursor:pointer;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8l4-3.5' fill='none' stroke='%238A8C7E' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
   background-repeat:no-repeat !important;background-position:right 11px center !important;padding-right:30px !important; }
+/* 自定义复选框 / 单选框 */
+input[type=checkbox],input[type=radio]{ -webkit-appearance:none;appearance:none;width:16px;height:16px;flex-shrink:0;border:1.5px solid var(--bd2);background:var(--sf)!important;cursor:pointer;vertical-align:-3px;margin:0 2px 0 0;transition:background .15s,border-color .15s; }
+input[type=checkbox]{border-radius:5px!important;}
+input[type=radio]{border-radius:50%!important;}
+input[type=checkbox]:checked{border-color:var(--ac);background:var(--ac) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2 5 8.7l4.5-5' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/68% no-repeat!important;}
+input[type=radio]:checked{border-color:var(--ac);box-shadow:inset 0 0 0 4px var(--ac);}
 </style>
 </head>
 <body>

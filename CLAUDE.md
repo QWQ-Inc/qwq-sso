@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.111**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.112**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.112 UI 细化·自定义复选框 / 单选框（用户反馈）
+
+三级版本。最后一个明显"系统默认样子"的表单元素。纯 CSS。
+- **自绘 checkbox/radio**：`appearance:none` + 柔边圆角空框，选中 = 橄榄绿底 + 白勾(data-uri SVG)；radio 为实心内点(`box-shadow:inset 0 0 0 4px`)。**尊重各处内联尺寸**(很多 checkbox 有内联 `width:14px/16px`，不强制覆盖)，带 `:focus-visible` 聚焦环与 `:disabled` 态。顺带：很多 checkbox 原本就用 `accent-color:var(--ac)`(现代做法)，现在统一成自绘，更可控。
+- ⚠️ **关键坑**：`.toggle` 开关组件(等级管理→权限编辑用)靠 `input{opacity:0;width:0}` 隐藏原生 input、用 `.toggle-slider` 画 iOS 式开关。全局 `input[type=checkbox]{appearance:none;width:16px;border…}` 会把这个隐藏 input 变成一个**可见方块**、把开关毁掉。解法:自定义规则之后再加一条 **`.toggle input[type=checkbox]{appearance:none;opacity:0!important;width:0!important;height:0!important;border:0!important;background:none!important}`** 还原。**以后再动全局 input 样式，务必保护 `.toggle` 这类"隐藏 input + 兄弟元素画控件"的组件。**
+- 范围:dashboard(104 个 checkbox/radio) + setup(15 个)。authorize 只 1 个且页面已精致、login 0 个,未动。
+- ⚠️ 测试：dev 浏览器实测弹窗复选框自绘(企业OA系统=绿底白勾、数据分析台=空框)、computed 核验 appearance:none/radius 5px/勾选态白勾 SVG；`.toggle` 注入真实 `.perm-row` flex 场景核验 36×20 正常、隐藏 input 0 宽、滑块勾选变绿。三页内联 JS 解析通过。零新增报错。
 
 ## v3.5.111 UI 细化·组件级（下拉箭头 + 弹窗入场动画 + toast）（用户反馈）
 

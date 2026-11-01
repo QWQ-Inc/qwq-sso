@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.112 — UI 细化·自定义复选框 / 单选框
+
+- 原生 checkbox/radio 换成自绘：未选是柔边圆角空框，选中是橄榄绿 + 白勾（radio 为实心内点）；尊重各处内联尺寸、带聚焦环与禁用态。dashboard（104 个）+ setup（15 个）。
+- ⚠️ 关键保护：`.toggle` 开关组件靠隐藏 input 实现，自定义规则会把它变成方块 → 专门加 `.toggle input` 还原规则（已在真实 flex 场景验证开关 36×20 正常、勾选变绿）。
+- 纯 CSS，dev 实测复选框自绘/勾选、开关无损、零新增报错。
+
 ## v3.5.111 — UI 细化·组件级（下拉箭头 + 弹窗入场动画 + toast）
 
 - 原生 `<select>` 去掉各 OS 的默认三角，换统一的柔灰 chevron（聚焦变绿）；用 `!important` 覆盖各处内联 background，一处规则覆盖全站下拉，修掉"appearance:none 后无箭头"的回归。dashboard 15/15 下拉、login/setup 同步。
