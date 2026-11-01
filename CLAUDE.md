@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.112**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.113**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.113 UI 细化·组织管理 / 成员管理 / 账号添加布局重排（用户反馈）
+
+三级版本。用户："组织管理和成员管理、账号添加还是比较糙,要么挤在一起,要么不够突出。"——针对这三处具体布局重排(前几版是全站 token/组件,这版是具体页面的信息层级)。纯前端。
+- **组织卡片**(`loadOauthSubjects` 的 `cardHtml`,~line 7599):原来名称+3徽章+8个 `font-size:11px;padding:2px 8px` 小按钮全塞进一条 `flex-wrap:wrap` 的 `--sf2` 绿带,一挤就乱。重排三层:① 头部行(白底+底边框)名称放大到 15.5px 突出 + 状态徽章 + 右侧统计**胶囊**(`statPill`,靠 `flex:1` 撑开);② 操作行单独一块、按钮 `padding:6px 12px` 留白,「**成员管理**」改 `class="btn primary"`(绿色主按钮)最突出,`+凭证/通讯录同步/移到/编辑` 中间用 1px 竖分隔,**删除靠 `flex:1` 推到最右**(红);③ 整卡 `--r-md` 圆角 + 白底 + `--sh-1` 阴影。
+- **组织成员弹窗**(静态 `#orgmem-modal`,~line 3344):`min-width:480px` 太窄 + **「新建账号并加入」被 `<details>` 折叠埋起来**(账号添加不突出)。改:弹窗 `width:min(96vw,780px)`;顶部用 `grid repeat(auto-fit,minmax(310px,1fr))` 把「🔗 加入已有账号」「➕ 新建账号并加入」做成**两个并排、都展开的 `--sf4` 区块**(窄屏自动堆叠),新建账号的 6 个输入排成 2 列网格 + 整宽主按钮;共用的 `orgmem-push` 同步勾选移到两块下面。**所有 id 原样保留**(addOrgMember/createOrgMember/saveOrgUidRule 等不受影响)。
+- 用户管理的「新建用户」弹窗核对后**已是干净的 2 列网格**,未动。
+- ⚠️ 测试：dev 浏览器实测——组织卡三层清爽、成员管理绿主按钮突出;成员弹窗两区块并排、账号添加展开突出;新建用户弹窗整齐。dashboard 内联 JS 解析通过、成员弹窗 8 个关键 id 齐全。纯前端布局,无后端改动。
 
 ## v3.5.112 UI 细化·自定义复选框 / 单选框（用户反馈）
 
