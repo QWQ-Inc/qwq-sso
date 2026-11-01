@@ -7,11 +7,14 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#F4F4F0;--sf:#fff;--sf2:#ECFFAF;--sf3:#F6FFDA;
-  --bd:#E0E0D8;--bd2:#CACAC0;
-  --ac:#5A8A00;--ac2:#7AAA00;--ac3:#ECFFAF;
-  --tx:#111110;--txm:#555548;--txd:#AAAAAA;
+  --bg:#F5F6F2;--sf:#fff;--sf2:#EEF1E8;--sf3:#F3F5EE;
+  --bd:#E7E8E1;--bd2:#D4D5CC;
+  --ac:#5A8A00;--ac2:#6F9E12;--ac3:#E9F0D6;
+  --tx:#17180F;--txm:#54564A;--txd:#8A8C7E;
   --ok:#3D8C3D;--err:#CC2222;--warn:#B85A00;
+  --r-sm:6px;--r-md:9px;--r-lg:13px;--ring:0 0 0 3px rgba(111,158,18,.25);
+  --sh-1:0 1px 2px rgba(24,26,15,.05),0 1px 1px rgba(24,26,15,.03);
+  --sh-2:0 3px 10px rgba(24,26,15,.07),0 1px 3px rgba(24,26,15,.04);
 }
 html,body{min-height:100%;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;-webkit-font-smoothing:antialiased;}
 
@@ -139,6 +142,15 @@ select{
 
 /* ── 滚动条 ── */
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:2px}
+
+/* ══════════ v3.5.109 UI 细化：柔化圆角 + 阴影 + 中性输入 + 聚焦环（后置覆盖） ══════════ */
+.card,.info-box{border-radius:var(--r-md);box-shadow:var(--sh-1);}
+.btn{border-radius:var(--r-sm);transition:background .18s,border-color .18s,box-shadow .18s,transform .18s;}
+.btn:active{transform:translateY(.5px);}
+.btn.primary{box-shadow:var(--sh-1);}
+input,select,textarea{border-radius:var(--r-sm)!important;background:var(--sf)!important;transition:border-color .18s,box-shadow .18s;}
+input:focus,select:focus,textarea:focus{border-color:var(--ac)!important;box-shadow:var(--ring)!important;outline:none;}
+code{border-radius:var(--r-sm)!important;}
 </style>
 </head>
 <body>

@@ -8,24 +8,33 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
 :root{
-  --bg:#F4F4F0;
+  --bg:#F5F6F2;
   --sf:#FFFFFF;
-  --sf2:#ECFFAF;
-  --sf3:#F6FFDA;
-  --sf4:#F9FFF0;
-  --bd:#E0E0D8;
-  --bd2:#CACAC0;
+  /* 中性浅色面（原来是刺眼的荧光绿 #ECFFAF，做 hover/输入底色太吵，v3.5.109 调成柔和的浅绿灰） */
+  --sf2:#EEF1E8;
+  --sf3:#F3F5EE;
+  --sf4:#F8F9F4;
+  --bd:#E7E8E1;
+  --bd2:#D4D5CC;
   --ac:#5A8A00;
-  --ac2:#7AAA00;
-  --ac3:#ECFFAF;
-  --tx:#111110;
-  --txm:#555548;
-  --txd:#AAAAAA;
+  --ac2:#6F9E12;
+  --ac3:#E9F0D6;
+  --tx:#17180F;
+  --txm:#54564A;
+  --txd:#8A8C7E;
   --ok:#3D8C3D;
   --err:#CC2222;
   --warn:#B85A00;
-  --nav-w:220px;
-  --hdr-h:52px;
+  --nav-w:224px;
+  --hdr-h:54px;
+  /* v3.5.109 UI 细化：统一的间距/圆角/阴影/过渡 token，组件逐步改用这些，避免各处手写零散值 */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:22px; --sp-6:30px;
+  --r-sm:6px; --r-md:9px; --r-lg:13px; --r-pill:999px;
+  --sh-1:0 1px 2px rgba(24,26,15,.05), 0 1px 1px rgba(24,26,15,.03);
+  --sh-2:0 3px 10px rgba(24,26,15,.07), 0 1px 3px rgba(24,26,15,.04);
+  --sh-3:0 16px 40px rgba(24,26,15,.16), 0 4px 12px rgba(24,26,15,.08);
+  --ring:0 0 0 3px rgba(111,158,18,.25);
+  --ease:.18s cubic-bezier(.4,0,.2,1);
 }
 
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px;background:var(--bg);color:var(--tx);-webkit-font-smoothing:antialiased;}
@@ -414,6 +423,47 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 .ui-dlg-btns .btn{min-width:72px;justify-content:center}
 .ui-dlg-ok.ui-dlg-danger{background:var(--err);border-color:var(--err);color:#fff}
 @keyframes uiDlgIn{from{opacity:0}to{opacity:1}}
+
+/* ══════════ v3.5.109 UI 细化：统一圆角 / 阴影 / 呼吸感 / 聚焦环（后置覆盖，不动上面结构） ══════════ */
+.content{padding:var(--sp-6);}
+/* 按钮：更柔的圆角 + 轻微下压反馈，主按钮带阴影 */
+.btn{padding:8px 15px;border-radius:var(--r-sm);transition:background var(--ease),border-color var(--ease),box-shadow var(--ease),transform var(--ease);}
+.btn:active{transform:translateY(.5px);}
+.btn.primary{box-shadow:var(--sh-1);}
+.btn.primary:hover{box-shadow:var(--sh-2);}
+/* 卡片：更柔圆角 + 细阴影 + 更淡边框，彼此更分明 */
+.card,.stat-card,.app-card,.pts-card,.env-section,.env-topbar{border-radius:var(--r-md);border-color:var(--bd);box-shadow:var(--sh-1);}
+.card{margin-bottom:var(--sp-5);}
+.card-body{padding:var(--sp-5);}
+.card-header{padding:var(--sp-4) var(--sp-5);}
+.stat-grid{gap:var(--sp-4);margin-bottom:var(--sp-5);}
+.stat-card{padding:var(--sp-5);}
+.app-card{border-radius:var(--r-md);transition:border-color var(--ease),box-shadow var(--ease),transform var(--ease);}
+.app-card:hover{box-shadow:var(--sh-2);border-color:var(--bd2);transform:translateY(-2px);}
+/* 输入 / 下拉 / 文本域：中性白底（不再荧光绿）+ 柔圆角 + 聚焦环 */
+.form-row input,.form-row select,.search-bar input,.modal input,.modal select,.modal textarea,.ui-dlg-input{
+  background:var(--sf);border:1px solid var(--bd2);border-radius:var(--r-sm);transition:border-color var(--ease),box-shadow var(--ease);}
+.form-row input:focus,.form-row select:focus,.search-bar input:focus,.modal input:focus,.modal select:focus,.modal textarea:focus,.ui-dlg-input:focus{
+  border-color:var(--ac);box-shadow:var(--ring);outline:none;background:var(--sf);}
+/* 弹窗：更柔圆角 + 真阴影 + 遮罩磨砂 */
+.modal{border-radius:var(--r-lg);box-shadow:var(--sh-3);border-color:var(--bd);}
+.modal-mask{backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);}
+.ui-dlg{border-radius:var(--r-lg);box-shadow:var(--sh-3);}
+.ui-dlg-input{border-color:var(--bd2);}
+/* 表格：行间距更松一点 + 行 hover 高亮 + 分隔线更淡 */
+.tbl td{padding:12px 14px;border-bottom-color:var(--bd);}
+.tbl th{padding:10px 14px;border-bottom-color:var(--bd2);}
+.tbl tbody tr{transition:background var(--ease);}
+.tbl tbody tr:hover{background:var(--sf3);}
+/* 徽章 / 导航项 / 头像 / 开关：统一柔圆角 */
+.badge{border-radius:var(--r-pill);padding:2px 9px;}
+.nav-item{border-radius:var(--r-sm);}
+.nav-item.active{border-radius:var(--r-sm);}
+.avatar{border-radius:var(--r-sm);}
+.mode-switch{border-radius:var(--r-sm);}
+.tabs .tab,.env-gtab{border-radius:var(--r-sm);}
+/* 键盘可达性：全局聚焦环（鼠标点击不出现，仅键盘聚焦） */
+a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:var(--ring);border-radius:var(--r-sm);}
 </style>
 <script>
 // ════════════════════════════════════════

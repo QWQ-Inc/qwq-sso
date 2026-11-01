@@ -35,8 +35,8 @@
       :root {
         --bg: #F0F0EC;
         --surface: #FFFFFF;
-        --surface2: #ECFFAF;
-        --surface3: #F6FFDA;
+        --surface2: #EEF1E8;
+        --surface3: #F3F5EE;
         --divider: rgba(0,0,0,0.08);
         --border: rgba(0,0,0,0.12);
         --border-focus: #7AAA00;
@@ -49,7 +49,7 @@
         --success: #3D8C3D;
         --error: #CC2222;
         --card-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
-        --left-bg: #ECFFAF;
+        --left-bg: #F1F4EA;
         --qr-border: rgba(0,0,0,0.12);
         --oauth-hover: rgba(0,0,0,0.04);
       }
@@ -83,7 +83,7 @@
       min-height: 520px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 2px;
+      border-radius: 14px;
       box-shadow: var(--card-shadow);
       overflow: hidden;
     }
@@ -341,7 +341,7 @@
 
     input:focus {
       border-color: var(--border-focus);
-      box-shadow: 0 0 0 3px rgba(120,100,255,0.1);
+      box-shadow: 0 0 0 3px var(--accent-glow);
     }
 
     input::placeholder { color: var(--text-dim); }
@@ -969,6 +969,14 @@
       font-family: monospace;
       letter-spacing: .3px;
     }
+
+    /* ══════════ v3.5.109 UI 细化：统一柔化小圆角 + 按钮/平台项质感（后置覆盖） ══════════ */
+    .qr-box, .qr-frame, .platform-btn, .oauth-row, .tip, .code-row input, .btn-send { border-radius: 8px; }
+    .oauth-icon, .brand-icon, .platform-btn .p-icon, .pw-bar { border-radius: 6px; }
+    .platform-btn { transition: border-color .18s, box-shadow .18s, transform .18s; }
+    .platform-btn:hover { box-shadow: 0 3px 10px rgba(0,0,0,.08); transform: translateY(-1px); }
+    .btn-primary { border-radius: 10px; transition: background .18s, box-shadow .18s, transform .18s; }
+    .btn-primary:active { transform: translateY(.5px); }
   </style>
 </head>
 <body>

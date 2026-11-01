@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.108**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.109**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.109 UI 细化·第一批（控制台 + 登录 + 安装）（用户反馈）
+
+三级版本。用户要"细化很糙很原始的表单/下拉/弹窗/动画/ui，解决拥挤累"。做法：**先立底座、再逐页套用**，纯 CSS、后置覆盖、不动结构（单文件无构建工具下最稳），可增量、易回退。
+- **根因**：全站把刺眼的荧光绿 `#ECFFAF` 当 hover / 输入框底色 / 登录左栏背景，加满屏 1px 边框 + 2~3px 硬圆角 + 零阴影 → "糙 + 拥挤累"。
+- **底座 token**：`dashboard.html`/`setup.html` 的 `:root` 把 `--sf2/sf3/ac3`（原 #ECFFAF 系）调成柔和浅绿灰，边框调淡、`--txd` 加深；新增 `--sp-* / --r-sm·md·lg / --sh-1·2·3 / --ring / --ease`。`login.html` 有深/浅双主题，改浅色 `--surface2/--surface3/--left-bg`（左栏专用荧光绿）为柔和值 + 修掉输入框一个跑偏的**紫色聚焦环**（`rgba(120,100,255)` → `var(--accent-glow)`）。
+- **组件打磨块**（追加在各自 `</style>` 前，同特异性后置覆盖，不动上面 300+ 条规则）：卡片/统计卡/应用卡柔圆角 + 细阴影；**输入/下拉/文本域中性白底 + 聚焦环**；弹窗大柔圆角 + 真阴影 + 遮罩磨砂；表格行距更松 + 行 hover + 分隔线更淡；徽章胶囊、导航项/头像/平台项柔圆角、按钮按下轻微反馈 + 主按钮阴影、全局键盘 `:focus-visible` 环。
+- **范围**：dashboard / login / setup 三页。**authorize.html 已很精致**（卡片 18px 圆角、Apple 风中性灰、有暗色）**未动**（别修没坏的）。pass.html / access-terminal.html 低频，留后续。
+- ⚠️ 测试：dev 浏览器静态服务实测四屏（控制台总览 / 新建用户弹窗 / 登录页 / 安装向导），荧光绿消失、卡片分明、输入框中性、弹窗浮起，**零新增 JS 报错**（console 里 renderUserDeletionSection/renderUserSiblings 是既有 dev-mock 缺失，与本次无关）；三页内联 JS 解析通过。纯 CSS 改动无后端逻辑影响。
+- ⚠️ **下一批候选（治本）**：把这套 token 抽成 `public/theme.css` 多页共享（以后一处改全站）；pass/access-terminal 两页；更深的组件（表单栅格对齐、密度开关、动效）。本批刻意不抽共享 CSS——各页现有 `:root` 不同、抽取要逐页reconcile，风险大，先把最高频的三页做好。
 
 ## v3.5.108 导入兼容性软提示（降级能导，先告知用不上/做不到的）（用户反馈）
 
