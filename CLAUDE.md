@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.114**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.115**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.115 UI 回「方方正正」：收紧圆角 + 压扁阴影（用户反馈）
+
+三级版本（纯前端）。用户：「ui 还是太柔和了，我更喜欢之前那个方方正正的。」——v3.5.109~113 的大圆角 / 柔阴影 / 呼吸感方向太软，本版把**几何**收回硬朗，**保留** v3.5.109+ 的干净配色（去荧光绿 #ECFFAF）与 v3.5.114 的行内小图标 / 凭证整理。
+- **圆角 token**（dashboard.html `:root`）：`--r-sm 6→2px` / `--r-md 9→3px` / `--r-lg 13→4px` / `--r-pill 999→3px`（徽章也方）。几乎所有 token-based 组件（卡片 / 按钮 / 导航 / tab / 输入 / 徽章 / 模态）随之收方。
+- **散落硬编码圆角一并收方**：dashboard / login / login-success 里的 `border-radius: 6/7/8/9/10/11/12/14/999px` 全 `sed` 降到 **3px**（已是 2~5px 的不动）。⚠️ **单选框 `border-radius:50%` 不在 sweep 目标内，保留圆形**（否则 radio 变方块）；切换开关滑块轨道一并收方（boxy 可接受）。
+- **阴影**：`--sh-1` 改 `none`（卡片纯描边定框 = 方正扁平，去掉 v3.5.109 的柔投影）；`--sh-2`/`--sh-3` 收成更紧更实；弹窗内联 `box-shadow:0 8px 40px rgba(0,0,0,.2)` 等柔飘阴影 `sed` 收成 `0 10px 30px rgba(0,0,0,.28)` 更利落。
+- **弹窗入场动画**：`modalPop` 去掉 `scale(.985)` 的柔「弹」，改 `translateY(8px)` 快速上移（.14s ease-out）。
+- ⚠️ **sed 收口的坑**：圆角 / 阴影是满屏内联散落值，靠 token 改不全；用 Git Bash `sed`（UTF-8 字节安全，只匹配 ASCII `border-radius:Npx`）批量 sweep。**改中文满篇文件别用 PowerShell Get/Set-Content**（ANSI 读会毁），`sed`/Edit 工具安全。
+- ⚠️ 测试：dev 浏览器实测组织页 + 成员弹窗——`--r-md=3px`、模态 `4px`、徽章 / 胶囊 / 按钮 / chip 全方角、radio 仍 `50%` 圆、`--sh-1=none`、零相关报错；dashboard/login UTF-8 + 内联 JS 解析通过。纯前端，无结构 / 后端改动。
+- 📌 **设计方向记录**：用户偏好**方正硬朗**（2~3px 圆角、扁平描边、无大柔阴影）+ **干净中性配色**（不要荧光绿）。以后别再把圆角放大 / 加柔阴影往「柔和」走。
 
 ## v3.5.114 UI 细化·行内小图标 ic() 替代散落 emoji + 凭证整理（用户反馈）
 

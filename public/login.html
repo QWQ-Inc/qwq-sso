@@ -83,7 +83,7 @@
       min-height: 520px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 3px;
       box-shadow: var(--card-shadow);
       overflow: hidden;
     }
@@ -331,7 +331,7 @@
       padding: 11px 13px 11px 38px;
       background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 3px;
       color: var(--text);
       font-size: 14px;
       outline: none;
@@ -358,7 +358,7 @@
       height: 44px;
       background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 3px;
       color: var(--accent2);
       font-size: 13px;
       font-weight: 600;
@@ -382,7 +382,7 @@
       padding: 13px;
       background: var(--accent);
       border: none;
-      border-radius: 10px;
+      border-radius: 3px;
       color: #fff;
       font-size: 15px;
       font-weight: 600;
@@ -971,11 +971,11 @@
     }
 
     /* ══════════ v3.5.109 UI 细化：统一柔化小圆角 + 按钮/平台项质感（后置覆盖） ══════════ */
-    .qr-box, .qr-frame, .platform-btn, .oauth-row, .tip, .code-row input, .btn-send { border-radius: 8px; }
-    .oauth-icon, .brand-icon, .platform-btn .p-icon, .pw-bar { border-radius: 6px; }
+    .qr-box, .qr-frame, .platform-btn, .oauth-row, .tip, .code-row input, .btn-send { border-radius: 3px; }
+    .oauth-icon, .brand-icon, .platform-btn .p-icon, .pw-bar { border-radius: 3px; }
     .platform-btn { transition: border-color .18s, box-shadow .18s, transform .18s; }
     .platform-btn:hover { box-shadow: 0 3px 10px rgba(0,0,0,.08); transform: translateY(-1px); }
-    .btn-primary { border-radius: 10px; transition: background .18s, box-shadow .18s, transform .18s; }
+    .btn-primary { border-radius: 3px; transition: background .18s, box-shadow .18s, transform .18s; }
     .btn-primary:active { transform: translateY(.5px); }
     /* 下拉统一自定义箭头 */
     select{ -webkit-appearance:none;appearance:none;cursor:pointer;
@@ -1027,7 +1027,7 @@
 
       <div class="left-sep"></div>
 
-      <div id="org-site-banner" style="display:none;width:100%;padding:8px 12px;border-radius:6px;background:rgba(29,78,137,.08);border:1px solid rgba(29,78,137,.25);color:#1D4E89;font-size:13px;font-weight:600;text-align:center;margin-bottom:10px;"></div>
+      <div id="org-site-banner" style="display:none;width:100%;padding:8px 12px;border-radius:3px;background:rgba(29,78,137,.08);border:1px solid rgba(29,78,137,.25);color:#1D4E89;font-size:13px;font-weight:600;text-align:center;margin-bottom:10px;"></div>
 
       <div class="platform-list" id="platform-list">
         <!-- 由 JS 根据配置动态渲染 -->
@@ -1042,8 +1042,8 @@
       </div>
 
       <!-- 第三方登录来源过渡横幅（从 OIDC 授权流程跳来时显示） -->
-      <div id="oidc-banner" style="display:none;align-items:center;gap:10px;padding:11px 13px;margin-bottom:14px;border-radius:12px;background:var(--surface-2,#F5F5F7);border:1px solid var(--border,rgba(0,0,0,.08));">
-        <div id="oidc-banner-icon" style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden;flex:none;background:#F0F0F0;"></div>
+      <div id="oidc-banner" style="display:none;align-items:center;gap:10px;padding:11px 13px;margin-bottom:14px;border-radius:3px;background:var(--surface-2,#F5F5F7);border:1px solid var(--border,rgba(0,0,0,.08));">
+        <div id="oidc-banner-icon" style="width:38px;height:38px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden;flex:none;background:#F0F0F0;"></div>
         <div style="min-width:0;">
           <div style="font-size:13px;font-weight:600;line-height:1.4;">您正在登录 <span id="oidc-banner-name">应用</span></div>
           <div style="font-size:11.5px;color:var(--text-dim,#86868B);">登录后将返回该应用继续</div>
@@ -1342,9 +1342,9 @@
     ov.id = 'subj-picker';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
     const items = arr.map(({ m, idx }) =>
-      `<button onclick="pickSubject(${idx})" style="display:block;width:100%;text-align:left;padding:12px 14px;margin:6px 0;border:1px solid #E3E3E3;border-radius:8px;background:#fff;font-size:14px;cursor:pointer;">${subjectLabel(m)}</button>`
+      `<button onclick="pickSubject(${idx})" style="display:block;width:100%;text-align:left;padding:12px 14px;margin:6px 0;border:1px solid #E3E3E3;border-radius:3px;background:#fff;font-size:14px;cursor:pointer;">${subjectLabel(m)}</button>`
     ).join('');
-    ov.innerHTML = `<div style="background:#fff;border-radius:12px;padding:18px;max-width:340px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);">
+    ov.innerHTML = `<div style="background:#fff;border-radius:3px;padding:18px;max-width:340px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);">
       <div style="font-size:15px;font-weight:700;margin-bottom:4px;">选择 ${platformZh(key)} 登录主体</div>
       <div style="font-size:12px;color:#888;margin-bottom:10px;">该系统开放了多个登录主体，请选择用哪个登录</div>
       ${items}
@@ -1394,10 +1394,10 @@
     const ov = document.createElement('div');
     ov.id = 'inapp-hint';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
-    ov.innerHTML = `<div style="background:#fff;border-radius:12px;padding:20px;max-width:340px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);color:#222;">
+    ov.innerHTML = `<div style="background:#fff;border-radius:3px;padding:20px;max-width:340px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25);color:#222;">
       <div style="font-size:15px;font-weight:700;margin-bottom:8px;">请在${name}里打开</div>
       <div style="font-size:13px;color:#555;line-height:1.7;margin-bottom:14px;">${name}登录需要在${name}里完成。复制本页链接，到${name}里打开（可以发给自己再点开），会自动用${name}登录；也可以在电脑上用${name}扫码，或用下方账号密码 / 验证码登录。</div>
-      <button id="inapp-copy" style="display:block;width:100%;padding:11px;border:none;border-radius:8px;background:#1677FF;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">复制本页链接</button>
+      <button id="inapp-copy" style="display:block;width:100%;padding:11px;border:none;border-radius:3px;background:#1677FF;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">复制本页链接</button>
       <button onclick="document.getElementById('inapp-hint').remove()" style="display:block;width:100%;padding:10px;margin-top:6px;border:none;background:none;color:#888;font-size:13px;cursor:pointer;">关闭</button>
     </div>`;
     ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
@@ -1691,28 +1691,28 @@
     const ov = document.createElement('div');
     ov.id = 'org-login-ov';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
-    ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.25);">
+    ov.innerHTML = `<div style="background:#fff;border-radius:3px;max-width:400px;width:100%;padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.25);">
       <div style="font-size:16px;font-weight:700;color:#1D1D1F;margin-bottom:6px;">登录到组织（IAM 用户）</div>
       <div style="font-size:12.5px;color:#86868B;line-height:1.6;margin-bottom:14px;">仅登录到所选组织；若该组织启用独立安全，登录后不可切换到其他组织或个人账号，需重新登录。</div>
-      <select id="ol-org" style="width:100%;height:40px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;background:#fff;"><option value="">选择组织…</option></select>
+      <select id="ol-org" style="width:100%;height:40px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;margin-bottom:8px;background:#fff;"><option value="">选择组织…</option></select>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
-        <input id="ol-code" placeholder="或输入组织码搜索不公开的组织" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:12.5px;text-transform:uppercase;"/>
+        <input id="ol-code" placeholder="或输入组织码搜索不公开的组织" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:12.5px;text-transform:uppercase;"/>
         <button class="btn" style="white-space:nowrap;font-size:12px;" onclick="olSearchCode()">搜索</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:8px;" id="ol-mode">
         <button type="button" class="btn" id="ol-mode-pw" style="flex:1;font-size:12px;" onclick="olSetMode('pw')">组织密码</button>
         <button type="button" class="btn" id="ol-mode-code" style="flex:1;font-size:12px;" onclick="olSetMode('code')">验证码</button>
       </div>
-      <input id="ol-account" placeholder="账号：邮箱 / 手机 / UID / 用户名" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;"/>
-      <input id="ol-pass" type="password" placeholder="组织密码（未设则用平台密码）" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;"/>
+      <input id="ol-account" placeholder="账号：邮箱 / 手机 / UID / 用户名" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;margin-bottom:8px;"/>
+      <input id="ol-pass" type="password" placeholder="组织密码（未设则用平台密码）" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;margin-bottom:8px;"/>
       <div id="ol-code-row" style="display:none;gap:6px;margin-bottom:8px;">
-        <input id="ol-vcode" inputmode="numeric" maxlength="8" placeholder="验证码" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;"/>
+        <input id="ol-vcode" inputmode="numeric" maxlength="8" placeholder="验证码" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;"/>
         <button type="button" class="btn" id="ol-send" style="white-space:nowrap;font-size:12px;" onclick="olSendCode()">获取验证码</button>
       </div>
       <div id="ol-tip" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
       <div style="display:flex;gap:8px;">
         <button class="btn" style="flex:1;" onclick="document.getElementById('org-login-ov').remove()">取消</button>
-        <button class="btn-primary" style="flex:1;border:none;border-radius:9px;cursor:pointer;" onclick="doOrgLogin()">登录</button>
+        <button class="btn-primary" style="flex:1;border:none;border-radius:3px;cursor:pointer;" onclick="doOrgLogin()">登录</button>
       </div>
     </div>`;
     document.body.appendChild(ov);
@@ -1834,19 +1834,19 @@
   function showForgotPassword() {
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
-    ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:380px;width:100%;padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.25);">
+    ov.innerHTML = `<div style="background:#fff;border-radius:3px;max-width:380px;width:100%;padding:24px;box-shadow:0 8px 40px rgba(0,0,0,.25);">
       <div style="font-size:16px;font-weight:700;color:#1D1D1F;margin-bottom:6px;">找回密码</div>
       <div style="font-size:12.5px;color:#86868B;line-height:1.6;margin-bottom:14px;">输入绑定了邮箱或手机号的账号，我们会发送验证码。</div>
-      <input id="fp-account" placeholder="邮箱 / 手机号 / 用户名 / UID" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;"/>
+      <input id="fp-account" placeholder="邮箱 / 手机号 / 用户名 / UID" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;margin-bottom:8px;"/>
       <div style="display:flex;gap:6px;margin-bottom:8px;">
-        <input id="fp-code" placeholder="验证码" inputmode="numeric" maxlength="6" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;letter-spacing:4px;font-family:monospace;"/>
+        <input id="fp-code" placeholder="验证码" inputmode="numeric" maxlength="6" style="flex:1;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;letter-spacing:4px;font-family:monospace;"/>
         <button id="fp-send" class="btn" style="white-space:nowrap;font-size:12px;" onclick="fpSend()">获取验证码</button>
       </div>
-      <input id="fp-newpw" type="password" placeholder="新密码（至少 8 位）" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-size:13px;margin-bottom:8px;"/>
+      <input id="fp-newpw" type="password" placeholder="新密码（至少 8 位）" style="width:100%;height:38px;padding:0 10px;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-size:13px;margin-bottom:8px;"/>
       <div id="fp-tip" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
       <div style="display:flex;gap:8px;">
         <button class="btn" style="flex:1;" onclick="this.closest('div[style*=fixed]').remove()">取消</button>
-        <button class="btn-primary" style="flex:1;border:none;border-radius:9px;cursor:pointer;" onclick="fpReset()">重置密码</button>
+        <button class="btn-primary" style="flex:1;border:none;border-radius:3px;cursor:pointer;" onclick="fpReset()">重置密码</button>
       </div>
     </div>`;
     document.body.appendChild(ov);
@@ -1891,7 +1891,7 @@
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
     const body = (doc.content && doc.content.trim()) ? doc.content : '<p style="color:#888;">管理员尚未设置该文档内容。</p>';
-    ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.25);">
+    ov.innerHTML = `<div style="background:#fff;border-radius:3px;max-width:560px;width:100%;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.25);">
       <div style="padding:16px 22px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;">
         <div style="font-size:16px;font-weight:700;color:#1D1D1F;">${(doc.title||'').replace(/[<>]/g,'')}</div>
         <button style="border:none;background:none;font-size:20px;cursor:pointer;color:#888;" onclick="this.closest('div[style*=fixed]').remove()">×</button>
@@ -1922,10 +1922,10 @@
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
     ov.innerHTML = `
-      <div style="background:#fff;border-radius:14px;max-width:360px;width:100%;padding:26px 24px;box-shadow:0 8px 40px rgba(0,0,0,.2);">
+      <div style="background:#fff;border-radius:3px;max-width:360px;width:100%;padding:26px 24px;box-shadow:0 8px 40px rgba(0,0,0,.2);">
         <div style="font-size:16px;font-weight:700;color:#1D1D1F;margin-bottom:4px;">两步验证</div>
         <div id="tfa-appwait" style="display:${appApproval ? 'block' : 'none'};margin-bottom:14px;">
-          <div style="display:flex;align-items:center;gap:10px;padding:12px;background:#F2F7E8;border:1px solid #D7E8B8;border-radius:10px;">
+          <div style="display:flex;align-items:center;gap:10px;padding:12px;background:#F2F7E8;border:1px solid #D7E8B8;border-radius:3px;">
             <div style="width:20px;height:20px;border:3px solid rgba(90,138,0,.25);border-top-color:#5A8A00;border-radius:50%;animation:tfaspin .7s linear infinite;flex-shrink:0;"></div>
             <div style="font-size:12.5px;color:#4a6a00;line-height:1.5;">已向你的手机 App 发送登录请求,<b>在 App 上点「批准」</b>即可登录。</div>
           </div>
@@ -1935,9 +1935,9 @@
         <div id="tfa-codebox" style="display:${appApproval ? 'none' : 'block'};">
           <div id="tfa-desc" style="font-size:12.5px;color:#86868B;margin-bottom:16px;">请输入身份验证器 App 里的 6 位动态验证码；若已开启「实时确认码」，也可打开 QWQ App / 控制台「实时确认」输入里面的确认码</div>
           <input id="tfa-code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位验证码"
-            style="width:100%;height:42px;font-size:18px;letter-spacing:6px;text-align:center;border:1px solid #D2D2D7;border-radius:9px;outline:none;font-family:monospace;" maxlength="20"/>
+            style="width:100%;height:42px;font-size:18px;letter-spacing:6px;text-align:center;border:1px solid #D2D2D7;border-radius:3px;outline:none;font-family:monospace;" maxlength="20"/>
           <div id="tfa-err" style="color:#FF3B30;font-size:12px;margin-top:8px;min-height:16px;"></div>
-          <button id="tfa-ok" style="width:100%;height:42px;margin-top:8px;border:none;border-radius:9px;background:#5A8A00;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">验证并登录</button>
+          <button id="tfa-ok" style="width:100%;height:42px;margin-top:8px;border:none;border-radius:3px;background:#5A8A00;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">验证并登录</button>
           <div style="display:flex;justify-content:space-between;margin-top:12px;font-size:12px;">
             <a id="tfa-toggle" href="javascript:void 0" style="color:#5A8A00;">用恢复码登录</a>
             <a id="tfa-cancel" href="javascript:void 0" style="color:#86868B;">取消</a>
@@ -2049,7 +2049,7 @@
     const bar = document.createElement('div');
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9997;background:#111;color:#fff;font-size:13px;padding:9px 14px;display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap;';
     bar.innerHTML = '<span>检测到手机，可用 QWQ SSO App 登录</span>'
-      + '<button id="open-app-btn" style="background:#2E86C1;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:13px;font-weight:600;cursor:pointer;">打开 App</button>'
+      + '<button id="open-app-btn" style="background:#2E86C1;color:#fff;border:none;border-radius:3px;padding:5px 12px;font-size:13px;font-weight:600;cursor:pointer;">打开 App</button>'
       + '<span style="opacity:.6;font-size:12px;">未安装？直接在下方网页登录</span>';
     document.body.prepend(bar);
     const btn = document.getElementById('open-app-btn');
