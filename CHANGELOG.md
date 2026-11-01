@@ -4,6 +4,16 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.121 — emoji→小图标续：账号设定头 + 组织/打开 chrome（用户反馈「继续」）
+
+- 承接 v3.5.114/116。扫清剩余的「散落 chrome emoji」：
+  - 账号设定三个卡头 🔐 两步验证 / 🔑 Passkey / 🖨️ 打印 → lock / key / printer（`data-ic` 占位 + hydrate）。
+  - 🏢（组织，列表 / 徽章 / 公共账号 / 我管理的组织 / 部门，7 处）→ `ic('org')`。
+  - ↗（打开 / 打开应用 / 切换使用 等按钮，6 处）→ 新图标 `ic('external')`（箭头出框）。
+  - 新增图标 external / idcard / gift（共 31 个）。
+- ⚠️ **刻意不动**（这些不是「奇怪的散落 emoji」，是成体系的）：① `icon:` 数据字段（ENV_GROUPS 分类 / 左侧菜单 / 平台元数据 / 商城奖励类型 的图标映射，一整套主题化配置）；② 弹窗里 32~48px 的大装饰图标（绑定 / 兑换结果等 hero 图）；③ 散文 `⚠️`/`💡`、MDM 命令图标映射、奖牌 🥇🥈🥉、© 等。
+- ⚠️ 测试：dev 浏览器实测账号设定头 lock/key/printer 图标、全文 🏢/↗ 已清零、`[data-ic]:empty`=0、零相关报错；UTF-8 + 内联 JS 解析通过。纯前端。
+
 ## v3.5.120 — 企业微信图标换成腾讯官网官方全彩标（用户反馈）
 
 - 用户给出腾讯企业微信官网（tencent.com/.../wecom/）与 iconfont。从**腾讯官网**抓到官方全彩 SVG `wecom-1.svg`（蓝气泡 + 橙/绿/黄/蓝连接节点，#0078ff/#fb6500/#2dbc00/#ffcc00），替换掉 v3.5.119 的单色字形版 → `brand-icons.js` 的 wecom 现为**真·官方全彩标**。

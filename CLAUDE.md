@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.120**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.121**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.121 emoji→小图标续：账号设定头 + 组织/打开 chrome（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.114/116 的 emoji→`ic()` 小图标。
+- 账号设定三卡头 🔐/🔑/🖨️ → lock/key/printer（`data-ic` 占位 + `hydrateIcons`）；🏢（组织，列表/徽章/公共账号/我管理的组织/部门，7 处）→ `ic('org')`；↗（打开/打开应用/切换使用 按钮，6 处）→ 新图标 `ic('external')`。`ICON_PATHS` 加 external/idcard/gift（共 31 个；idcard/gift 备用，本版未全用）。Node 批量 replace（避开 shell 对 `${}`/`'` 的转义）。
+- ⚠️ **判定标准（以后沿用）**：只换「散落的 chrome emoji」（按钮前缀 / 卡头 / 列表元信息里当装饰的 emoji）。**不换**成体系的：① `icon:` 数据字段（ENV_GROUPS 分类 / 左侧菜单 / 平台元数据 / 商城奖励类型 的图标映射——一整套主题配置，换了要重构渲染）；② 弹窗 32~48px 大装饰 hero 图；③ 散文 ⚠️/💡、MDM 命令图标映射（各命令不同 emoji，换 SVG 会撞图标丢语义）、奖牌 🥇🥈🥉、© 等。
+- ⚠️ **验证踩坑**：dev 浏览器验证前务必在**同一 origin**（同端口）设 `localStorage._dev_session` 再进 dashboard——换了 serve 端口 = 换 origin，旧 origin 设的 session 不生效会被打回 login.html。
+- ⚠️ 测试：dev 实测账号设定头 lock/key/printer、全文 🏢/↗ 清零、`[data-ic]:empty`=0、零相关报错；UTF-8 + 内联 JS 解析通过。见 [[ui-design-preference]]。
 
 ## v3.5.120 企业微信图标换腾讯官网官方全彩标（用户反馈）
 
