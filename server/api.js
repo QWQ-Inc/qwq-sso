@@ -4677,7 +4677,7 @@ router.post('/admin/backups/export', requireAdmin(1), async (req, res) => {
   if (backupRunning) return res.status(409).json({ error: '已有备份在进行中，请稍后' });
   backupRunning = true;
   try {
-    const { buf, name, encrypted } = await backup.buildExportZip(db, DATA_DIR, pass, { version: APP_VERSION });
+    const { buf, name, encrypted } = await backup.buildExportZip(db, DATA_DIR, pass, { version: APP_VERSION, schema_version: require('./db').SCHEMA_VERSION });
     audit('backup.exported', { subject: 'backup', actor: actorOf(req), detail: { encrypted, size: buf.length, format: 'zip' } });
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
@@ -4704,13 +4704,25 @@ router.post('/admin/restore/stage', requireAdmin(1), express.raw({ type: () => t
     if (!buf || !buf.length) return res.status(400).json({ error: '没有收到文件' });
     let pass = '';
     try { const h = req.get('X-Backup-Pass'); if (h) pass = Buffer.from(h, 'base64').toString('utf8'); } catch (_) {}
-    const dbBuf = backup.decodeBackup(Buffer.isBuffer(buf) ? buf : Buffer.from(buf), pass);
+    const rawBuf = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+    const dbBuf = backup.decodeBackup(rawBuf, pass);
     const info = backup.inspectDbBuffer(dbBuf, DATA_DIR);
+    let compat = null;
+    try {
+      const mdb = require('./db');
+      const manifest = backup.readManifest(rawBuf);
+      const bs = backup.backupSchema(dbBuf, DATA_DIR);
+      compat = backup.computeCompat({
+        backupVersion: manifest && manifest.version, currentVersion: APP_VERSION,
+        backupSchemaVer: bs.user_version, currentSchemaVer: mdb.SCHEMA_VERSION,
+        backupTables: bs.tables, liveTables: mdb.liveSchema().tables,
+      });
+    } catch (_) {}
     const token = uuidv4();
     const staged = bkPath.join(DATA_DIR, `.restore-stage-${token}.db`);
     bkFs.writeFileSync(staged, dbBuf, { mode: 0o600 });
     restoreStages.set(token, { file: staged, at: Date.now(), info });
-    res.json({ success: true, token, info });
+    res.json({ success: true, token, info, compat });
   } catch (e) { res.status(400).json({ error: e.message, need_pass: !!e.needPass }); }
 });
 

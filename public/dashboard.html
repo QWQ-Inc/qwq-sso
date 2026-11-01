@@ -5927,6 +5927,38 @@ function openImportRestore() {
     </div></div>`;
   document.body.appendChild(m);
 }
+// 导入兼容性两桶提示（v3.5.108）：① 本版本用不上的数据；② 原理上做不到的。不阻断导入。
+function impCompatHtml(c) {
+  if (!c) return '';
+  const bV = c.backup_version || '未知', cV = c.current_version || '未知';
+  if (c.direction !== 'downgrade') {
+    // 升级 / 同版：安全，一行绿字即可（升级会自动补齐表/列）
+    const t = c.direction === 'upgrade'
+      ? `备份版本 <b>v${esc(bV)}</b> 比当前 <b>v${esc(cV)}</b> 旧 — 升级/恢复方向，安全（启动时会自动补齐新表/字段）。`
+      : `备份版本 <b>v${esc(bV)}</b> 与当前一致，直接恢复即可。`;
+    return `<div style="border:1px solid #1a7f37;border-radius:6px;padding:8px 10px;margin-top:8px;color:var(--txt);line-height:1.8;font-size:13px;">✓ ${t}</div>`;
+  }
+  // 降级：两桶提示
+  let bucket1 = '';
+  if (c.has_unusable) {
+    const parts = [];
+    if (c.unknown_tables && c.unknown_tables.length)
+      parts.push(`整张表：<code>${c.unknown_tables.map(esc).join('</code> <code>')}</code>`);
+    const cols = c.unknown_columns || {};
+    const colKeys = Object.keys(cols);
+    if (colKeys.length)
+      parts.push('字段：' + colKeys.map(t => `<code>${esc(t)}</code>(${cols[t].map(esc).join(', ')})`).join('；'));
+    bucket1 = `<div style="margin-top:6px;"><b>① 本版本用不上的数据</b>（备份里有、当前版本不认识 → 会留在库里但不显示/不使用，升级回新版本后才重新生效）：<br>${parts.join('<br>')}</div>`;
+  } else {
+    bucket1 = `<div style="margin-top:6px;"><b>① 本版本用不上的数据</b>：未检出新增的表/字段（但仍请看第②条）。</div>`;
+  }
+  const bucket2 = `<div style="margin-top:6px;"><b>② 原理上做不到的</b>：
+    <br>· 无法让当前较旧版本理解它发布之后才新增的结构——上面列的数据只能等升级回新版本才生效；
+    <br>· 若把这份备份导入<b>更早、早于 .zip 导出格式（v3.5.102 之前）的版本</b>，那些版本根本打不开此文件；
+    <br>· 导出不含平台面板（如 Zeabur）里直接设的环境变量，恢复后需重设。</div>`;
+  return `<div style="border:1px solid var(--warn,#9a6700);background:rgba(154,103,0,.08);border-radius:6px;padding:8px 10px;margin-top:8px;color:var(--txt);line-height:1.8;font-size:13px;">
+    ⚠️ <b>降级导入</b>：备份来自更新的 <b>v${esc(bV)}</b>，当前运行 <b>v${esc(cV)}</b>。可以继续导入，但请了解：${bucket1}${bucket2}</div>`;
+}
 async function importStage() {
   const f = document.getElementById('imp-file').files[0];
   if (!f) { showToast('请选择文件'); return; }
@@ -5944,6 +5976,7 @@ async function importStage() {
     info.innerHTML = `<div style="border:1px solid #1a7f37;border-radius:6px;padding:8px 10px;color:var(--txt);line-height:1.9;">
       ✓ 文件有效。将恢复为：<br>用户 <b>${i.users ?? '—'}</b> · 应用 <b>${i.apps ?? '—'}</b> · 环境变量 <b>${i.env_config ?? '—'}</b> · 组织 <b>${i.oauth_subjects ?? '—'}</b> · 登录凭证 <b>${i.oauth_providers ?? '—'}</b><br>
       <span style="color:var(--err);">⚠️ 确认恢复会覆盖当前全部数据并重启服务，不可撤销。</span></div>
+      ${impCompatHtml(data.compat)}
       <button class="btn primary" style="margin-top:10px;background:var(--err);border-color:var(--err);" onclick="importApply()">确认恢复（覆盖并重启）</button>`;
   } catch (e) { info.innerHTML = '<span style="color:var(--err);">' + esc(e.message) + '</span>'; }
 }

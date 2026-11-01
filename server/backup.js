@@ -254,6 +254,66 @@ function decodeBackup(buf, passphrase) {
   return b;
 }
 
+// ── 导入兼容性判断（v3.5.108）：告诉用户这份备份相对当前版本是升级/同版/降级，
+//    以及「本版本用不上的数据」（备份里有、当前 schema 没有的表/列）。不阻断导入。
+function readManifest(buf) {
+  try {
+    if (buf && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
+      const entries = zipRead(buf);
+      if (entries['MANIFEST.json']) return JSON.parse(entries['MANIFEST.json'].toString('utf8'));
+    }
+  } catch (_) {}
+  return null;  // 旧 .db.gz 无 MANIFEST
+}
+
+// 读备份库字节的 user_version 与表/列清单（只读临时打开，用完即删）
+function backupSchema(dbBuf, dataDir) {
+  const Database = require('better-sqlite3');
+  const tmp = path.join(dataDir, `.bschema-${process.pid}-${Date.now()}.db`);
+  fs.writeFileSync(tmp, dbBuf);
+  let ro;
+  try {
+    ro = new Database(tmp, { readonly: true, fileMustExist: true });
+    let uv = 0; try { uv = ro.pragma('user_version', { simple: true }) || 0; } catch (_) {}
+    const tables = {};
+    for (const { name } of ro.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) {
+      try { tables[name] = ro.prepare(`PRAGMA table_info(${name})`).all().map(c => c.name); } catch (_) { tables[name] = []; }
+    }
+    return { user_version: uv, tables };
+  } finally { try { ro && ro.close(); } catch (_) {} try { fs.unlinkSync(tmp); } catch (_) {} }
+}
+
+// 语义版本比较（支持 4 段，如 3.5.107 / 3.5.107.1）：a>b→1，a<b→-1，相等→0
+function cmpSemver(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x > y ? 1 : -1; }
+  return 0;
+}
+
+// 纯函数：算出方向 + 本版本认不得的表/列。backupTables/liveTables = {表名:[列名]}
+function computeCompat(opts) {
+  const bV = opts.backupVersion || '', cV = opts.currentVersion || '';
+  const bS = opts.backupSchemaVer || 0, cS = opts.currentSchemaVer || 0;
+  let direction = 'same';
+  if (bS && cS && bS !== cS) direction = bS > cS ? 'downgrade' : 'upgrade';
+  else if (bV && cV) { const c = cmpSemver(bV, cV); direction = c > 0 ? 'downgrade' : (c < 0 ? 'upgrade' : 'same'); }
+  const live = opts.liveTables || {}, back = opts.backupTables || {};
+  const unknown_tables = Object.keys(back).filter(t => !live[t]).sort();
+  const unknown_columns = {};
+  for (const t of Object.keys(back)) {
+    if (!live[t]) continue;
+    const miss = back[t].filter(c => !live[t].includes(c));
+    if (miss.length) unknown_columns[t] = miss;
+  }
+  return {
+    backup_version: bV, current_version: cV, backup_schema: bS, current_schema: cS,
+    direction, unknown_tables, unknown_columns,
+    has_unusable: unknown_tables.length > 0 || Object.keys(unknown_columns).length > 0,
+  };
+}
+
 // 生成一份 .zip 全站导出（含 sso.db[.enc] + MANIFEST.json + README.txt）
 async function buildExportZip(db, dataDir, passphrase, meta = {}) {
   const tmp = path.join(dataDir, `.export-${process.pid}-${Date.now()}.db`);
@@ -263,6 +323,7 @@ async function buildExportZip(db, dataDir, passphrase, meta = {}) {
     let counts = {}; try { counts = inspectDbBuffer(raw, dataDir); } catch (_) {}
     const encrypted = !!passphrase;
     const manifest = { product: 'QWQ SSO', kind: 'full-export', version: meta.version || '',
+      schema_version: meta.schema_version || 0,
       created_at: new Date().toISOString(), encrypted, db_file: encrypted ? 'sso.db.enc' : 'sso.db', counts };
     const entries = [
       { name: 'MANIFEST.json', data: Buffer.from(JSON.stringify(manifest, null, 2)) },
@@ -361,6 +422,7 @@ async function read(target, cfg, dataDir, name) {
 
 module.exports = { encrypt, decrypt, sigv4, snapshot, writeTo, list, read, stamp, localDir,
   ossHost, ossSign, decodeBackup, buildExportZip, inspectDbBuffer, stageRestore,
+  readManifest, backupSchema, computeCompat, cmpSemver,
   zipWrite, zipRead, crc32, FILE_RE };
 
 // 命令行：解密备份

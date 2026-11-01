@@ -732,6 +732,32 @@ document.addEventListener('DOMContentLoaded', () => {
     $('rs-result').innerHTML = '正在恢复，系统即将重启…';
     await fn(c);
   }
+  // 导入兼容性两桶提示（v3.5.108）：① 本版本用不上的数据；② 原理上做不到的。不阻断恢复。
+  function rsCompatHtml(c) {
+    if (!c) return '';
+    const bV = c.backup_version || '未知', cV = c.current_version || '未知';
+    if (c.direction !== 'downgrade') {
+      const t = c.direction === 'upgrade'
+        ? `备份 <b>v${esc(bV)}</b> 比当前 <b>v${esc(cV)}</b> 旧 — 升级/恢复方向，安全（启动会自动补齐新表/字段）。`
+        : `备份 <b>v${esc(bV)}</b> 与当前一致，直接恢复即可。`;
+      return `<div style="border:1px solid var(--ok);border-radius:4px;padding:8px 10px;margin-top:8px;line-height:1.8;font-size:13px;">✓ ${t}</div>`;
+    }
+    let b1 = '';
+    if (c.has_unusable) {
+      const parts = [];
+      if (c.unknown_tables && c.unknown_tables.length) parts.push(`整张表：<code>${c.unknown_tables.map(esc).join('</code> <code>')}</code>`);
+      const cols = c.unknown_columns || {}, keys = Object.keys(cols);
+      if (keys.length) parts.push('字段：' + keys.map(t => `<code>${esc(t)}</code>(${cols[t].map(esc).join(', ')})`).join('；'));
+      b1 = `<div style="margin-top:6px;"><b>① 本版本用不上的数据</b>（备份有、当前不认识 → 留在库里但不显示/不使用，升级回新版本才生效）：<br>${parts.join('<br>')}</div>`;
+    } else {
+      b1 = `<div style="margin-top:6px;"><b>① 本版本用不上的数据</b>：未检出新增的表/字段（仍请看第②条）。</div>`;
+    }
+    const b2 = `<div style="margin-top:6px;"><b>② 原理上做不到的</b>：
+      <br>· 无法让当前较旧版本理解它发布之后才新增的结构——上面列的数据需升级回新版本才生效；
+      <br>· 导入到<b>更早、早于 .zip 格式（v3.5.102 之前）的版本</b>会根本打不开此文件；
+      <br>· 导出不含平台面板里直接设的环境变量，恢复后需重设。</div>`;
+    return `<div style="border:1px solid var(--err,#d33);background:rgba(211,51,51,.07);border-radius:4px;padding:8px 10px;margin-top:8px;line-height:1.8;font-size:13px;">⚠️ <b>降级导入</b>：备份来自更新的 <b>v${esc(bV)}</b>，当前 <b>v${esc(cV)}</b>。可继续，但请了解：${b1}${b2}</div>`;
+  }
   // 上传文件：先 stage 预览，再 apply
   let _token = null;
   $('rs-file-btn').addEventListener('click', async () => {
@@ -746,6 +772,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!r.ok) { $('rs-result').innerHTML = '<span style="color:var(--err);">' + esc(d.error || '校验失败') + (d.need_pass ? '（请填解密口令）' : '') + '</span>'; return; }
       _token = d.token; const i = d.info || {};
       $('rs-result').innerHTML = `<div style="border:1px solid var(--ok);border-radius:4px;padding:8px 10px;line-height:1.9;">✓ 文件有效：用户 <b>${i.users ?? '—'}</b> · 应用 <b>${i.apps ?? '—'}</b> · 环境变量 <b>${i.env_config ?? '—'}</b> · 组织 <b>${i.oauth_subjects ?? '—'}</b> · 凭证 <b>${i.oauth_providers ?? '—'}</b></div>
+        ${rsCompatHtml(d.compat)}
         <button type="button" id="rs-file-apply" style="margin-top:10px;padding:9px 16px;border:none;border-radius:4px;background:var(--err,#d33);color:#fff;font-weight:600;cursor:pointer;">确认恢复（覆盖并重启）</button>`;
       $('rs-file-apply').addEventListener('click', () => confirmAndRun(async confirm => {
         const rr = await fetch('/setup/restore/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: _token, confirm }) });

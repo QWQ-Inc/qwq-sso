@@ -2046,9 +2046,28 @@ const limitedAdminStmts = {
   remove:    db.prepare('DELETE FROM limited_admins WHERE id=?'),
 };
 
+// ── Schema 版本标记（v3.5.108）──
+// 单调递增的库结构版本：每次新增表 / 列（上面的 CREATE / ALTER 迁移）时同步 +1。
+// 写进 SQLite 的 PRAGMA user_version，导出备份时随库字节一起带走；导入时据此判断
+// 备份相对当前代码是「更旧（升级/恢复，安全）/ 同版 / 更新（降级，新功能数据本版本用不上）」。
+const SCHEMA_VERSION = 1;
+try { db.pragma('user_version = ' + SCHEMA_VERSION); } catch (_) {}
+
+// 当前运行库的表与列清单（导入时比对用：备份里有、当前 schema 没有的表/列 = 本版本认不得、用不上的数据）
+function liveSchema() {
+  const tables = {};
+  try {
+    for (const { name } of db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) {
+      try { tables[name] = db.prepare(`PRAGMA table_info(${name})`).all().map(c => c.name); } catch (_) { tables[name] = []; }
+    }
+  } catch (_) {}
+  return { user_version: SCHEMA_VERSION, tables };
+}
+
 module.exports = {
   DB_FILE, DATA_DIR,
   db,
+  SCHEMA_VERSION, liveSchema,
   nextUidSeq,
   isSetupDone,
   verify: verifyStmts,

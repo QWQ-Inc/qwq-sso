@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.107**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.108**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -438,6 +438,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.108 导入兼容性软提示（降级能导，先告知用不上/做不到的）（用户反馈）
+
+三级版本。用户要"降级代码很有必要"（回滚旧版本），所以**不做硬拒绝**，改为导入预览给**软提示（不阻断）**，把两桶讲清：① 这份备份里本版本用不上的数据；② 原理上做不到的。
+- **背景（查实的兼容性事实）**：导出=整库 SQLite 快照，导入=开机前整库替换 + `db.js` 建表/ALTER 迁移。**旧→新（升级/恢复）安全**（IF NOT EXISTS 建表 + 所有 NOT NULL 新列都带 DEFAULT，老代码 INSERT 不崩，one-time 迁移重跑）；**新→旧（降级）可导但有限**：新库多出的表/列老代码无害忽略=用不上；搬数据并清空旧列的迁移（v3.5.36/51）老代码看着数据少了；且 **v3.5.102 之前的版本 `decodeBackup` 不认 .zip、根本打不开**（无法补救已发布的老代码）。
+- **数据(db.js)**：`SCHEMA_VERSION`（常量，**新增表/列时同步 +1**）写进 `PRAGMA user_version`，随库字节带走；`liveSchema()` 返回当前运行库的表与列清单（导入时比对用）。两者已导出。
+- **backup.js**：`readManifest(buf)`（zip 取 MANIFEST.json，旧 .db.gz 无）；`backupSchema(dbBuf)`（只读临时打开读 user_version + 表/列）；`cmpSemver`（支持 4 段）；`computeCompat({backupVersion,currentVersion,backupSchemaVer,currentSchemaVer,backupTables,liveTables})`（纯函数：定方向 upgrade/same/downgrade——schema 版本优先、回退语义版本；算 `unknown_tables`/`unknown_columns`=备份有当前没有=用不上；`has_unusable`）。MANIFEST 加 `schema_version`（buildExportZip 收 `meta.schema_version`，api.js 导出时传 `db.SCHEMA_VERSION`）。
+- **接口**：`POST /admin/restore/stage`（管理端上传预览）与 `POST /setup/restore/stage`（安装向导）都多回 `compat`（readManifest + backupSchema + computeCompat，整段 try 包住、失败则 compat=null 不影响导入）。
+- **前端**：dashboard `impCompatHtml(c)` / setup.html `rsCompatHtml(c)`——升级/同版给一行绿字；降级给黄/红块两桶：① 列出认不得的整表与字段（"留在库里但本版本不用，升级回新版本才生效"）② 固定文案（无法让旧版本理解后发布的结构 / 早于 .zip 格式的版本打不开 / 导出不含平台 env）。**确认恢复按钮照常显示，不阻断。**
+- ⚠️ **以后的作者约定（把降级安全变成设计保证，务必遵守）**：① 新增表/列时 `SCHEMA_VERSION` +1；② 备份容器格式（.zip 布局）与加密魔数 `QWQBK1` 是**冻结契约**，未来每个版本都要继续能读（这样从现在起的版本间降级导入不破）；③ 搬数据的迁移**不要清空源列**（留废弃但有值的副本），回滚的老代码仍能读到。
+- ⚠️ 测试：`scratchpad/compat-test.js` 16 项全过（cmpSemver 含 4 段/数值序、方向 upgrade/same/downgrade、schema 版本优先、认不得整表与列、降级但无新增结构 has_unusable=false、无版本信息的旧备份不误判降级）；server(db/backup/api/setup) `node --check` + dashboard/setup 内联 JS 解析通过。真实 HTTP 预览链路本机无 better-sqlite3 未端到端，compat 计算是纯函数+单测覆盖，backupSchema 与既有 inspectDbBuffer 同构（只读临时库）。
+- 最稳的回滚姿势仍是**升级前导一份版本匹配的快照**，真回滚就把同版本快照导回同版本代码，完全绕开跨版本。
 
 ## v3.5.107 OIDC id_token 可选 RS256（平台私钥签名 + JWKS 公开公钥）
 

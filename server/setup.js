@@ -30,13 +30,25 @@ router.post('/restore/stage', express.raw({ type: () => true, limit: 512 * 1024 
     const buf = req.body;
     if (!buf || !buf.length) return res.status(400).json({ error: '没有收到文件' });
     let pass = ''; try { const h = req.get('X-Backup-Pass'); if (h) pass = Buffer.from(h, 'base64').toString('utf8'); } catch (_) {}
-    const dbBuf = backup.decodeBackup(Buffer.isBuffer(buf) ? buf : Buffer.from(buf), pass);
+    const rawBuf = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+    const dbBuf = backup.decodeBackup(rawBuf, pass);
     const info = backup.inspectDbBuffer(dbBuf, DATA_DIR);
+    let compat = null;
+    try {
+      const mdb = require('./db');
+      const manifest = backup.readManifest(rawBuf);
+      const bs = backup.backupSchema(dbBuf, DATA_DIR);
+      compat = backup.computeCompat({
+        backupVersion: manifest && manifest.version, currentVersion: (() => { try { return require('../package.json').version; } catch (_) { return ''; } })(),
+        backupSchemaVer: bs.user_version, currentSchemaVer: mdb.SCHEMA_VERSION,
+        backupTables: bs.tables, liveTables: mdb.liveSchema().tables,
+      });
+    } catch (_) {}
     const token = uuidv4();
     const staged = path.join(DATA_DIR, `.restore-stage-${token}.db`);
     fs.writeFileSync(staged, dbBuf, { mode: 0o600 });
     setupStages.set(token, { file: staged, at: Date.now(), info });
-    res.json({ success: true, token, info });
+    res.json({ success: true, token, info, compat });
   } catch (e) { res.status(400).json({ error: e.message, need_pass: !!e.needPass }); }
 });
 router.post('/restore/apply', (req, res) => {

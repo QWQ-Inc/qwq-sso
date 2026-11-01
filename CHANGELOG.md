@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.108 — 导入兼容性软提示（降级能导，先告知用不上/做不到的）
+
+- 备份导入是整库快照：旧→新安全（启动自动补齐表/列），新→旧（降级）可导但新功能数据本版本用不上。
+- 导入预览新增**软提示（不阻断）**：判断备份相对当前是升级/同版/降级，降级时列出 ① 本版本认不得的表/列（用不上的数据）② 原理上做不到的（无法让旧版本理解后发布的结构、早于 .zip 格式的版本打不开、导出不含平台 env）。
+- 加 `PRAGMA user_version`（SCHEMA_VERSION）+ MANIFEST `schema_version` 作结构版本标记；`db.liveSchema()` 供比对。管理端与安装向导两处导入都显示提示。
+
 ## v3.5.107 — OIDC id_token 可选 RS256（JWKS 公开公钥）
 
 - **应用可改用 RS256 签名**：管理端「应用管理」编辑应用，「ID Token 签名算法」选 RS256 后，id_token 与 Back-Channel Logout 的 logout_token 改用平台私钥签名（头部带 `kid`），公钥经 **`/oauth/jwks`**（同 `/.well-known/jwks.json`，发现文档里的 `jwks_uri`）公开。适合不持有 `client_secret`、只认非对称签名的验证方，例如 Kubernetes kube-apiserver 的 OIDC 认证。默认仍是 HS256，已接入的应用不受影响。
