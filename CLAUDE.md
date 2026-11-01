@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.119**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.120**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.120 企业微信图标换腾讯官网官方全彩标（用户反馈）
+
+三级版本（纯前端资源）。用户给出腾讯企业微信官网与 iconfont.cn。
+- `brand-icons.js` wecom：从**腾讯官网**抓官方全彩 SVG `https://www.tencent.com/wp-content/uploads/2022/12/wecom-1.svg`（页面 `<img>` 里找到）——蓝气泡 #0078ff + 橙/绿/黄连接节点，替换 v3.5.119 的单色字形。
+- ⚠️ **两个坑**：① 颜色写在 svg 的 `<style>.cls-N{fill:…}`，内联嵌入页面会**全局样式泄漏**（.cls-1 撞别的元素）→ Node 解析类→fill 映射、把 `class="cls-N"` 换成每个 path 的内联 `fill="…" fill-rule="evenodd"`、删 `<defs>/<style>`。② 源 viewBox `0 0 50 50` 但图形只占一块（首屏渲染成一小团）→ 浏览器里 `path.getBBox()` 求并集、收紧 viewBox 到 `3.51 6.83 42.97 36.32`（带 1.4 padding），小尺寸填满方片。**以后嵌带 `<style class>` 的外部 SVG 都要这两步：类改内联 + 按 bbox 收 viewBox。**
+- ⚠️ **钉钉没换**：iconfont 搜「钉钉」1901 个全是用户上传（登录才下载、授权不清、多单色单路径），非官方权威；钉钉真实 logo 近单色蓝，v3.5.119 的 `ant-design:dingtalk` 官方字形 + 品牌蓝已准确。
+- 至此登录图标官方资源来源：Simple Icons / Dashboard Icons（飞书·抖音全彩）/ Iconify（钉钉字形）/ 腾讯官网（企微全彩）/ Google·Microsoft 官方多色。
+- ⚠️ 测试：node 校验 14 键均合法 SVG + wecom 含四色；dev 浏览器渲染实测企微官方气泡标填满方片。见 [[ui-design-preference]]。
 
 ## v3.5.119 钉钉 / 企业微信 图标换 Iconify 官方品牌字形（用户反馈）
 
