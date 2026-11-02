@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.124**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.125**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.125 emoji→小图标续：跨域联邦 / 门禁访客 / 我的设备簇 + 修 ic(external) 漏引号（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.114/116/121 的 emoji→`ic()` 小图标，收点名剩下的**跨域联邦 / 门禁访客 / 我的设备**簇 + 几个明显按钮。
+- `ICON_PATHS` 加 3 个：`pin`（定位针）/ `send`（纸飞机，推送）/ `ticket`（领取码），共 36 个。
+- **转换（全在 JS 模板串 `${ic()}`）**：联邦伙伴名 🔗→link、📤推送→send、伙伴应用头 🔗→link、直接推送 📤→send、访客码访客名 👤→user、我的设备「🎫领取码/📍最近定位/🔒锁定/📍定位」→ticket/pin/lock/pin、商城券 🗑丢弃→trash、应用卡「移到文件夹」📁→folder、关于页「🔄一键拉取更新」→sync、分组/组织管理员弹窗头 👤/🛡️→user/shield。
+- **静态 HTML（`<span data-ic>` 占位 + `hydrateIcons`）**：联邦「⚡生成跨域码/📥用跨域码加入」→bolt/import。
+- 🐛 **顺带修**：v3.5.121 把「打开 / 切换使用 ↗」按钮的 ↗ 换成 external 时**6 处全写成 `${ic(external)}`（漏引号）**——`external` 不是变量 → `ic(undefined)` 返回空串 → 这些按钮的外链图标一直没渲染出来（联邦打开、应用市场「打开」、应用详情「打开应用」、公共账号「切换使用」）。`sed` 全局 `ic(external)`→`ic('external')` 修掉（纯 ASCII，字节安全）。
+- ⚠️ **判定标准沿用**（见 [[ui-design-preference]]）：只换散落 chrome emoji（按钮 / 卡头 / 列表名前缀）；**不换** `icon:` 数据字段、`<option>` 里的 📁（放不了 SVG）、散文 ⚠️💡、✓✗ 状态标、大 hero 图、MDM 命令图标映射、徽章状态 🔒已锁定。本簇以外各页仍有 chrome emoji，后续「继续」逐页收。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；grep 确认目标 emoji 清零、6 处 `ic(external)` 全修、3 个新图标就位。纯前端布局，无后端改动。
 
 ## v3.5.124 全局细化：行内代码 / 代码块统一样式（UI 细化）
 

@@ -1133,6 +1133,9 @@ const ICON_PATHS = {
   external:'<path d="M8 4H5.2a1.2 1.2 0 00-1.2 1.2v9.6A1.2 1.2 0 005.2 16h9.6a1.2 1.2 0 001.2-1.2V12"/><path d="M11.5 3.5H16.5V8.5"/><path d="M16.5 3.5 9.5 10.5"/>',
   idcard: '<rect x="2.5" y="4.5" width="15" height="11" rx="1.5"/><circle cx="7" cy="9.2" r="1.9"/><path d="M4.4 13.6c0-1.5 1.2-2.3 2.6-2.3s2.6.8 2.6 2.3"/><path d="M11.8 8.4h3.6M11.8 11h3"/>',
   gift:   '<rect x="3" y="9" width="14" height="8" rx="1"/><path d="M2.3 9h15.4v2.6H2.3z"/><path d="M10 6.6V17"/><path d="M10 6.6S8.8 3.6 6.8 4.3c-1.6.6-1 2.6.8 2.6zM10 6.6s1.2-3 3.2-2.3c1.6.6 1 2.6-.8 2.6z"/>',
+  pin:    '<path d="M10 17.5s5-4.6 5-9a5 5 0 10-10 0c0 4.4 5 9 5 9z"/><circle cx="10" cy="8.4" r="2"/>',
+  send:   '<path d="M16.8 3.2l-13 5 5.2 2.1 2.6 5.5 5.2-12.6z"/><path d="M8.9 10.2l3.4-3.4"/>',
+  ticket: '<path d="M3 7.5a1 1 0 011-1h12a1 1 0 011 1V9a1.5 1.5 0 000 3v1.5a1 1 0 01-1 1H4a1 1 0 01-1-1V12a1.5 1.5 0 000-3V7.5z"/><path d="M12 6.8v6.4"/>',
 };
 // 静态 HTML 里用 <span data-ic="name"></span> 占位，启动时一次性填入 SVG（无法在静态 HTML 里调 ic()）
 function hydrateIcons(root) {
@@ -2877,8 +2880,8 @@ async function loadMe() {
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">
             <h3>跨系统联邦</h3>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              <button class="btn" style="font-size:11px;" onclick="openPairGenModal()">⚡ 生成跨域码</button>
-              <button class="btn" style="font-size:11px;" onclick="openPairRedeemModal()">📥 用跨域码加入</button>
+              <button class="btn" style="font-size:11px;" onclick="openPairGenModal()"><span data-ic="bolt"></span> 生成跨域码</button>
+              <button class="btn" style="font-size:11px;" onclick="openPairRedeemModal()"><span data-ic="import"></span> 用跨域码加入</button>
               <button class="btn" style="font-size:11px;" onclick="openPeerModal()">+ 手动登记</button>
             </div>
           </div>
@@ -5223,16 +5226,16 @@ async function renderMarket() {
       <div style="display:flex;align-items:center;gap:10px;">
         <div class="app-icon" style="background:${esc(a.icon_bg||'#F0F0F0')};overflow:hidden;">${appIconInner(a)}</div>
         <div style="flex:1;min-width:0;"><div class="app-name">${a.name}${(a.category||'').trim()?` <span style="font-size:10px;color:var(--txd);background:var(--sf2);padding:1px 6px;border-radius:3px;">${esc(a.category)}</span>`:''}</div><div class="app-desc">${a.description}</div></div>
-        <button class="btn" title="移到文件夹" style="font-size:12px;padding:2px 7px;" data-id="${esc(a.id)}" onclick="moveAppToFolder(this.dataset.id)">📁</button>
+        <button class="btn" title="移到文件夹" style="font-size:12px;padding:2px 7px;" data-id="${esc(a.id)}" onclick="moveAppToFolder(this.dataset.id)">${ic('folder')}</button>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;">
         ${a.userAuthed
           ? `<span class="badge ok">已授权</span><div style="display:flex;gap:6px;">
                <button class="btn" style="font-size:11px;padding:4px 10px;" data-id="${esc(a.id)}" data-name="${esc(a.name)}" onclick="openMyAppDetail(this.dataset.id,this.dataset.name)">管理</button>
-               <button class="btn primary" style="font-size:11px;padding:4px 10px;" data-id="${esc(a.id)}" onclick="openApp(this.dataset.id, this)">打开 ${ic(external)}</button>
+               <button class="btn primary" style="font-size:11px;padding:4px 10px;" data-id="${esc(a.id)}" onclick="openApp(this.dataset.id, this)">打开 ${ic('external')}</button>
              </div>`
           : `<span class="badge grey">未授权</span><div style="display:flex;gap:6px;">
-               ${(a.launch_url||'').trim() ? `<button class="btn" style="font-size:11px;padding:4px 10px;" data-id="${esc(a.id)}" onclick="openApp(this.dataset.id, this)">打开 ${ic(external)}</button>` : ''}
+               ${(a.launch_url||'').trim() ? `<button class="btn" style="font-size:11px;padding:4px 10px;" data-id="${esc(a.id)}" onclick="openApp(this.dataset.id, this)">打开 ${ic('external')}</button>` : ''}
                <button class="btn primary" style="font-size:11px;padding:4px 10px;"
                  data-cid="${esc(a.client_id)}" data-cb="${esc((a.callback_url||'').split(',')[0].trim())}"
                  onclick="userAuthApp(this.dataset.cid, this.dataset.cb)">前往授权</button>
@@ -9105,14 +9108,14 @@ async function loadAccessPeers() {
     return `<div style="padding:12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:10px;${p.status!=='active'?'opacity:.55;':''}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div style="font-size:12px;">
-          <span style="font-weight:600;color:var(--tx);">🔗 ${esc(p.name)}</span>
+          <span style="font-weight:600;color:var(--tx);">${ic('link')} ${esc(p.name)}</span>
           ${p.status!=='active'?'<span style="color:var(--err);margin-left:6px;">已停用</span>':''}
           <span style="color:var(--txd);margin-left:6px;">${esc(win)}</span>
           <div style="color:var(--txd);margin-top:3px;">开放门：${esc((p.door_names||[]).join('、')||'—')}${(p.app_names||[]).length?' · 应用：'+esc(p.app_names.join('、')):''}</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="btn" style="font-size:11px;" onclick='showPeerCreds(${JSON.stringify(p)})'>配对凭据</button>
-          <button class="btn" style="font-size:11px;" onclick='pushPeer(${JSON.stringify(p.id)},${JSON.stringify(p.name)},${JSON.stringify(p.base_url||"")})'>📤 推送</button>
+          <button class="btn" style="font-size:11px;" onclick='pushPeer(${JSON.stringify(p.id)},${JSON.stringify(p.name)},${JSON.stringify(p.base_url||"")})'>${ic('send')} 推送</button>
           <button class="btn" style="font-size:11px;" onclick='openFedIssue(${JSON.stringify(p.id)},${JSON.stringify(p.name)})'>签发跨域码</button>
           <button class="btn" style="font-size:11px;" onclick='openPeerModal(${JSON.stringify(p)})'>编辑</button>
           <button class="btn" style="font-size:11px;color:var(--err);" onclick="delPeer('${p.id}')">删除</button>
@@ -9271,7 +9274,7 @@ async function doPairGen() {
       <div style="font-size:12px;color:var(--txd);margin-bottom:8px;">把这串码交给对方管理员，粘贴到他们的「用跨域码加入」：</div>
       <textarea readonly onclick="this.select()" style="width:100%;height:80px;padding:9px;border:1px solid var(--bd);border-radius:3px;background:var(--sf);color:var(--tx);font-family:monospace;font-size:11px;word-break:break-all;">${esc(data.pair_code)}</textarea>
       <div style="font-size:11px;color:var(--err);margin-top:8px;">⚠️ 跨域码等同于密钥，务必通过安全渠道传递。</div>
-      ${body.b_domain ? `<button class="btn primary" style="margin-top:12px;" onclick="pushPeerDirect('${data.id}','${esc(body.b_domain)}',this)">📤 直接推送到 ${esc(body.b_domain)}</button><div id="pg-pushlog" style="font-size:11px;color:var(--txd);margin-top:8px;"></div>` : ''}
+      ${body.b_domain ? `<button class="btn primary" style="margin-top:12px;" onclick="pushPeerDirect('${data.id}','${esc(body.b_domain)}',this)">${ic('send')} 直接推送到 ${esc(body.b_domain)}</button><div id="pg-pushlog" style="font-size:11px;color:var(--txd);margin-top:8px;"></div>` : ''}
     </div>
   </div>`;
   document.body.appendChild(ov);
@@ -9333,7 +9336,7 @@ async function loadAccessPasses(boxId) {
     return `<div style="padding:10px;border:1px solid var(--bd);border-radius:3px;margin-bottom:8px;${revoked?'opacity:.55;':''}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div style="font-size:12px;">
-          <span style="font-weight:600;color:var(--tx);">👤 ${esc(p.visitor_name)}</span>
+          <span style="font-weight:600;color:var(--tx);">${ic('user')} ${esc(p.visitor_name)}</span>
           ${revoked?'<span style="color:var(--err);margin-left:6px;">已撤销</span>':''}
           <span style="color:var(--txd);margin-left:6px;">门：${esc((p.door_names||[]).join('、')||'—')}</span>
           <div style="color:var(--txd);margin-top:3px;">${esc(win)} · ${esc(uses)} · 由 ${esc(p.issued_by_name||'—')} 签发${p.escort_name?` · 陪同人 ${esc(p.escort_name)}`:''}${(p.blackout&&p.blackout!=='[]')?' · 有禁入时段':''}</div>
@@ -9847,10 +9850,10 @@ async function loadUserFedApps() {
   const list = (ok && data.apps) || [];
   if (!list.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<div style="margin-bottom:14px;">
-    <div style="font-size:12px;color:var(--txd);margin-bottom:8px;">🔗 伙伴应用（跨域登录）</div>
+    <div style="font-size:12px;color:var(--txd);margin-bottom:8px;">${ic('link')} 伙伴应用（跨域登录）</div>
     ${list.map(a => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:8px;">
       <div><div style="font-weight:600;color:var(--tx);">${esc(a.app_name)}</div><div style="font-size:12px;color:var(--txd);">来自 ${esc(a.peer_name||'伙伴')}</div></div>
-      <button class="btn primary" style="font-size:12px;" onclick="launchFedApp('${a.id}')">打开 ${ic(external)}</button>
+      <button class="btn primary" style="font-size:12px;" onclick="launchFedApp('${a.id}')">打开 ${ic('external')}</button>
     </div>`).join('')}
   </div>`;
 }
@@ -9915,7 +9918,7 @@ async function loadMyDevices() {
   const list = data.devices || [];
   // 领取码认领框（v3.5.96）——常显,没设备也能用码认领
   const claimBox = `<div style="border:1px dashed var(--bd);border-radius:3px;padding:12px;margin-bottom:12px;background:var(--sf2);">
-      <div style="font-size:12.5px;font-weight:600;color:var(--txt);margin-bottom:6px;">🎫 用领取码认领设备</div>
+      <div style="font-size:12.5px;font-weight:600;color:var(--txt);margin-bottom:6px;">${ic('ticket')} 用领取码认领设备</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <input id="claim-code-input" placeholder="输入管理员给的领取码" style="flex:1;min-width:160px;padding:6px 10px;border:1px solid var(--bd);border-radius:3px;font-size:13px;background:var(--sf);color:var(--tx);text-transform:uppercase;">
         <button class="btn primary" style="font-size:12px;" onclick="claimByCode()">认领</button>
@@ -9932,14 +9935,14 @@ async function loadMyDevices() {
     if (d.last_locate && d.last_locate.result) {
       let txt = d.last_locate.result;
       try { const j = JSON.parse(d.last_locate.result); txt = [j.host, (j.ips||[]).join('/')].filter(Boolean).join(' · '); } catch(_) {}
-      locHtml = `<br><span style="color:var(--ac);">📍 最近定位：${esc(txt)} <span style="color:var(--txd);font-size:10px;">(${esc(d.last_locate.at||'')})</span></span>`;
+      locHtml = `<br><span style="color:var(--ac);">${ic('pin')} 最近定位：${esc(txt)} <span style="color:var(--txd);font-size:10px;">(${esc(d.last_locate.at||'')})</span></span>`;
     }
     const actions = pending ? `<div style="margin-top:8px;padding:8px 10px;background:#fff7e6;border:1px solid #ffe0a3;border-radius:3px;">
         <div style="font-size:12px;color:#8a5a00;margin-bottom:6px;">⏳ 管理员已下发这台设备,待你确认认领后才放开使用。</div>
         <button class="btn primary" style="font-size:12px;" onclick="claimDevice('${d.id}')">确认认领</button>
       </div>` : (d.can_self_manage ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','lock')">🔒 锁定</button>
-        <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','locate')">📍 定位</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','lock')">${ic('lock')} 锁定</button>
+        <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="myDevCmd('${d.id}','locate')">${ic('pin')} 定位</button>
         <span style="font-size:10px;color:var(--txd);align-self:center;">丢失时可远程锁定/定位；擦除等需联系管理员</span>
       </div>` : (d.enroll_status==='unenrolled' || !d.enroll_status ? '<div style="margin-top:6px;font-size:10px;color:var(--txd);">未纳管，暂不能远程操作</div>' : ''));
     return `<div style="border:1px solid ${pending?'#ffe0a3':'var(--bd)'};border-radius:3px;padding:12px;margin-bottom:10px;">
@@ -10282,7 +10285,7 @@ async function loadVersionInfo(force) {
   // 自托管一键更新按钮（仅后端开启 SELFHOST_UPDATE 时出现）
   if (self) {
     self.innerHTML = data.selfhost_update
-      ? `<button class="btn primary" onclick="applyUpdate()">🔄 一键拉取更新（git pull + npm ci）</button>
+      ? `<button class="btn primary" onclick="applyUpdate()">${ic('sync')} 一键拉取更新（git pull + npm ci）</button>
          <div style="font-size:11px;color:var(--txd);margin-top:6px;">会先备份 data/sso.db 再更新；完成后需重启服务（或已配置自动重启）。</div>
          <div id="about-applylog" style="margin-top:10px;font-family:monospace;font-size:11px;white-space:pre-wrap;color:var(--txd);"></div>`
       : '<div style="font-size:12px;color:var(--txd);">（自托管一键更新未开启。如需启用：系统配置 → 版本更新 → 设 SELFHOST_UPDATE=on，仅限自托管直跑环境）</div>';
@@ -11377,7 +11380,7 @@ async function openGroupAdmins(gid, gname) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
   ov.innerHTML = `<div style="background:var(--sf,#fff);border-radius:3px;max-width:460px;width:100%;max-height:86vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.28);">
     <div style="padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-      <div style="flex:1;font-size:15px;font-weight:700;">👤 分组管理员 · ${esc(gname)}</div>
+      <div style="flex:1;font-size:15px;font-weight:700;">${ic('user')} 分组管理员 · ${esc(gname)}</div>
       <button class="btn" style="font-size:11px;" onclick="document.getElementById('ga-ov').remove()">关闭</button>
     </div>
     <div style="padding:16px 20px;">
@@ -11409,7 +11412,7 @@ async function openOrgAdmins(sid, sname) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
   ov.innerHTML = `<div style="background:var(--sf,#fff);border-radius:3px;max-width:460px;width:100%;max-height:86vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.28);">
     <div style="padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-      <div style="flex:1;font-size:15px;font-weight:700;">🛡️ 组织管理员 · ${esc(sname)}</div>
+      <div style="flex:1;font-size:15px;font-weight:700;">${ic('shield')} 组织管理员 · ${esc(sname)}</div>
       <button class="btn" style="font-size:11px;" onclick="document.getElementById('oa-ov').remove()">关闭</button>
     </div>
     <div style="padding:16px 20px;">
@@ -13484,7 +13487,7 @@ function openCouponActions(code, name, icon, allowTransfer, allowDiscard, transf
         <button class="btn primary" style="width:100%;justify-content:center;font-size:12px;" onclick="transferCoupon('${code}')">确认转送</button>
       </div>` : ''}
       ${allowDiscard ? `
-      <button class="btn" style="color:var(--err);border-color:var(--err);width:100%;justify-content:center;font-size:12px;" onclick="discardCoupon('${code}')">🗑 丢弃此兑换券</button>` : ''}
+      <button class="btn" style="color:var(--err);border-color:var(--err);width:100%;justify-content:center;font-size:12px;" onclick="discardCoupon('${code}')">${ic('trash')} 丢弃此兑换券</button>` : ''}
       ${!allowTransfer && !allowDiscard ? '<div style="color:var(--txd);font-size:12px;text-align:center;padding:12px;">该兑换券不支持其他操作</div>' : ''}
     </div>`;
   document.getElementById('coupon-action-modal').style.display = 'flex';
@@ -13769,7 +13772,7 @@ async function loadPublicSwitcher() {
         <div style="width:40px;height:40px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:20px;background:${(a.group_color||'#888')}22;">🏢</div>
         <div style="flex:1;"><div style="font-weight:600;">${esc(a.name)}</div>
           <div style="font-size:11px;color:var(--txd);"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${a.group_color||'#888'};margin-right:4px;"></span>所属分组：${esc(a.group_name||'—')}</div></div>
-        <button class="btn primary" data-id="${esc(a.id)}" onclick="switchToPublic(this.dataset.id)">切换使用 ${ic(external)}</button>
+        <button class="btn primary" data-id="${esc(a.id)}" onclick="switchToPublic(this.dataset.id)">切换使用 ${ic('external')}</button>
       </div>`).join('');
   }
   // 用户菜单里的快捷入口
@@ -13791,7 +13794,7 @@ async function loadPublicSwitcher() {
         <span style="width:10px;height:10px;border-radius:50%;background:${a.group_color||'#888'};flex:none;"></span>
         <div style="flex:1;"><div style="font-weight:600;font-size:13px;">${ic(org)} ${esc(a.name)}</div>
           <div style="font-size:11px;color:var(--txd);">所属分组：${esc(a.group_name||'—')}</div></div>
-        <button class="btn primary" style="font-size:12px;" data-id="${esc(a.id)}" onclick="switchToPublic(this.dataset.id)">切换使用 ${ic(external)}</button>
+        <button class="btn primary" style="font-size:12px;" data-id="${esc(a.id)}" onclick="switchToPublic(this.dataset.id)">切换使用 ${ic('external')}</button>
       </div>`).join('');
   }
 }
@@ -13919,7 +13922,7 @@ async function openMyAppDetail(id, name) {
       <div>${chips}</div>
       ${a.authed_at?`<div style="font-size:11px;color:var(--txd);margin-top:10px;">授权于 ${fmtTime(a.authed_at)}</div>`:''}
       <div style="margin-top:16px;display:flex;gap:8px;">
-        <button class="btn primary" style="flex:1;" data-id="${esc(a.id)}" onclick="openApp(this.dataset.id, this)">打开应用 ${ic(external)}</button>
+        <button class="btn primary" style="flex:1;" data-id="${esc(a.id)}" onclick="openApp(this.dataset.id, this)">打开应用 ${ic('external')}</button>
         <button class="btn" style="flex:1;color:var(--err);border-color:var(--err);" onclick="this.closest('div[style*=fixed]').remove();confirmRevokeApp('${a.id}','${esc(a.name)}')">撤销授权</button>
       </div>
     </div></div>`;

@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.125 — emoji→小图标续：跨域联邦 / 门禁访客 / 我的设备簇 + 修 ic(external) 漏引号
+
+- 承接 v3.5.114/116/121 的 emoji→`ic()` 小图标，收点名剩下的**跨域联邦 / 门禁访客 / 我的设备**簇 + 几个明显按钮。`ICON_PATHS` 加 3 个：`pin`（定位针）/ `send`（纸飞机·推送）/ `ticket`（领取码）。
+- 转换：联邦伙伴名 / 伙伴应用头 🔗→link、推送 📤→send、访客名 👤→user、我的设备「领取码 / 最近定位 / 锁定 / 定位」🎫📍🔒→ticket/pin/lock/pin、商城券丢弃 🗑→trash、移到文件夹 📁→folder、一键更新 🔄→sync、分组/组织管理员弹窗头 👤🛡️→user/shield、联邦「生成 / 加入跨域码」⚡📥→bolt/import。
+- 🐛 **顺带修**：v3.5.121 把「打开 / 切换使用 ↗」按钮换成 external 图标时 **6 处全写成 `${ic(external)}`（漏引号）** → `external` 非变量、`ic(undefined)` 返回空串 → 这些按钮的外链图标一直没显示。全局修为 `ic('external')`。
+- ⚠️ 判定沿用：只换散落 chrome emoji，保留 `icon:` 数据字段、`<option>` 里的 📁、散文 ⚠️💡、✓✗ 状态标、大 hero 图、MDM 命令图标、状态徽章。其余各页仍有 chrome emoji，后续逐页收。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误），grep 确认目标 emoji 清零、6 处 `ic(external)` 全修、新图标就位。纯前端。
+
 ## v3.5.124 — 全局细化：行内代码 / 代码块统一样式（UI 细化）
 
 - 全站 `<code>`（API 端点、env 变量名、scope、UserId 等，约 41 处）原来是**浏览器默认裸等宽字**、无底无框 → 统一成**方正浅底代码片**（`--sf2` 浅底 + 1px 细框 + 3px 圆角 + 等宽 + `break-all` 防长串溢出），`<pre>` 代码块同款。
