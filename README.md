@@ -230,7 +230,7 @@ npx zeabur@latest template update -c <模板代码> -f zeabur-template.yaml   # 
 
 ## 📞 联系我们
 
-- GitHub：[@userbai](https://github.com/userbai)
+- GitHub：[@uesrbai](https://github.com/uesrbai)
 - 邮箱：[ruixu@wecom.qwq.us](mailto:ruixu@wecom.qwq.us)
 
 ---
