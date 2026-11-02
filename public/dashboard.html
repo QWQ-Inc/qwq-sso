@@ -566,7 +566,7 @@ function showPublicSessionBanner(){
   const bar = document.createElement('div');
   bar.id = 'pub-session-banner';
   bar.style.cssText = 'position:sticky;top:0;z-index:2000;display:flex;align-items:center;gap:10px;justify-content:center;padding:8px 14px;background:#B26A00;color:#fff;font-size:12.5px;';
-  bar.innerHTML = `<span>${ic(org)} 当前为公共账号 <b>${esc(acctName)}</b>${p.switchedName?`（由 ${esc(p.switchedName)} 切换）`:''} · 仅限第三方登录等基础功能</span>`;
+  bar.innerHTML = `<span>${ic('org')} 当前为公共账号 <b>${esc(acctName)}</b>${p.switchedName?`（由 ${esc(p.switchedName)} 切换）`:''} · 仅限第三方登录等基础功能</span>`;
   const btn = document.createElement('button');
   btn.textContent = '返回我的账号';
   btn.style.cssText = 'background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:11px;cursor:pointer;';
@@ -5406,7 +5406,7 @@ async function renderKycCard() {
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bd);border-radius:2px;background:var(--sf2);font-size:11px;">
-          <span>${ic(org)}</span><span style="font-weight:600;color:var(--txm);">认证服务</span><span>${u.kyc_provider||'—'}</span></div>
+          <span>${ic('org')}</span><span style="font-weight:600;color:var(--txm);">认证服务</span><span>${u.kyc_provider||'—'}</span></div>
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bd);border-radius:2px;background:var(--sf2);font-size:11px;">
           ${ic('clock')}<span style="font-weight:600;color:var(--txm);">认证时间</span><span>${fmtTime(u.kyc_verified_at)}</span></div>
       </div>
@@ -9887,7 +9887,7 @@ async function loadMyOrgs() {
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const orgs = data.orgs || [];
   box.innerHTML = orgs.length ? orgs.map(o => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:8px;">
-      <div><div style="font-weight:600;color:var(--tx);">${ic(org)} ${esc(o.name)}</div><div style="font-size:12px;color:var(--txd);">${(o.members||[]).length} 名成员</div></div>
+      <div><div style="font-weight:600;color:var(--tx);">${ic('org')} ${esc(o.name)}</div><div style="font-size:12px;color:var(--txd);">${(o.members||[]).length} 名成员</div></div>
       <button class="btn primary" style="font-size:12px;" onclick='openOrgMembers(${JSON.stringify(o.id)},${JSON.stringify(o.name)})'>成员管理</button>
     </div>`).join('') : '<div style="color:var(--txd);">你当前不是任何组织的管理员。</div>';
   const dc = document.getElementById('org-dev-card');
@@ -10831,7 +10831,7 @@ async function loadOrgMembers() {
   box.innerHTML = rows.length ? rows.map(m => {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
     const hasPw = m.has_pw ? `<span style="color:#1D4E89;font-size:10px;margin-left:4px;">${ic('key')} 已设组织密码</span>` : '';
-    const deptShow = m.dept_name ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">${ic(org)} ${esc(m.dept_name)}</span>` : '';
+    const deptShow = m.dept_name ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">${ic('org')} ${esc(m.dept_name)}</span>` : '';
     const pendingBadge = m.pending === 1 ? '<span style="color:#8a6d3b;font-size:10px;margin-left:4px;">⏳ 待分配</span>' : (m.pending === 2 ? '<span style="color:var(--txd);font-size:10px;margin-left:4px;">挂起</span>' : '');
     const disabledBadge = m.status === 'disabled' ? '<span style="color:var(--err);font-size:10px;margin-left:4px;">已停用</span>' : '';
     // 停用/启用 + 重置密码（v3.5.79）：仅非管理员成员；后端按本组织成员范围校验
@@ -11321,7 +11321,7 @@ async function openPubAccounts(gid, gname) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
   ov.innerHTML = `<div style="background:var(--sf,#fff);border-radius:3px;max-width:520px;width:100%;max-height:86vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.28);">
     <div style="padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-      <div style="flex:1;font-size:15px;font-weight:700;">${ic(org)} 公共账号 · ${esc(gname)}</div>
+      <div style="flex:1;font-size:15px;font-weight:700;">${ic('org')} 公共账号 · ${esc(gname)}</div>
       <button class="btn" style="font-size:11px;" onclick="document.getElementById('pub-mgr-ov').remove()">关闭</button>
     </div>
     <div style="padding:16px 20px;">
@@ -13799,7 +13799,7 @@ async function loadPublicSwitcher() {
         style="width:100%;display:flex;align-items:center;gap:8px;padding:7px 10px;background:none;border:none;border-radius:2px;color:var(--txt);font-size:12px;cursor:pointer;font-family:inherit;text-align:left;"
         onmouseenter="this.style.background='var(--sf2,rgba(0,0,0,.04))'" onmouseleave="this.style.background='none'">
         <span style="width:8px;height:8px;border-radius:50%;background:${a.group_color||'#888'};flex:none;"></span>
-        ${ic(org)} ${esc(a.name)} <span style="color:var(--txd);font-size:10px;margin-left:auto;">${esc(a.group_name||'')}</span></button>`).join('') +
+        ${ic('org')} ${esc(a.name)} <span style="color:var(--txd);font-size:10px;margin-left:auto;">${esc(a.group_name||'')}</span></button>`).join('') +
       `<div style="border-top:1px solid var(--bd);margin:4px 0;"></div>`;
   }
   // 账号设定页的可见卡片（更好找）
@@ -13808,7 +13808,7 @@ async function loadPublicSwitcher() {
     cardList.innerHTML = list.map(a => `
       <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bd);">
         <span style="width:10px;height:10px;border-radius:50%;background:${a.group_color||'#888'};flex:none;"></span>
-        <div style="flex:1;"><div style="font-weight:600;font-size:13px;">${ic(org)} ${esc(a.name)}</div>
+        <div style="flex:1;"><div style="font-weight:600;font-size:13px;">${ic('org')} ${esc(a.name)}</div>
           <div style="font-size:11px;color:var(--txd);">所属分组：${esc(a.group_name||'—')}</div></div>
         <button class="btn primary" style="font-size:12px;" data-id="${esc(a.id)}" onclick="switchToPublic(this.dataset.id)">切换使用 ${ic('external')}</button>
       </div>`).join('');

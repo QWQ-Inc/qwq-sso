@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.131.1 修 7 处 `ic(org)` 漏引号 ReferenceError（代码审查发现）
+
+四级补丁（纯前端 bug 修复）。用户问「有什么好做的」，扫查 `ic(裸标识符)` 这类 v3.5.121 已踩过的漏引号模式时发现。
+- 🐛 本会话 emoji→小图标扫荡（v3.5.114+）把 🏢 组织图标写成 `ic(org)`（裸标识符），但全局/各作用域都**无** `org` 声明（`const org` 那些在别的函数里）。读取未声明变量恒抛 `ReferenceError: org is not defined`（与严格模式无关，浏览器也无 `window.org`），**所在渲染路径整段中断**，不是「图标没显示」而已。与 v3.5.121 的 `ic(external)` 同一类。
+- 受影响 7 处：`showPublicSessionBanner`（公共账号会话横幅）、`renderKycCard`（实名认证卡，常见路径）、组织列表、成员部门徽章、`openPubAccounts`（公共账号弹窗）、公共账号切换器列表（2 处）。统一 `ic(org)` → `ic('org')`（`sed`，`ic(org)` 为唯一字面量，`switchToPublic(publicId)` 不含它，不误伤）。
+- ⚠️ 扫全了范围：`grep` 确认全文仅此 7 处外部 `ic(裸标识符)` 调用；`ic(el.dataset.ic)`/`ic(icon)`/`ic(name,cls)` 是图标助手自身内部（合法）；`ic(publicId)` 是 `switchToPublic(` 的误报。
+- ⚠️ 测试：浏览器实测修复前 `ic(org)` 与 `showPublicSessionBanner()` 均抛 `ReferenceError: org is not defined`，修复后横幅正常运行、渲染出 `<svg class="ic">`；`ic('org')` 返回 svg；全文 0 残留 `ic(org)`、`ic('org')` 共 9 处（原 2 合法 + 7 修复）；两个内联 `<script>` 块解析 0 错误。
+- ⚠️ **教训（沿用）**：静态 HTML 里用 `<span data-ic="name">` + `hydrateIcons`；JS 模板里图标名**必须加引号** `ic('org')`。扫 emoji→图标后务必 `grep -oE "ic\([a-z_]"` 查漏引号的裸标识符调用（排除助手内部的 `name`/`icon`/`cls`/`el.dataset`）。见 [[ui-design-preference]]。
 
 ## v3.5.131 空状态配图标：按文案关键词给 emptyState 补淡色小图标（用户「继续」）
 

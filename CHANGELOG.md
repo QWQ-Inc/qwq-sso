@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.131.1 — 修 7 处 `ic(org)` 漏引号导致 ReferenceError
+
+- 本会话 emoji→小图标扫荡（v3.5.114+）时把 🏢 组织图标写成 `ic(org)`（裸标识符），但 `org` 未声明——读取即抛 `ReferenceError: org is not defined`，让所在渲染路径整段中断。与 v3.5.121 已修的 `ic(external)` 同类。
+- 受影响 7 处：公共账号会话横幅 `showPublicSessionBanner`、实名认证卡 `renderKycCard`、组织列表、成员部门徽章、公共账号弹窗 `openPubAccounts`、公共账号切换器列表（2 处）。统一 `ic(org)` → `ic('org')`（sed，`ic(org)` 为唯一字面量，不误伤 `switchToPublic(`）。
+- ⚠️ 测试：浏览器实测修复前 `ic(org)`/`showPublicSessionBanner()` 均抛 `ReferenceError: org is not defined`，修复后横幅正常运行且渲染出 `<svg class="ic">`；全文 0 残留 `ic(org)`、`ic('org')` 共 9 处；内联 JS 解析 0 错误。纯前端 bug 修复。
+
 ## v3.5.131 — 空状态配图标：按文案关键词给 emptyState 补淡色小图标
 
 - 承接 v3.5.130 的空状态基建，给列表空状态补上顶部 22px 淡色小图标（`emptyState` 第二参），更友好。
