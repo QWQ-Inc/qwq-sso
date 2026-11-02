@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.131 — 空状态配图标：按文案关键词给 emptyState 补淡色小图标
+
+- 承接 v3.5.130 的空状态基建，给列表空状态补上顶部 22px 淡色小图标（`emptyState` 第二参），更友好。
+- node 按文案关键词→图标映射（Passkey/凭证→key、备份→download、分组/成员→users、同步源→sync、门→door、打印→printer、伙伴→link、访客码/兑换券→ticket、人脸→user、卡/核验员→idcard、设备→laptop、奖励→gift 等）给 45 处补第二参；「还没有授权（授权页）」无合适关键词保留文本型。
+- ⚠️ 正则只匹配单参调用，不重复命中；含单引号的文本不误配。
+- ⚠️ 测试：内联 JS 解析通过（0 错误），grep 确认 45 处带 `, 'icon')`。纯前端。
+
 ## v3.5.130 — 空状态统一：列表为空占位换成 .empty-state 组件
 
 - 全站列表「暂无 / 还没有 xxx」原是零散的裸 `<div style="color:var(--txd)">文本</div>`（样式各异），统一成 `.empty-state` 组件：居中虚线框 + 浅底 + 淡字 + 圆角 + 可选小图标。

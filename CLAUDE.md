@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.130**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.131 空状态配图标：按文案关键词给 emptyState 补淡色小图标（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.130 的空状态基建，给列表空状态补上顶部 22px 淡色小图标（`emptyState` 的第二参），更友好。
+- node 脚本按**文案关键词→图标**映射（specific→generic 有序表，首个命中为准）给 `emptyState('文本')` 补第二参：Passkey/凭证→key、备份→download、分组→users、标签→tag、同步源→sync、登录主体/部门→org、应用→apps、存证/规则/等级/限权管理员→shield、门→door、打印*→printer、命令→bolt、描述文件/备忘录/页脚→file、伙伴→link、访客码/兑换券→ticket、人脸→user、卡/核验员/自定义字段→idcard、设备→laptop、成员/公共账号→users、联系方式→phone、奖励→gift、调用记录→chart。
+- 共 **45 处配图标**；「还没有授权（授权页）」无合适关键词 → 保留文本型。helper 注释里的示例 `emptyState('还没有X')` 被正则顺带数到（注释、未执行、无害）。
+- ⚠️ 正则 `emptyState\('([^']*)'\)` 只匹配**单参**调用，已带图标 / 已带第二参的不会重复命中；文本里有单引号的也不会误配（regex 排除）。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；grep 确认 45 处带 `, 'icon')` 第二参。纯前端，无后端改动。
 
 ## v3.5.130 空状态统一：列表为空占位换成 `.empty-state` 组件（用户「继续」）
 
