@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.130 — 空状态统一：列表为空占位换成 .empty-state 组件
+
+- 全站列表「暂无 / 还没有 xxx」原是零散的裸 `<div style="color:var(--txd)">文本</div>`（样式各异），统一成 `.empty-state` 组件：居中虚线框 + 浅底 + 淡字 + 圆角 + 可选小图标。
+- 新增 CSS `.empty-state` + JS 助手 `emptyState(text, icon)`；node 正则把单引号字面量里的列表空状态 div 批量换成 `emptyState('文本')`，共 46 处、0 残留。
+- ⚠️ 只命中真·列表空状态（引号包裹的 `<div>` 字面量 + 含「暂无/还没有」）；散文提示 💡、toast、带动态拼接 `+ esc()` 的都不误伤（干跑 46 条逐一核对）。本批文本型，icon 形参已留好供以后加图标。
+- ⚠️ 测试：内联 JS 解析通过（0 错误），替换 46 / 残留 0。纯前端。
+
 ## v3.5.129 — emoji→小图标收尾：导出 / 发送按钮箭头前缀统一
 
 - dashboard 散落 chrome emoji 已基本收尽，本版收 3 个箭头前缀动作按钮：「↓ 导出 CSV」/「↓ 导出 .env」→ download、「▶ 发送请求」→ send（与备份导出图标对齐，复用现有图标）。

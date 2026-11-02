@@ -483,6 +483,10 @@ a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-s
 .ld{display:inline-flex;align-items:center;gap:7px;color:var(--txd);font-size:12px;padding:8px 4px;}
 .ld-spin{width:13px;height:13px;border:2px solid var(--bd2);border-top-color:var(--ac);border-radius:50%;animation:ld-rot .6s linear infinite;flex:none;box-sizing:border-box;}
 @keyframes ld-rot{to{transform:rotate(360deg)}}
+/* 空状态：列表为空时的统一占位（居中虚线框 + 淡字 + 可选小图标） */
+.empty-state{text-align:center;padding:26px 16px;color:var(--txd);font-size:12.5px;line-height:1.7;border:1px dashed var(--bd);border-radius:var(--r-md);background:var(--sf2);}
+.empty-state .es-ic{display:inline-block;margin-bottom:7px;opacity:.5;}
+.empty-state .es-ic .ic{width:22px;height:22px;}
 /* 全局细化（v3.5.123）：细滚动条 + 品牌色选中 */
 *{scrollbar-width:thin;scrollbar-color:var(--bd2) transparent;}
 ::-webkit-scrollbar{width:9px;height:9px;}
@@ -1154,6 +1158,8 @@ function hydrateIcons(root) {
 document.addEventListener('DOMContentLoaded', () => hydrateIcons());
 // 统一加载态：转圈 + 文案（替代裸的加载占位）
 const LD = '<span class="ld"><span class="ld-spin"></span>加载中</span>';
+// 列表空状态统一占位：emptyState('还没有X') 或带小图标 emptyState('还没有X','users')
+function emptyState(text, icon){ return `<div class="empty-state">${icon ? `<span class="es-ic">${ic(icon)}</span><br>` : ''}${text}</div>`; }
 function ic(name, cls) {
   const p = ICON_PATHS[name]; if (!p) return '';
   return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -4363,7 +4369,7 @@ async function loadPasskeyCard() {
       </div>
       <button class="btn" style="font-size:11px;padding:3px 8px;color:var(--err);border-color:var(--err);"
         data-id="${esc(p.id)}" data-name="${esc(p.name)}" onclick="removePasskey(this.dataset.id,this.dataset.name)">删除</button>
-    </div>`).join('') : '<div style="font-size:12px;color:var(--txd);padding:6px 0;">还没有 Passkey。添加后，登录时用指纹 / 面容 / 硬件密钥即可，无需密码。</div>';
+    </div>`).join('') : emptyState('还没有 Passkey。添加后，登录时用指纹 / 面容 / 硬件密钥即可，无需密码。');
   body.innerHTML = `
     <div style="font-size:12.5px;color:var(--txm);line-height:1.7;margin-bottom:10px;">
       Passkey 用设备的指纹 / 面容 / PIN 或硬件密钥验证身份，天然防钓鱼，登录时无需输入密码。
@@ -6022,7 +6028,7 @@ async function loadBackups() {
         <button class="btn" style="font-size:11px;color:var(--err);border-color:var(--err);" onclick="delBackup('${t.id}')">删除</button>
       </div>
       <div id="bk-files-${t.id}"></div></div>`;
-  }).join('') : '<div style="padding:8px 0;">还没有备份目标，点右上角「+ 添加备份目标」。</div>';
+  }).join('') : emptyState('还没有备份目标，点右上角「+ 添加备份目标」。');
 }
 async function runBackupNow(id) {
   showToast('正在备份…');
@@ -6041,7 +6047,7 @@ async function showBackupFiles(id) {
     `<code style="font-size:11px;">${esc(f.name)}</code>`, _fmtSize(f.size), esc(fmtTime(f.modified)),
     `<button class="btn" style="font-size:11px;padding:2px 8px;" onclick='downloadBackup(${JSON.stringify(id)}, ${JSON.stringify(f.name)})'>下载</button>
      <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='restoreFromTarget(${JSON.stringify(id)}, ${JSON.stringify(f.name)})'>从此恢复</button>`])) + '</div>'
-    : '<div style="margin-top:6px;">还没有备份文件。</div>';
+    : emptyState('还没有备份文件。');
 }
 // 从某个备份目标里的某份备份恢复（强确认 + 重启）
 async function restoreFromTarget(id, name) {
@@ -6663,7 +6669,7 @@ async function loadGrants() {
     esc(g.user_name || '—') + ' <span style="color:var(--txd);">' + esc(g.uid_code || ('#' + String(g.uid_seq || '').padStart(5, '0'))) + '</span>',
     esc(g.perm_name), esc(g.scope_name), esc(fmtTime(g.created_at)),
     `<button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delGrant(${JSON.stringify(g.id)})'>撤销</button>`]))
-    : '<div style="padding:8px 0;">还没有授权。除超级管理员外，没有人能清除实名或删除账号。</div>';
+    : emptyState('还没有授权。除超级管理员外，没有人能清除实名或删除账号。');
 }
 async function delGrant(id) {
   if (!await uiConfirm('撤销这条授权？')) return;
@@ -6807,7 +6813,7 @@ async function loadLimitedAdmins() {
     (g.valid_from || '—') + ' 至 ' + (g.valid_to || '—'),
     g.active ? '<span class="badge ok">生效中</span>' : '<span class="badge grey">未生效</span>',
     `<button class="btn" style="font-size:11px;padding:2px 8px;color:var(--err);border-color:var(--err);" onclick='delLimitedAdmin(${JSON.stringify(g.id)})'>撤销</button>`]))
-    : '<div style="padding:8px 0;">还没有限权管理员授权。</div>';
+    : emptyState('还没有限权管理员授权。');
 }
 let _limitedOrgOpts = [];
 async function openLimitedModal() {
@@ -7051,9 +7057,9 @@ async function loadGroupsTags() {
   const gl = document.getElementById('groups-list');
   const tl = document.getElementById('tags-list');
   if (gl) gl.innerHTML = (_allGroups||[]).length ? (_allGroups||[]).map(g=>gtRow('group',g)).join('')
-    : '<div style="color:var(--txd);padding:8px 4px;">还没有分组，点右上角新建</div>';
+    : emptyState('还没有分组，点右上角新建');
   if (tl) tl.innerHTML = (_allTags||[]).length ? (_allTags||[]).map(t=>gtRow('tag',t)).join('')
-    : '<div style="color:var(--txd);padding:8px 4px;">还没有标签，点右上角新建</div>';
+    : emptyState('还没有标签，点右上角新建');
 }
 // ══════════════════════════════════════════
 // 三方登录「登录主体」（多主体）管理
@@ -7099,7 +7105,7 @@ async function renderDefaultSubjectCreds() {
       <button class="btn" style="${_rowBtn}" onclick="openDefaultCredModal('${p.platform}')">编辑</button>
       <button class="btn" style="${_rowDanger}" onclick="delDefaultCred('${p.platform}')">删除</button>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);padding:8px 4px;">本站还没有配置任何三方登录凭证，点右上角「+ 添加凭证」。</div>';
+  }).join('') : emptyState('本站还没有配置任何三方登录凭证，点右上角「+ 添加凭证」。');
 }
 function openDefaultCredModal(platform) {
   const editing = !!platform;
@@ -7174,7 +7180,7 @@ function _dirScopeText(c) {
 function dirSourceRowsHtml(sid, sources, indent) {
   const pad = indent ? 'padding:7px 14px 7px 30px;border-top:1px solid var(--bd);' : 'padding:7px 4px;border-bottom:1px solid var(--bd);';
   _dirSourcesBySid[sid] = sources || [];
-  if (!(sources || []).length) return indent ? '' : '<div style="color:var(--txd);padding:8px 4px;font-size:12px;">还没有同步源，点「+ 添加同步源」。</div>';
+  if (!(sources || []).length) return indent ? '' : emptyState('还没有同步源，点「+ 添加同步源」。');
   return sources.map(x => `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;${pad}">
     <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--txd);background:var(--sf2);padding:2px 8px;border-radius:3px;flex:none;">${ic('sync')}${esc(x.type_label)}</span>
     <span style="flex:1;min-width:110px;color:var(--txt);">${esc(x.label)} ${x.parent_id ? `<span title="套用文件夹通讯录：企业 ID / Secret / 回调在文件夹上" style="font-size:11px;color:${x.parent_missing || x.parent_enabled === false ? 'var(--err)' : 'var(--ac)'};">${ic('folder')} ${x.parent_missing ? '套用的文件夹通讯录已删除' : '套用「' + esc(x.parent_label || '') + '」' + (x.parent_enabled === false ? '（已停用）' : '')}</span> ` : ''}<span style="color:var(--txd);font-size:11px;">${esc(x.config.corp_id || '')} · ${esc(_dirScopeText(x.config))}${x.config.has_default_pw ? ' · ' + ic('key') + '默认密码' : ''}${x.callback_ready ? ` · <span title="已配置${x.type === 'feishu' ? '事件订阅：飞书' : '接收事件服务器：企业微信'}通讯录变动会实时触发同步" style="color:#1F7A3A;">${ic('bolt')}实时</span>` : ''}${x.config.interval_hours ? ' · 每 ' + x.config.interval_hours + ' 小时' : ''}</span></span>
@@ -7266,7 +7272,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
         <option value="custom" ${bindMode==='custom'?'selected':''}>指定凭证（可多选）</option>
         <option value="none" ${bindMode==='none'?'selected':''}>不绑定</option>
       </select>
-      <div id="dsm-bindlist" style="display:${bindMode==='custom'?'block':'none'};margin-top:6px;">${choices.length ? choices.map(x => `<label style="display:block;font-size:13px;color:var(--tx);margin:3px 0;"><input type="checkbox" class="dsm-bindcb" value="${esc(x.key)}" ${bindSet.has(x.key)?'checked':''}> ${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.corp_id || '')}</span></label>`).join('') : '<div style="font-size:12px;color:var(--txd);">本组织还没有企业微信登录凭证（可在组织卡片「+ 添加凭证」）。</div>'}</div>
+      <div id="dsm-bindlist" style="display:${bindMode==='custom'?'block':'none'};margin-top:6px;">${choices.length ? choices.map(x => `<label style="display:block;font-size:13px;color:var(--tx);margin:3px 0;"><input type="checkbox" class="dsm-bindcb" value="${esc(x.key)}" ${bindSet.has(x.key)?'checked':''}> ${esc(x.label)} <span style="color:var(--txd);font-size:11px;">${esc(x.corp_id || '')}</span></label>`).join('') : emptyState('本组织还没有企业微信登录凭证（可在组织卡片「+ 添加凭证」）。')}</div>
       ${lab('默认组织密码（「登录到组织」用；只存加密哈希）')}
       <input id="dsm-pw" type="password" autocomplete="new-password" placeholder="${c.has_default_pw ? '已设置，留空不修改' : '留空 = 不设默认组织密码'}" style="${inp}">
       ${c.has_default_pw ? '<label style="display:block;margin-top:6px;font-size:12px;color:var(--tx);"><input type="checkbox" id="dsm-pwclear"> 清除默认组织密码（已给成员设的不受影响）</label>' : ''}
@@ -7656,7 +7662,7 @@ async function loadOauthSubjects() {
   renderOrgFolderBar();
   if (!box) return;
   if (!_oauthSubjects.length) {
-    box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">还没有登录主体，点右上角「新建主体」，再往主体里添加登录凭证。</div>';
+    box.innerHTML = emptyState('还没有登录主体，点右上角「新建主体」，再往主体里添加登录凭证。');
     return;
   }
   const badge = (on) => on
@@ -7687,7 +7693,7 @@ async function loadOauthSubjects() {
     const fcs = ((_orgFolders.find(f => f.id === s.folder_id) || {}).credentials || []);
     const folderCreds = fcs.map(c => credRow(c, true, (c.orgs || []).some(o => o.id === s.id))).join('');
     const credCount = (s.credentials || []).length;
-    const credBody = (ownCreds + folderCreds) || '<div style="padding:9px 16px 9px 34px;color:var(--txd);font-size:11px;">该主体下还没有凭证，点上方「+ 凭证」添加。</div>';
+    const credBody = (ownCreds + folderCreds) || emptyState('该主体下还没有凭证，点上方「+ 凭证」添加。');
     const creds = `<div class="cred-section"><div class="cred-head">${ic('key')}登录凭证${credCount ? ' · ' + credCount : ''}</div>${credBody}</div>`;
     const statPill = 'display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--txm);background:var(--sf2);padding:3px 10px;border-radius:3px;white-space:nowrap;';
     const actBtn = 'font-size:12px;padding:6px 12px;';
@@ -8190,7 +8196,7 @@ async function openSubjectApps(sid, name) {
       <input type="checkbox" class="subj-app-cb" value="${esc(a.id)}" ${a.open?'checked':''}>
       <span style="flex:1;color:var(--tx);">${esc(a.name)}</span>
       ${a.global ? '<span style="font-size:10px;color:var(--warn);">当前全局</span>' : '<span style="font-size:10px;color:var(--txd);">受限</span>'}
-    </label>`).join('') : '<div style="color:var(--txd);padding:8px;">还没有已启用的应用。</div>';
+    </label>`).join('') : emptyState('还没有已启用的应用。');
   const ov = document.createElement('div');
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:24px 14px;';
   ov.innerHTML = `<div class="modal" style="min-width:340px;max-width:460px;text-align:left;">
@@ -8258,7 +8264,7 @@ async function loadAuditChain() {
     ? `<span style="color:#1a7f37;background:#e6f4ea;padding:4px 10px;border-radius:4px;">✓ 存证链完整（共 ${ig.count} 条，未被篡改）</span>`
     : `<span style="color:#fff;background:var(--err);padding:4px 10px;border-radius:4px;">✗ 存证链异常：第 ${ig.broken_seq} 条 ${esc(ig.reason||'')}</span>`;
   const rows = data.data || [];
-  if (!rows.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">还没有存证记录。</div>'; return; }
+  if (!rows.length) { box.innerHTML = emptyState('还没有存证记录。'); return; }
   box.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="text-align:left;color:var(--txd);border-bottom:1px solid var(--bd);">
       <th style="padding:6px 8px;">#</th><th style="padding:6px 8px;">事件</th><th style="padding:6px 8px;">对象</th>
@@ -8294,7 +8300,7 @@ async function loadMyAccess() {
         </div>
         <button class="btn" style="font-size:11px;" data-id="${esc(d.id)}" data-name="${esc(d.name)}" onclick="showAccessQr(this.dataset.id, this.dataset.name)">该门子码</button>
       </div>`).join('')
-    : '<div style="color:var(--txd);">暂无你有权限通行的门。如需开通请联系管理员。</div>';
+    : emptyState('暂无你有权限通行的门。如需开通请联系管理员。');
   // 线上可访问的电子门（v3.5.105）
   const onCard = document.getElementById('access-online-card');
   const onBox = document.getElementById('access-online-doors');
@@ -8527,7 +8533,7 @@ async function loadPrinters() {
     const on = a.last_seen ? ('在线 ' + esc(a.last_seen)) : '从未 check-in';
     return `<div style="padding:6px 0;border-bottom:1px dashed var(--bd);"><b>🖧 ${esc(a.name)}</b> <span style="font-size:11px;color:var(--txd);">· ${esc(a.subject_name || '')} · ${on}</span>
       ${(a.queues && a.queues.length) ? `<div style="font-size:11px;color:var(--txd);">可见队列：${a.queues.map(esc).join('、')}</div>` : '<div style="font-size:11px;color:var(--txd);">（尚未上报队列，跑起 print-agent 后自动出现）</div>'}</div>`;
-  }).join('') || '<div style="color:var(--txd);font-size:12px;">还没有打印代理。先「登记打印代理」拿 secret 去跑 tools/print-agent。</div>';
+  }).join('') || emptyState('还没有打印代理。先「登记打印代理」拿 secret 去跑 tools/print-agent。');
   const printersHtml = _printerCache.printers.map(p => {
     const agentName = (_printerCache.agents.find(a => a.id === p.agent_id) || {}).name || p.agent_id || '';
     const via = p.transport === 'ipp' ? ('IPP ' + esc(p.ipp_url || '')) : ('代理「' + esc(agentName) + '」队列 ' + esc(p.queue_name || ''));
@@ -8538,7 +8544,7 @@ async function loadPrinters() {
         <button class="btn" style="font-size:11px;" onclick="openPrinterModal('${esc(p.id)}')">编辑</button>
         <button class="btn" style="font-size:11px;color:var(--err);" onclick="delPrinter('${esc(p.id)}','${esc(p.name)}')">删除</button>
       </div></div>`;
-  }).join('') || '<div style="color:var(--txd);font-size:12px;margin-top:8px;">还没有打印机。</div>';
+  }).join('') || emptyState('还没有打印机。');
   box.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px;">打印代理机</div>${agentsHtml}
     <div style="font-size:12px;font-weight:600;margin:12px 0 4px;">打印机</div>${printersHtml}`;
 }
@@ -8616,7 +8622,7 @@ async function loadPrintRules() {
       <div style="display:flex;gap:6px;">
         <button class="btn" style="font-size:11px;" onclick="openPrintRuleModal('${esc(r.id)}')">编辑</button>
         <button class="btn" style="font-size:11px;color:var(--err);" onclick="delPrintRule('${esc(r.id)}','${esc(r.label)}')">删除</button>
-      </div></div>`).join('') || '<div style="color:var(--txd);font-size:12px;">还没有打印类别。新建一个类别并勾「默认」，用户发打印时就按它走（如「普通→不烧水印」「合同→烧水印+需审批」）。</div>';
+      </div></div>`).join('') || emptyState('还没有打印类别。新建一个类别并勾「默认」，用户发打印时就按它走（如「普通→不烧水印」「合同→烧水印+需审批」）。');
   box.innerHTML = rulesHtml +
     `<div style="margin-top:12px;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
        <label>本组织每日打印页数上限 <input id="print-daily-pages" type="number" min="0" value="${data.daily_pages || 0}" style="width:90px;padding:4px 6px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);color:var(--tx);"></label>
@@ -8709,7 +8715,7 @@ async function loadPrintAudit() {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${tile('任务数', s.total)}${tile('估算页数', s.pages)}<div style="border:1px solid var(--bd);border-radius:3px;padding:8px 12px;flex:1;min-width:160px;"><div style="font-size:11px;color:var(--txd);">状态分布</div><div style="font-size:12px;margin-top:4px;">${statusLine}</div></div></div>
     <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;">${rankList(s.top_printers, '打印机')}${rankList(s.top_users, '成员')}</div>
     <div style="font-size:12px;font-weight:600;margin-bottom:4px;">最近任务</div>
-    ${recent ? `<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:var(--txd);text-align:left;"><th style="padding:4px 6px;">文件</th><th style="padding:4px 6px;">发起人</th><th style="padding:4px 6px;">打印机</th><th style="padding:4px 6px;text-align:right;">页</th><th style="padding:4px 6px;">状态</th><th style="padding:4px 6px;">时间</th></tr></thead><tbody>${recent}</tbody></table></div>` : '<div style="color:var(--txd);font-size:12px;">该时段暂无打印任务</div>'}`;
+    ${recent ? `<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:var(--txd);text-align:left;"><th style="padding:4px 6px;">文件</th><th style="padding:4px 6px;">发起人</th><th style="padding:4px 6px;">打印机</th><th style="padding:4px 6px;text-align:right;">页</th><th style="padding:4px 6px;">状态</th><th style="padding:4px 6px;">时间</th></tr></thead><tbody>${recent}</tbody></table></div>` : emptyState('该时段暂无打印任务')}`;
 }
 async function loadPrintApprovals() {
   const card = document.getElementById('print-approvals-card'), box = document.getElementById('print-approvals-admin');
@@ -8787,7 +8793,7 @@ async function refreshMdmPanel() {
       <span style="flex:1;">${esc(c.label||c.type)} <span style="color:var(--txd);font-size:10px;">${esc(c.created_at||'')}</span>${c.result?`<br><span style="color:var(--txd);font-size:10px;">↳ ${esc(c.result).slice(0,120)}</span>`:''}</span>
       <span style="color:${stc};font-size:11px;">${STAT[c.status]||c.status}</span>
       ${c.status==='pending'?`<button class="btn" style="font-size:10px;padding:1px 6px;" onclick="mdmCancel('${c.id}')">取消</button>`:''}
-    </div>`; }).join('') : '<div style="color:var(--txd);padding:6px 0;">暂无命令</div>';
+    </div>`; }).join('') : emptyState('暂无命令');
   body.innerHTML = `
     <div style="background:var(--bg);border-radius:3px;padding:10px;margin-bottom:12px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
@@ -8973,7 +8979,7 @@ async function refreshMdmProfiles() {
     <span style="flex:1;"><b style="color:var(--txt);">${esc(p.name)}</b> <span style="font-size:10px;background:var(--bg);padding:1px 6px;border-radius:3px;">${esc(p.kind)}</span>${p.in_use?` <span style="color:var(--txd);font-size:10px;">· 已装 ${p.in_use}</span>`:''}${p.note?`<br><span style="color:var(--txd);font-size:11px;">${esc(p.note)}</span>`:''}</span>
     <button class="btn" style="font-size:10px;padding:1px 7px;" onclick='editMdmProfile(${JSON.stringify(p).replace(/'/g,"&#39;")})'>编辑</button>
     <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick="delMdmProfile('${p.id}','${esc(p.name)}')">删除</button>
-  </div>`).join('') : '<div style="color:var(--txd);padding:6px 0;">暂无描述文件</div>';
+  </div>`).join('') : emptyState('暂无描述文件');
 }
 async function editMdmProfile(p) {
   const kinds = window._mdmProfKinds || ['apple','google','microsoft','generic'];
@@ -9054,7 +9060,7 @@ async function loadFedApps() {
         <div style="color:var(--txd);margin-top:3px;">${esc(a.a_base_url)} · ${esc(a.app_client_id)}</div>
       </div>
       <button class="btn" style="font-size:11px;color:var(--err);" onclick="delFedApp('${a.id}')">删除</button>
-    </div>`).join('') : '<div style="color:var(--txd);">还没有登记伙伴应用。</div>';
+    </div>`).join('') : emptyState('还没有登记伙伴应用。');
 }
 function openFedAppModal() {
   const peers = (window._accessPeersCache || []);
@@ -9132,7 +9138,7 @@ async function loadAccessPeers() {
         </div>
       </div>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);">还没有联邦伙伴。点右上「+ 登记伙伴」。</div>';
+  }).join('') : emptyState('还没有联邦伙伴。点右上「+ 登记伙伴」。');
 }
 function _doorCheckboxes(selected, cls) {
   const doors = (_accessDoorsCache || []).filter(d => d.status === 'enabled');
@@ -9357,7 +9363,7 @@ async function loadAccessPasses(boxId) {
         </div>
       </div>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);">还没有访客码。点右上「+ 签发访客码」。</div>';
+  }).join('') : emptyState('还没有访客码。点右上「+ 签发访客码」。');
 }
 // ── 禁入时段编辑器（v3.5.29，门 / 访客码共用）──
 // 一行 = 一个窗口：星期（不勾=每天）+ 时段（不填=全天）+ 日期区间（不填=长期）；三者至少填一项。
@@ -9484,7 +9490,7 @@ async function loadAccessFaces() {
         <button class="btn" style="font-size:11px;color:var(--err);" onclick="delFace('${esc(f.user_uid_code||f.user_uid_seq)}')">删除</button>
       </div>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);">还没有人录入人脸。用户在「门禁」页自愿录入后出现在这里。</div>';
+  }).join('') : emptyState('还没有人录入人脸。用户在「门禁」页自愿录入后出现在这里。');
 }
 async function viewFace(uid) {
   if (_IS_DEV) { showToast('演示模式无真实人脸图'); return; }
@@ -9527,7 +9533,7 @@ async function loadAccessCards() {
         <button class="btn" style="font-size:11px;color:var(--err);" onclick="delCard('${c.id}')">删除</button>
       </div>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);">还没有绑定卡。点右上「+ 绑定卡」把实体卡/NFC 卡号绑到用户。</div>';
+  }).join('') : emptyState('还没有绑定卡。点右上「+ 绑定卡」把实体卡/NFC 卡号绑到用户。');
 }
 function openCardModal() {
   const ov = document.createElement('div');
@@ -9584,7 +9590,7 @@ async function delCard(id) {
 }
 function renderDoorList(doors) {
   const box = document.getElementById('adm-door-list'); if (!box) return;
-  if (!doors.length) { box.innerHTML = '<div style="color:var(--txd);">还没有门，点右上「+ 新建门」。</div>'; return; }
+  if (!doors.length) { box.innerHTML = emptyState('还没有门，点右上「+ 新建门」。'); return; }
   box.innerHTML = doors.map(d => `<div style="padding:12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:10px;">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <div>
@@ -9801,7 +9807,7 @@ async function loadRules(doorId) {
       </div>
       <button class="btn" style="font-size:11px;color:var(--err);" onclick="delRule('${doorId}','${r.id}')">删除</button>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);font-size:12px;">还没有规则——没有任何允许规则时，所有人都无法通过此门。</div>';
+  }).join('') : emptyState('还没有规则——没有任何允许规则时，所有人都无法通过此门。');
 }
 async function addRule(doorId) {
   const type = document.getElementById('rule-type').value;
@@ -9935,7 +9941,7 @@ async function loadMyDevices() {
       </div>
       <div style="font-size:11px;color:var(--txd);margin-top:5px;">认领后该设备归到你名下、放开使用。</div>
     </div>`;
-  if (!list.length) { box.innerHTML = claimBox + '<div style="color:var(--txd);padding:16px;text-align:center;">名下还没有设备。有领取码可在上方认领,或等管理员下发后在这里确认。</div>'; return; }
+  if (!list.length) { box.innerHTML = claimBox + emptyState('名下还没有设备。有领取码可在上方认领,或等管理员下发后在这里确认。'); return; }
   box.innerHTML = claimBox + list.map(d => {
     const online = d.last_seen ? d.last_seen : '从未';
     const locked = d.lock_state === 'locked';
@@ -10092,7 +10098,7 @@ async function loadVerifyFields() {
         <button class="btn" style="font-size:11px;" onclick='openVerifyFieldModal(${JSON.stringify(f)})'>编辑</button>
         <button class="btn" style="font-size:11px;color:var(--err);" onclick="delVerifyField('${f.id}')">删除</button>
       </div>
-    </div>`).join('') : '<div style="color:var(--txd);">还没有自定义字段。</div>';
+    </div>`).join('') : emptyState('还没有自定义字段。');
 }
 function openVerifyFieldModal(f) {
   const d = f || { id:'', label:'', kind:'text', masked:0, enabled:1, sort_order:0 };
@@ -10149,7 +10155,7 @@ async function loadVerifiers() {
         ${v.subject_name?`<span style="color:var(--txd);margin-left:6px;">限 ${esc(v.subject_name)}</span>`:''}</div>
       <button class="btn" style="font-size:11px;color:var(--err);" onclick="delVerifier('${v.id}')">撤销</button>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);">还没有授权核验员（管理员默认可核验）。</div>';
+  }).join('') : emptyState('还没有授权核验员（管理员默认可核验）。');
 }
 async function openVerifierModal() {
   const s = await api('GET', '/admin/oauth-subjects');
@@ -10340,7 +10346,7 @@ function renderMemoList() {
   const box = document.getElementById('memo-list'); if (!box) return;
   const q = (document.getElementById('memo-search')?.value || '').toLowerCase();
   const list = _memos.filter(m => !q || (m.title || '').toLowerCase().includes(q) || (m.tags || []).join(',').toLowerCase().includes(q));
-  if (!list.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">还没有备忘录，点右上角「新建」。</div>'; return; }
+  if (!list.length) { box.innerHTML = emptyState('还没有备忘录，点右上角「新建」。'); return; }
   box.innerHTML = list.map(m => `
     <div style="border:1px solid var(--bd);border-radius:3px;padding:10px 12px;margin-bottom:8px;cursor:pointer;" onclick="openMemo('${m.id}')">
       <div style="display:flex;align-items:center;gap:8px;">
@@ -10357,7 +10363,7 @@ async function loadAdmMemos() {
   const { ok, data } = await api('GET', '/admin/memos');
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const rows = data.memos || [];
-  if (!rows.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">暂无备忘录。</div>'; return; }
+  if (!rows.length) { box.innerHTML = emptyState('暂无备忘录。'); return; }
   box.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="text-align:left;color:var(--txd);border-bottom:1px solid var(--bd);">
       <th style="padding:6px 8px;">归属</th><th style="padding:6px 8px;">标题</th><th style="padding:6px 8px;">标签</th><th style="padding:6px 8px;">${ic('attach')}</th><th style="padding:6px 8px;">更新</th><th style="padding:6px 8px;"></th></tr></thead>
@@ -10751,7 +10757,7 @@ function renderOrgDepts() {
       </div>`;
     }).join('');
     return head + items;
-  }).join('') : '<div style="color:var(--txd);font-size:12px;">还没有部门（通讯录同步会自动建，也可手动新建顶级部门）。</div>';
+  }).join('') : emptyState('还没有部门（通讯录同步会自动建，也可手动新建顶级部门）。');
   box.innerHTML = rows;
 }
 async function createDept() {
@@ -10850,7 +10856,7 @@ async function loadOrgMembers() {
       ${acctBtns}
       <button class="btn" style="font-size:11px;padding:2px 7px;color:var(--err);border-color:var(--err);" onclick='delOrgMember(${JSON.stringify(m.uid_seq)},${JSON.stringify(m.name||"")})'>移出</button>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);padding:8px 4px;">该组织还没有成员。</div>';
+  }).join('') : emptyState('该组织还没有成员。');
 }
 // ── 一人多号合并（v3.5.41）──
 let _orgMemRows = [];
@@ -11023,7 +11029,7 @@ async function renderOrgMemContacts() {
       <button class="btn" style="font-size:10px;padding:1px 7px;" onclick='omcEdit(${JSON.stringify(x.id)},"${kind}",${JSON.stringify(x.value)})'>编辑</button>
       <button class="btn" style="font-size:10px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='omcDel(${JSON.stringify(x.id)})'>删除</button>
     </div>`;
-  const list = [...c.phones.map(x => row('phone', x)), ...c.emails.map(x => row('email', x))].join('') || '<div style="color:var(--txd);font-size:12px;padding:6px 0;">暂无联系方式</div>';
+  const list = [...c.phones.map(x => row('phone', x)), ...c.emails.map(x => row('email', x))].join('') || emptyState('暂无联系方式');
   modal.innerHTML = `<div class="modal" style="min-width:420px;max-width:520px;text-align:left;">
     <h3 style="margin-bottom:4px;">联系方式 · ${esc(_omcName)}</h3>
     <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">手机 / 邮箱 / 企业邮箱可直接改；企业微信 / 飞书同步回来的值也在这里改。主要联系方式会同步为登录用的主字段。</div>
@@ -11104,7 +11110,7 @@ async function openOrgMemCreds(uidSeq, name) {
       <span style="flex:1;color:var(--txt);">${esc(pz)} <span style="color:var(--txd);font-size:11px;">${esc(b.open_id)}</span></span>
       <button class="btn" style="font-size:11px;padding:1px 7px;color:var(--err);border-color:var(--err);" onclick='unbindOrgMemCred(${JSON.stringify(uidSeq)},${JSON.stringify(b.provider)})'>解绑</button>
     </div>`;
-  }).join('') : '<div style="color:var(--txd);font-size:12px;">还没有绑定任何三方登录。</div>';
+  }).join('') : emptyState('还没有绑定任何三方登录。');
   const html = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
       <b style="color:var(--txt);">「${esc(name)}」的登录凭证</b>
@@ -11332,7 +11338,7 @@ async function renderPubList() {
   const box = document.getElementById('pub-list'); if (!box) return;
   const { ok, data } = await api('GET', `/admin/groups/${_pubMgrGid}/public-accounts`);
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
-  if (!data.accounts.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 0;">还没有公共账号</div>'; return; }
+  if (!data.accounts.length) { box.innerHTML = emptyState('还没有公共账号'); return; }
   box.innerHTML = data.accounts.map(a => `
     <div style="border:1px solid var(--bd);border-radius:3px;padding:11px 13px;margin-bottom:10px;">
       <div style="display:flex;align-items:center;gap:8px;">
@@ -11398,7 +11404,7 @@ async function openGroupAdmins(gid, gname) {
       ${members.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;">${members.map(u=>`
         <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
           <input type="checkbox" value="${esc(u.id)}" ${cur.has(u.id)?'checked':''} style="width:14px;height:14px;accent-color:var(--ac);"> ${esc(u.name||u.email||uidOf(u))}</label>`).join('')}</div>`
-        : '<div style="color:var(--txd);font-size:12px;">本分组内暂无成员，请先把用户分到该分组。</div>'}
+        : emptyState('本分组内暂无成员，请先把用户分到该分组。')}
       <div style="text-align:right;margin-top:14px;"><button class="btn primary" onclick="saveGroupAdmins('${gid}')">保存</button></div>
     </div></div>`;
 }
@@ -11430,7 +11436,7 @@ async function openOrgAdmins(sid, sname) {
       ${members.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;">${members.map(u=>`
         <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
           <input type="checkbox" value="${esc(u.user_id)}" ${cur.has(u.user_id)?'checked':''} style="width:14px;height:14px;accent-color:var(--ac);"> ${esc(u.name||u.email||('#'+u.uid_seq))}</label>`).join('')}</div>`
-        : '<div style="color:var(--txd);font-size:12px;">本组织暂无成员，请先在「👥 成员」里加入成员。</div>'}
+        : emptyState('本组织暂无成员，请先在「👥 成员」里加入成员。')}
       <div style="text-align:right;margin-top:14px;"><button class="btn primary" onclick="saveOrgAdmins('${sid}')">保存</button></div>
     </div></div>`;
 }
@@ -12164,7 +12170,7 @@ function renderLevelCards() {
   const container = document.getElementById('lvl-cards');
   if (!container) return;
   if (!levels.length) {
-    container.innerHTML = '<div style="text-align:center;padding:32px;color:var(--txd);">该组暂无等级，点击「新增等级」创建</div>';
+    container.innerHTML = emptyState('该组暂无等级，点击「新增等级」创建');
     return;
   }
   container.innerHTML = levels.map(lv => {
@@ -13194,7 +13200,7 @@ async function loadBoxRewards(goodsId) {
 function renderBoxRewards() {
   const el = document.getElementById('gm-rewards-list');
   if (!el) return;
-  if (!_boxRewards.length) { el.innerHTML = '<div style="color:var(--txd);font-size:12px;padding:8px 0;">暂无奖励，点击下方添加</div>'; return; }
+  if (!_boxRewards.length) { el.innerHTML = emptyState('暂无奖励，点击下方添加'); return; }
   const totalW = _boxRewards.reduce((s,r) => s+r.weight, 0);
   el.innerHTML = _boxRewards.map((r,i) => `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--sf2);border-radius:2px;margin-bottom:6px;font-size:12px;">
@@ -13352,7 +13358,7 @@ async function loadProviderStats() {
   if (!el) return;
   const { ok, data } = await api('GET', '/admin/provider-stats');
   if (!ok || !data.stats?.length) {
-    el.innerHTML = '<div style="color:var(--txd);">暂无调用记录</div>';
+    el.innerHTML = emptyState('暂无调用记录');
     return;
   }
   const providerLabel = {
@@ -13439,7 +13445,7 @@ async function loadUserCoupons() {
   if (!el) return;
   const { ok, data } = await api('GET', '/user/coupons');
   if (!ok || !data.coupons?.length) {
-    el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--txd);">暂无兑换券</div>';
+    el.innerHTML = emptyState('暂无兑换券');
     return;
   }
   el.innerHTML = data.coupons.map(c => {
@@ -13597,7 +13603,7 @@ async function loadFooterItems() {
     .sort();
 
   if (!footerKeys.length) {
-    el.innerHTML = '<div style="text-align:center;padding:16px;color:var(--txd);font-size:12px;">暂无页脚项目，点击「新增页脚项」添加</div>';
+    el.innerHTML = emptyState('暂无页脚项目，点击「新增页脚项」添加');
     return;
   }
 
@@ -13875,7 +13881,7 @@ async function loadAuthedApps() {
   if (!el) return;
   const { ok, data } = await api('GET', '/apps/authed');
   if (!ok || !data.apps?.length) {
-    el.innerHTML = '<div style="text-align:center;padding:30px;color:var(--txd);">暂无已授权应用</div>';
+    el.innerHTML = emptyState('暂无已授权应用');
     return;
   }
   el.innerHTML = data.apps.map(a => {

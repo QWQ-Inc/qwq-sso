@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.129**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.130**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.130 空状态统一：列表为空占位换成 `.empty-state` 组件（用户「继续」）
+
+三级版本（纯前端）。承接 UI 细化，收 v3.5.123 标注的后续项——全站列表「暂无 / 还没有 xxx」原是零散的裸 `<div style="color:var(--txd)…">文本</div>`（样式/内边距各异），统一成 `.empty-state` 组件（居中虚线框 + `--sf2` 浅底 + 淡字 + `--r-md` 圆角 + 可选小图标）。
+- CSS `.empty-state`（插在 `@keyframes ld-rot` 后）+ JS 助手 `emptyState(text, icon)`（插在 `LD` 后，返回 `<div class="empty-state">…</div>`，icon 可选 → 顶部 22px 小图标）。
+- **批量替换**：node 正则 `/(['"\`])<div style="[^"]*">([^<'"\`]*(?:暂无|还没有)[^<'"\`]*)<\/div>\1/g` 把**单引号 JS 字面量**里的列表空状态 div 换成 `emptyState('文本')`——共 **46 处**，0 残留。
+- ⚠️ **只命中真·列表空状态**：正则锚定「引号包裹的 `<div>` 字面量 + 文本含 暂无/还没有」——散文提示（💡…，在页面 HTML 里非单引号字面量、也不含这些词）、toast（走 showToast）、带动态拼接 `+ esc(…)` 的（如区号通道/备份目标，`</div>` 前有 `' +`，不匹配）都不会误伤。干跑打印 46 条逐一核对均为列表占位。
+- ⚠️ 本批文本型（未传 icon），保持一致、风险最低；`emptyState` 的 icon 形参已留好，以后想给某些空状态加图标直接传第二参。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；替换 46 / 残留 0。本轮未起浏览器实渲染（`.empty-state` 为直白 CSS + 助手返回合法 HTML，靠正则精确匹配 + 解析校验）。纯前端，无后端改动。
 
 ## v3.5.129 emoji→小图标收尾：导出 / 发送按钮箭头前缀统一（用户「继续」）
 
