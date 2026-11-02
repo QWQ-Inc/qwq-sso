@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 报告安全漏洞
+    url: https://github.com/QWQ-Inc/qwq-sso/security/advisories/new
+    about: 安全问题请走私密漏洞报告，不要在公开 Issue 提交。
+  - name: 💬 使用问题 / 讨论
+    url: https://github.com/QWQ-Inc/qwq-sso/discussions
+    about: 使用疑问、接入咨询、想法交流请到 Discussions。
