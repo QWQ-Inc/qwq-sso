@@ -237,21 +237,6 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS twofa_recovery_codes (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, code_hash TEXT NOT NULL,
   used INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
-// MDM 纳管（v3.5.82）：设备补列——纳管状态 / agent 鉴权密钥哈希 / 系统版本 / 型号 / 锁定态 / 下发时间
-try { db.exec("ALTER TABLE devices ADD COLUMN enroll_status TEXT NOT NULL DEFAULT 'unenrolled'"); } catch(_) {}  // unenrolled|pending|enrolled|retired
-try { db.exec('ALTER TABLE devices ADD COLUMN enroll_hash TEXT'); } catch(_) {}       // agent check-in 用的 enroll secret 的 sha256
-try { db.exec('ALTER TABLE devices ADD COLUMN os_version TEXT'); } catch(_) {}
-try { db.exec('ALTER TABLE devices ADD COLUMN model TEXT'); } catch(_) {}
-try { db.exec('ALTER TABLE devices ADD COLUMN supervised INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
-try { db.exec('ALTER TABLE devices ADD COLUMN lock_state TEXT'); } catch(_) {}          // null|locked（agent 回报）
-try { db.exec('ALTER TABLE devices ADD COLUMN last_command_at TEXT'); } catch(_) {}
-// MDM 多传输（v3.5.84）：pull_agent（电脑跑 agent.js）/ apple_mdm / google_chrome / android_mgmt
-try { db.exec("ALTER TABLE devices ADD COLUMN transport TEXT NOT NULL DEFAULT 'pull_agent'"); } catch(_) {}
-try { db.exec('ALTER TABLE devices ADD COLUMN ext_device_id TEXT'); } catch(_) {}   // 厂商侧设备 id（Android resourceName / Chrome deviceId / Apple UDID）
-// Apple MDM（v3.5.88）：设备 check-in(TokenUpdate) 时上报的 APNs 推送凭据
-try { db.exec('ALTER TABLE devices ADD COLUMN mdm_push_token TEXT'); } catch(_) {}   // APNs device token（hex）
-try { db.exec('ALTER TABLE devices ADD COLUMN mdm_push_magic TEXT'); } catch(_) {}
-try { db.exec('ALTER TABLE devices ADD COLUMN mdm_unlock_token TEXT'); } catch(_) {} // ClearPasscode 用（base64）
 // Passkey（WebAuthn 凭据）
 try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_id TEXT NOT NULL UNIQUE,
@@ -362,12 +347,6 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS totp_vault_items (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_totp_vault_items_user ON totp_vault_items(user_id)'); } catch(_) {}
-// 设备认领（v3.5.96）：管理员下发 ≠ 直接生效,用户确认认领(或输领取码)后才放开使用。
-// claim_status: claimed(已认领/可用) | pending(待用户确认) | unclaimed(有领取码,等人用码认领)。存量设备默认 claimed(不打断)。
-try { db.exec("ALTER TABLE devices ADD COLUMN claim_status TEXT NOT NULL DEFAULT 'claimed'"); } catch(_) {}
-try { db.exec('ALTER TABLE devices ADD COLUMN claim_code TEXT'); } catch(_) {}
-// 打印接入（v3.5.97，Phase 1）：打印机作设备一种(kind=printer),打印代理机 kind=print_agent(复用 enroll_hash 鉴权)。
-try { db.exec('ALTER TABLE devices ADD COLUMN print_queues TEXT'); } catch(_) {}   // print_agent 上报的可见系统打印队列(JSON),供管理端映射
 try { db.exec(`CREATE TABLE IF NOT EXISTS printer_config (
   device_id     TEXT PRIMARY KEY,           -- devices.id (kind='printer')
   transport     TEXT NOT NULL DEFAULT 'agent', -- 'agent' | 'ipp'
@@ -402,8 +381,6 @@ try { db.exec('ALTER TABLE print_jobs ADD COLUMN watermark INTEGER NOT NULL DEFA
 try { db.exec('ALTER TABLE print_jobs ADD COLUMN approver TEXT'); } catch(_) {}             // 审批人 uid
 try { db.exec('ALTER TABLE print_jobs ADD COLUMN decided_at TEXT'); } catch(_) {}
 // status 增 pending_approval（等组织管理员审批；批准后转 pending 进代理队列）
-try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_daily_pages INTEGER NOT NULL DEFAULT 0'); } catch(_) {} // 组织每日页数上限,0=不限
-try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_windows TEXT'); } catch(_) {} // v3.5.100 允许打印的时段(JSON 数组 [{wd,s,e}]),空=24/7
 try { db.exec(`CREATE TABLE IF NOT EXISTS print_rules (
   id          TEXT PRIMARY KEY,
   subject_id  TEXT NOT NULL,                 -- 组织(登录主体)
@@ -483,6 +460,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS oauth_subjects (
   sort_weight INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_daily_pages INTEGER NOT NULL DEFAULT 0'); } catch(_) {} // 组织每日页数上限,0=不限
+try { db.exec('ALTER TABLE oauth_subjects ADD COLUMN print_windows TEXT'); } catch(_) {} // v3.5.100 允许打印的时段(JSON 数组 [{wd,s,e}]),空=24/7
 try { db.exec('ALTER TABLE oauth_providers ADD COLUMN subject_id TEXT'); } catch(_) {}
 // 组织成员（组织=主体）：显式的「用户 ∈ 组织」关系 + 组织内标识 org_uid（自定义/导入，仅组织内身份辨认+必要认证）。
 try { db.exec(`CREATE TABLE IF NOT EXISTS org_members (
@@ -1055,6 +1034,28 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS devices (
 )`); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_devices_subject ON devices(subject_id)'); } catch(_) {}
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_devices_owner ON devices(owner_user_id)'); } catch(_) {}
+// ⚠️ 设备补列必须在建表之后（全新数据库首次启动时表还不存在，ALTER 会被静默吞掉，之后 prepare 引用新列即崩溃）
+// MDM 纳管（v3.5.82）：设备补列——纳管状态 / agent 鉴权密钥哈希 / 系统版本 / 型号 / 锁定态 / 下发时间
+try { db.exec("ALTER TABLE devices ADD COLUMN enroll_status TEXT NOT NULL DEFAULT 'unenrolled'"); } catch(_) {}  // unenrolled|pending|enrolled|retired
+try { db.exec('ALTER TABLE devices ADD COLUMN enroll_hash TEXT'); } catch(_) {}       // agent check-in 用的 enroll secret 的 sha256
+try { db.exec('ALTER TABLE devices ADD COLUMN os_version TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN model TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN supervised INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN lock_state TEXT'); } catch(_) {}          // null|locked（agent 回报）
+try { db.exec('ALTER TABLE devices ADD COLUMN last_command_at TEXT'); } catch(_) {}
+// MDM 多传输（v3.5.84）：pull_agent（电脑跑 agent.js）/ apple_mdm / google_chrome / android_mgmt
+try { db.exec("ALTER TABLE devices ADD COLUMN transport TEXT NOT NULL DEFAULT 'pull_agent'"); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN ext_device_id TEXT'); } catch(_) {}   // 厂商侧设备 id（Android resourceName / Chrome deviceId / Apple UDID）
+// Apple MDM（v3.5.88）：设备 check-in(TokenUpdate) 时上报的 APNs 推送凭据
+try { db.exec('ALTER TABLE devices ADD COLUMN mdm_push_token TEXT'); } catch(_) {}   // APNs device token（hex）
+try { db.exec('ALTER TABLE devices ADD COLUMN mdm_push_magic TEXT'); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN mdm_unlock_token TEXT'); } catch(_) {} // ClearPasscode 用（base64）
+// 设备认领（v3.5.96）：管理员下发 ≠ 直接生效,用户确认认领(或输领取码)后才放开使用。
+// claim_status: claimed(已认领/可用) | pending(待用户确认) | unclaimed(有领取码,等人用码认领)。存量设备默认 claimed(不打断)。
+try { db.exec("ALTER TABLE devices ADD COLUMN claim_status TEXT NOT NULL DEFAULT 'claimed'"); } catch(_) {}
+try { db.exec('ALTER TABLE devices ADD COLUMN claim_code TEXT'); } catch(_) {}
+// 打印接入（v3.5.97，Phase 1）：打印机作设备一种(kind=printer),打印代理机 kind=print_agent(复用 enroll_hash 鉴权)。
+try { db.exec('ALTER TABLE devices ADD COLUMN print_queues TEXT'); } catch(_) {}   // print_agent 上报的可见系统打印队列(JSON),供管理端映射
 
 // ── MDM 设备管理纳管（v3.5.82）──
 // 真实厂商协议（Apple MDM over APNs / Android Management API / Windows MDM）需要厂商证书，本机无法联调、

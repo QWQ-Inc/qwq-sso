@@ -7309,6 +7309,8 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+// shop_goods 在这里才建表：db.js 里给它补的列（category 等）在全新数据库首次启动时会被静默吞掉，建表后再补一次
+try { db.exec('ALTER TABLE shop_goods ADD COLUMN category TEXT'); } catch(_) {}
 
 // 插入默认配置（不覆盖已有值）
 const defaultConfigs = {

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131.1**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131.2**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.131.2 修全新数据库首次启动即崩溃（ALTER 写在建表之前）
+
+四级补丁（修 bug）。线上一个新部署反复 CrashLoopBackOff：`[ENV] 数据库环境变量加载失败: Cannot open database because the directory does not exist`（数据目录为空 = 全新库）后 `SqliteError: no such column: print_queues`（db.js 的 `printerStmts.setQueues`）。
+- 🐛 根因：`devices` 的 17 条补列 ALTER（v3.5.82 MDM / v3.5.84 传输 / v3.5.88 Apple MDM / v3.5.96 认领 / v3.5.97 打印队列）与 `oauth_subjects` 的 `print_daily_pages`/`print_windows` 写在建表**之前**（devices 在 ~1041 行才建、oauth_subjects 在 ~479 行）。老库表早已存在所以一直没暴露；全新库 ALTER 被静默吞掉，`db.prepare` 引用缺失列即抛错——正是本文件「ALTER TABLE 必须写在建表语句之后」那条规矩被后来的版本违反了。
+- 修：Python 脚本把这些 ALTER 原样挪到 `idx_devices_owner` 索引之后 / `oauth_subjects` 建表之后；`shop_goods`（在 api.js 建表，`category` 由 db.js 提前 ALTER）在 api.js 建表后补 `ALTER TABLE shop_goods ADD COLUMN category`。
+- ⚠️ **以后新增补列前，先确认目标表在 db.js 里的建表行号比你的 ALTER 小**；可用脚本扫一遍：对每条 `ALTER TABLE x` 比对 `CREATE TABLE x` 的行号（只有 shop_goods 在 api.js 建表）。
+- ⚠️ 测试：node:sqlite 模拟 better-sqlite3 在空库上加载 db.js——修复前复现同样报错，修复后加载成功、新列齐全；已有库二次启动正常。
 
 ## v3.5.131.1 修 7 处 `ic(org)` 漏引号 ReferenceError（代码审查发现）
 

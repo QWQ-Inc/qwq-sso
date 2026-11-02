@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.131.2 — 修全新数据库首次启动即崩溃（`no such column: print_queues`）
+
+- 现象：全新部署（数据目录为空）启动时 `server/db.js` 报 `SqliteError: no such column: print_queues`，进程退出、反复重启（CrashLoopBackOff）。
+- 根因：`devices` 的 17 条补列 ALTER（MDM 纳管 / 多传输 / Apple MDM / 设备认领 / 打印队列）与 `oauth_subjects` 的 2 条打印补列写在**建表语句之前**。已有数据库表早就在，ALTER 照常生效，所以线上老库没事；全新数据库首次启动时表还不存在，ALTER 被 `catch(_) {}` 静默吞掉，随后 `prepare('UPDATE devices SET print_queues=…')` 引用不存在的列直接抛错。与 v3.3.0 修过的是同一类问题。
+- 修：把这 19 条 ALTER 挪到对应建表之后；`shop_goods` 在 `api.js` 里才建表，其 `category` 列在全新库上同样缺失（新建商品会失败），建表后补一次。
+- ⚠️ 测试：用 node:sqlite 模拟 better-sqlite3，在全新空库上加载 `db.js`——修复前复现 `no such column: print_queues`，修复后加载成功且 `devices` / `oauth_subjects` 的新列齐全；对已有库二次启动同样正常。脚本检查所有 `ALTER TABLE` 都位于其建表之后（`shop_goods` 例外，建表在 api.js，已补）。
+
 ## v3.5.131.1 — 修 7 处 `ic(org)` 漏引号导致 ReferenceError
 
 - 本会话 emoji→小图标扫荡（v3.5.114+）时把 🏢 组织图标写成 `ic(org)`（裸标识符），但 `org` 未声明——读取即抛 `ReferenceError: org is not defined`，让所在渲染路径整段中断。与 v3.5.121 已修的 `ic(external)` 同类。
