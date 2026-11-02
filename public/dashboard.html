@@ -479,6 +479,10 @@ a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-s
 .cred-ic{width:18px;height:18px;flex:none;display:inline-flex;align-items:center;justify-content:center;}
 .cred-ic .ic{width:16px;height:16px;color:var(--txd);vertical-align:0;}
 .cred-ic svg{width:18px;height:18px;}
+/* 统一加载态转圈（v3.5.122） */
+.ld{display:inline-flex;align-items:center;gap:7px;color:var(--txd);font-size:12px;padding:8px 4px;}
+.ld-spin{width:13px;height:13px;border:2px solid var(--bd2);border-top-color:var(--ac);border-radius:50%;animation:ld-rot .6s linear infinite;flex:none;box-sizing:border-box;}
+@keyframes ld-rot{to{transform:rotate(360deg)}}
 
 /* ══════════ v3.5.111 组件细化：下拉箭头 + 弹窗入场动画 + toast ══════════ */
 /* 原生 select 去掉 OS 三角，换统一的柔灰 chevron（与前面规则同特异性、后置，赢 background-image/padding 长手） */
@@ -1123,6 +1127,8 @@ function hydrateIcons(root) {
   (root || document).querySelectorAll('[data-ic]:empty').forEach(el => { el.innerHTML = ic(el.dataset.ic); });
 }
 document.addEventListener('DOMContentLoaded', () => hydrateIcons());
+// 统一加载态：转圈 + 文案（替代裸的加载占位）
+const LD = '<span class="ld"><span class="ld-spin"></span>加载中</span>';
 function ic(name, cls) {
   const p = ICON_PATHS[name]; if (!p) return '';
   return `<svg class="ic${cls ? ' ' + cls : ''}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
@@ -1491,7 +1497,7 @@ async function loadMe() {
         <div class="checkin-box" id="home-checkin">
           <div class="ck-info">
             <div class="ck-title">今日签到</div>
-            <div class="ck-sub" id="ck-sub">加载中…</div>
+            <div class="ck-sub" id="ck-sub"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div class="ck-streak" id="ck-week" style="margin-top:10px">
               <span style="font-size:11px;color:var(--txm);margin-right:4px;">本周</span>
             </div>
@@ -1586,7 +1592,7 @@ async function loadMe() {
         <!-- 商品列表 -->
         <div id="shop-goods">
           <div class="shop-grid" id="shop-grid">
-            <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--txd);">加载中…</div>
+            <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
           </div>
         </div>
 
@@ -1595,7 +1601,7 @@ async function loadMe() {
           <div class="card">
             <div class="card-header"><h3>我的兑换券</h3><button class="btn" style="font-size:11px;" onclick="loadUserCoupons()">刷新</button></div>
             <div id="coupon-list" style="padding:0 18px 14px;">
-              <div style="text-align:center;padding:32px;color:var(--txd);">加载中…</div>
+              <div style="text-align:center;padding:32px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             </div>
           </div>
         </div>
@@ -1631,7 +1637,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>时间</th><th>兑换码</th><th>类型</th><th>获得</th></tr></thead>
                 <tbody id="redeem-records-tbody">
-                  <tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1672,7 +1678,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>时间</th><th>说明</th><th>积分变动</th></tr></thead>
                 <tbody id="transfer-records-tbody">
-                  <tr><td colspan="3" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="3" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1686,7 +1692,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>时间</th><th>商品</th><th>消耗积分</th><th>状态</th><th>备注</th></tr></thead>
                 <tbody id="shop-records-tbody">
-                  <tr><td colspan="5" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="5" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1700,7 +1706,7 @@ async function loadMe() {
             <div style="padding:0">
               <table class="tbl">
                 <thead><tr><th style="width:70px;">名次</th><th>用户</th><th>UID</th><th style="text-align:right;">积分</th></tr></thead>
-                <tbody id="rank-tbody"><tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr></tbody>
+                <tbody id="rank-tbody"><tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr></tbody>
               </table>
             </div>
           </div>
@@ -1712,7 +1718,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>时间</th><th>说明</th><th>变动</th><th>方向</th></tr></thead>
                 <tbody id="pts-log-tbody">
-                  <tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="4" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -1769,7 +1775,7 @@ async function loadMe() {
         <!-- 已授权应用 -->
         <div id="tab-authorized" style="display:none">
           <div id="authed-apps-list">
-            <div style="text-align:center;padding:30px;color:var(--txd);">加载中…</div>
+            <div style="text-align:center;padding:30px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
           </div>
         </div>
       </div>
@@ -1783,7 +1789,7 @@ async function loadMe() {
               公共账号是分组共享的身份，供被授权的成员共用（例如多人用同一身份登录第三方系统）。<br>
               点「切换使用」会<b>整会话切换</b>为公共账号身份，你当前账号会退出登录态；随时可点「返回我的账号」切回。公共账号仅保留第三方登录等基础功能。
             </div>
-            <div id="public-page-list"><div style="color:var(--txd);padding:10px 0;">加载中…</div></div>
+            <div id="public-page-list"><div style="color:var(--txd);padding:10px 0;"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
           </div>
         </div>
         <!-- 分组管理员：管理自己分组的公共账号 -->
@@ -1806,7 +1812,7 @@ async function loadMe() {
               <button class="btn primary" style="font-size:12px;" onclick="openMemo()">+ 新建</button>
             </div>
           </div>
-          <div class="card-body"><div id="memo-list" style="font-size:13px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="memo-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
 
@@ -1823,7 +1829,7 @@ async function loadMe() {
         </div>
         <div class="card">
           <div class="card-header"><h3>我能通行的门</h3></div>
-          <div class="card-body"><div id="access-my-doors" style="font-size:13px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="access-my-doors" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
         <!-- 线上门禁（电子门，v3.5.105）：当前线上可访问的区域，无需扫码 -->
         <div class="card" id="access-online-card" style="display:none;">
@@ -1838,14 +1844,14 @@ async function loadMe() {
             <h3>我签发的访客码</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openPassModal(_myPassDoors)">+ 签发访客码</button>
           </div>
-          <div class="card-body"><div id="my-pass-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="my-pass-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 你是分组/组织管理员，可以邀请访客：只能开放你自己有权通行的门，记录签发人，可随时撤销。</div>
           </div>
         </div>
         <div class="card">
           <div class="card-header"><h3>人脸录入（可选）</h3></div>
           <div class="card-body" style="text-align:center;">
-            <div id="face-status" style="font-size:13px;color:var(--txd);margin-bottom:10px;">加载中…</div>
+            <div id="face-status" style="font-size:13px;color:var(--txd);margin-bottom:10px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <input type="file" id="face-file" accept="image/*" capture="user" style="display:none;" onchange="uploadFace(this)">
             <button class="btn primary" onclick="document.getElementById('face-file').click()">录入 / 更新人脸</button>
             <button class="btn" id="face-del-btn" style="display:none;margin-left:8px;color:var(--err);" onclick="deleteFace()">删除人脸</button>
@@ -1858,7 +1864,7 @@ async function loadMe() {
       <div class="page" id="page-orgadmin">
         <div class="card">
           <div class="card-header"><h3>我管理的组织</h3></div>
-          <div class="card-body"><div id="my-orgs-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="my-orgs-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 作为组织管理员，你可以管理本组织的成员（加入/移出/组织内 UID）和设备。如需签发访客码/跨域码，去「门禁」相关入口。</div>
           </div>
         </div>
@@ -1874,7 +1880,7 @@ async function loadMe() {
               <button class="btn" style="font-size:11px;" onclick="loadDevices('org')">刷新</button>
             </div>
           </div>
-          <div class="card-body"><div id="org-dev-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="org-dev-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">💡 只显示归属你所管理组织的设备；登记的设备必须归属其中一个组织。</div>
         </div>
       </div>
@@ -1910,7 +1916,7 @@ async function loadMe() {
           <div class="card-header"><h3>我的设备</h3></div>
           <div class="card-body">
             <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">归属到你名下的设备。只读——纳管与远程操作由管理员在管理端进行。</div>
-            <div id="my-devices-list"><div style="text-align:center;padding:20px;color:var(--txd);">加载中…</div></div>
+            <div id="my-devices-list"><div style="text-align:center;padding:20px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
           </div>
         </div>
       </div>
@@ -1927,7 +1933,7 @@ async function loadMe() {
           <div class="card">
             <div class="card-header"><h3>基本信息</h3></div>
             <div class="card-body" id="profile-form-body">
-              <div style="text-align:center;padding:20px;color:var(--txd);">加载中…</div>
+              <div style="text-align:center;padding:20px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             </div>
           </div>
 
@@ -1951,7 +1957,7 @@ async function loadMe() {
           </div>
           <div class="card" id="acct-del-card" style="display:none;">
             <div class="card-header"><h3>注销账号</h3></div>
-            <div class="card-body" id="acct-del-body" style="font-size:12px;color:var(--txd);">加载中…</div>
+            <div class="card-body" id="acct-del-body" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
           </div>
         </div>
 
@@ -1961,7 +1967,7 @@ async function loadMe() {
             <div class="card-header"><h3>已绑定的登录方式</h3></div>
             <div class="card-body">
               <div class="bind-list" id="oauth-bindings">
-                <div style="text-align:center;padding:20px;color:var(--txd);">加载中…</div>
+                <div style="text-align:center;padding:20px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
               </div>
             </div>
           </div>
@@ -1970,7 +1976,7 @@ async function loadMe() {
           <div class="card" id="twofa-card">
             <div class="card-header"><h3><span data-ic="lock" style="margin-right:6px;"></span>两步验证（2FA）</h3></div>
             <div class="card-body" id="twofa-body">
-              <div style="text-align:center;padding:20px;color:var(--txd);">加载中…</div>
+              <div style="text-align:center;padding:20px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             </div>
           </div>
 
@@ -1978,7 +1984,7 @@ async function loadMe() {
           <div class="card" id="passkey-card">
             <div class="card-header"><h3><span data-ic="key" style="margin-right:6px;"></span>Passkey（指纹 / 面容 / 硬件密钥）</h3></div>
             <div class="card-body" id="passkey-body">
-              <div style="text-align:center;padding:20px;color:var(--txd);">加载中…</div>
+              <div style="text-align:center;padding:20px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             </div>
           </div>
         </div>
@@ -2056,7 +2062,7 @@ async function loadMe() {
           <div class="card-body" style="padding:0">
             <div class="detail-grid">
               <div class="detail-list" id="adm-user-list">
-                <div style="text-align:center;padding:20px;color:var(--txd);font-size:12px;">加载中…</div>
+                <div style="text-align:center;padding:20px;color:var(--txd);font-size:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
               </div>
               <div class="detail-panel" id="user-detail-panel">
                 <div style="text-align:center;padding:40px 20px;color:var(--txd);">
@@ -2080,7 +2086,7 @@ async function loadMe() {
             <table class="tbl">
               <thead><tr><th>应用名称</th><th>Client ID</th><th>回调地址</th><th>授权用户数</th><th>状态</th><th>操作</th></tr></thead>
               <tbody id="adm-apps-tbody">
-                <tr><td colspan="6" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                <tr><td colspan="6" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
               </tbody>
             </table>
           </div>
@@ -2099,7 +2105,7 @@ async function loadMe() {
             <table class="tbl log-row">
               <thead><tr><th>时间</th><th>用户</th><th>UID</th><th>登录方式</th><th>应用</th><th>IP 地址</th><th>状态</th></tr></thead>
               <tbody id="adm-logs-tbody">
-                <tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                <tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
               </tbody>
             </table>
           </div>
@@ -2289,7 +2295,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>商品</th><th>描述</th><th>积分</th><th>库存</th><th>已兑换</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody id="adm-goods-tbody">
-                  <tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -2357,7 +2363,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>兑换码</th><th>类型</th><th>价值</th><th>已用/上限</th><th>过期时间</th><th>状态</th><th>备注</th><th>操作</th></tr></thead>
                 <tbody id="adm-codes-tbody">
-                  <tr><td colspan="8" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="8" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div>
@@ -2375,7 +2381,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>时间</th><th>用户</th><th>商品</th><th>积分</th><th>状态</th><th>备注</th></tr></thead>
                 <tbody id="adm-records-tbody">
-                  <tr><td colspan="6" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="6" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div></div>
@@ -2385,7 +2391,7 @@ async function loadMe() {
               <table class="tbl">
                 <thead><tr><th>时间</th><th>用户</th><th>兑换码</th><th>类型</th><th>获得</th></tr></thead>
                 <tbody id="adm-code-records-tbody">
-                  <tr><td colspan="5" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                  <tr><td colspan="5" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
                 </tbody>
               </table>
             </div></div>
@@ -2654,7 +2660,7 @@ async function loadMe() {
             <table class="tbl">
               <thead><tr><th>时间</th><th>方向</th><th>方法</th><th>路径/服务商</th><th>状态</th><th>耗时</th><th>IP</th></tr></thead>
               <tbody id="adm-api-logs-tbody">
-                <tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                <tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
               </tbody>
             </table>
           </div>
@@ -2668,14 +2674,14 @@ async function loadMe() {
             <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
               <h3>用户分组</h3><button class="btn primary" style="font-size:11px;" onclick="openGtModal('group')">+ 新建分组</button>
             </div>
-            <div class="card-body" style="padding:8px 0;"><div id="groups-list" style="font-size:12px;color:var(--txd);padding:12px;">加载中…</div></div>
+            <div class="card-body" style="padding:8px 0;"><div id="groups-list" style="font-size:12px;color:var(--txd);padding:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
             <div style="font-size:11px;color:var(--txd);padding:0 16px 12px;">分组互斥：每个用户只能属于一个分组（像部门）。</div>
           </div>
           <div class="card">
             <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
               <h3>用户标签</h3><button class="btn primary" style="font-size:11px;" onclick="openGtModal('tag')">+ 新建标签</button>
             </div>
-            <div class="card-body" style="padding:8px 0;"><div id="tags-list" style="font-size:12px;color:var(--txd);padding:12px;">加载中…</div></div>
+            <div class="card-body" style="padding:8px 0;"><div id="tags-list" style="font-size:12px;color:var(--txd);padding:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
             <div style="font-size:11px;color:var(--txd);padding:0 16px 12px;">标签可叠加：一个用户可打多个标签。在「用户管理 → 用户详情」里给用户分配分组和标签。</div>
           </div>
         </div>
@@ -2706,7 +2712,7 @@ async function loadMe() {
             这里配置<b>本站默认主体</b>的各平台三方登录凭证，对应登录页各平台的「默认（本站）」入口；点「编辑」进入该平台的配置页，「停用」只关闭登录入口、凭证保留。<br>
             需要多组织 / 多套凭证时，用下方「新建主体」分别挂凭证。
           </div>
-          <div class="card-body"><div id="default-subject-creds" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="default-subject-creds" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
 
         <div class="card">
@@ -2716,7 +2722,7 @@ async function loadMe() {
           </div>
           <div class="card-body" style="padding:8px 0;">
             <div id="org-folder-bar" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:4px 12px 10px;"></div>
-            <div id="oauth-subjects-list" style="font-size:12px;color:var(--txd);padding:12px;">加载中…</div>
+            <div id="oauth-subjects-list" style="font-size:12px;color:var(--txd);padding:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
           </div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
             💡 <b>主体</b>=组织。一个主体下可挂<b>多套登录凭证</b>（如「集团」主体下挂 A 公司微信 + B 公司微信，甚至跨平台）。<br>
@@ -2740,7 +2746,7 @@ async function loadMe() {
               <button class="btn" style="font-size:11px;" onclick="lookupTrace()">反查追踪码</button>
               <span id="audit-trace-result" style="font-size:12px;color:var(--txd);"></span>
             </div>
-            <div id="audit-list" style="font-size:12px;color:var(--txd);">加载中…</div>
+            <div id="audit-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
           </div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
             💡 敏感/危险操作（实名认证、二次核验、清除实名、积分调整、账号停用、OIDC 授权等）按发生顺序<b>哈希链式存证</b>：
@@ -2757,7 +2763,7 @@ async function loadMe() {
             <h3>全部备忘录</h3>
             <button class="btn" style="font-size:11px;" onclick="loadAdmMemos()">刷新</button>
           </div>
-          <div class="card-body"><div id="adm-memo-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="adm-memo-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;">💡 管理员可查看/协助管理全部用户的备忘录（查看、转交、删除）；普通用户只看自己的。</div>
         </div>
       </div>
@@ -2775,7 +2781,7 @@ async function loadMe() {
               <button class="btn" style="font-size:11px;" onclick="loadDevices('adm')">刷新</button>
             </div>
           </div>
-          <div class="card-body"><div id="dev-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="dev-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
             💡 登记 + 台账：Apple / Google / Microsoft 设备、自有协议门禁机 / 读卡器。可归属用户或组织（组织管理员只管本组织设备）；
             门禁机 / 读卡器可关联「门禁管理」里的门。在线设备可经开放 API <code>POST /v1/devices/{id}/heartbeat</code>（scope device:read）上报心跳。
@@ -2790,7 +2796,7 @@ async function loadMe() {
               <button class="btn" style="font-size:11px;" onclick="loadPrinters()">刷新</button>
             </div>
           </div>
-          <div class="card-body"><div id="printer-admin"><div style="color:var(--txd);">加载中…</div></div></div>
+          <div class="card-body"><div id="printer-admin"><div style="color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div></div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
             💡 打印机纳入设备管理、按组织归属。局域网/USB/本地打印机需在组织内一台机器跑**打印代理**（<code>tools/print-agent</code>，像 MDM 代理那样轮询拉任务打印）；网络打印机可选直连 IPP（规划中）。组织成员在「我的设备 → 打印」里发资料打印。
           </div>
@@ -2800,7 +2806,7 @@ async function loadMe() {
             <h3><span data-ic="printer" style="margin-right:6px;"></span>打印规则 / 审批 / 配额</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openPrintRuleModal()">+ 新建类别</button>
           </div>
-          <div class="card-body"><div id="print-rules-admin"><div style="color:var(--txd);">加载中…</div></div></div>
+          <div class="card-body"><div id="print-rules-admin"><div style="color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div></div>
           <div style="font-size:11px;color:var(--txd);padding:0 16px 14px;line-height:1.7;">
             💡 组织管理员设定「文档类别」→ 是否烧身份水印+追踪码 / 是否需审批。用户发打印时选类别，命中默认类别时按默认规则走。需审批的任务进「待审打印」，批准后才进代理队列。配额按**估算页数×份数**计（PDF 按页、图片/其它按 1 页）。需水印的类别仅支持 PDF/图片。
           </div>
@@ -2826,14 +2832,14 @@ async function loadMe() {
         </div>
         <div class="card">
           <div class="card-header"><h3>门 / 通道</h3></div>
-          <div class="card-body"><div id="adm-door-list" style="font-size:13px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="adm-door-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
             <h3>实体卡 / NFC</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openCardModal()">+ 绑定卡</button>
           </div>
-          <div class="card-body"><div id="adm-card-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-card-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 门禁机读到卡号后调 <code>/v1/access/check</code> 解析为该用户，再按门的授权规则判定。</div>
           </div>
         </div>
@@ -2842,7 +2848,7 @@ async function loadMe() {
             <h3>人脸库</h3>
             <button class="btn" style="font-size:11px;" onclick="loadAccessFaces()">刷新</button>
           </div>
-          <div class="card-body"><div id="adm-face-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-face-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 用户在「门禁」页自愿录入；人脸一体机用 <code>GET /v1/access/faces</code> 同步、本地 1:N 比对，识别后调 <code>/v1/access/check</code>。</div>
           </div>
         </div>
@@ -2851,7 +2857,7 @@ async function loadMe() {
             <h3>访客通行码</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openPassModal()">+ 签发访客码</button>
           </div>
-          <div class="card-body"><div id="adm-pass-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-pass-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 时限+指定门+次数的临时码，可发给无账号访客（扫码即过）。管理员 / 分组·组织管理员可签发（后者在用户端「门禁」页），记录签发人。</div>
           </div>
         </div>
@@ -2864,7 +2870,7 @@ async function loadMe() {
               <button class="btn" style="font-size:11px;" onclick="openPeerModal()">+ 手动登记</button>
             </div>
           </div>
-          <div class="card-body"><div id="adm-peer-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-peer-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 与另一套 QWQ SSO 互认：双方登记同一对 peer_code + 共享密钥。你把本系统的门开放给伙伴，伙伴在自己系统给访客签发跨域码，门口扫码机扫它本地验签即过。</div>
           </div>
         </div>
@@ -2873,7 +2879,7 @@ async function loadMe() {
             <h3>伙伴应用（跨域登录）</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openFedAppModal()">+ 登记伙伴应用</button>
           </div>
-          <div class="card-body"><div id="adm-fedapp-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-fedapp-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 登记「伙伴(A)开放给我们的 OIDC 应用」后，本系统用户可在应用市场一键跳转登录（本系统用共享密钥签身份断言，A 验签后放行）。应用的 client_id / 回调地址由伙伴管理员提供。</div>
           </div>
         </div>
@@ -2885,7 +2891,7 @@ async function loadMe() {
           <div class="card-body" style="padding:0">
             <table class="tbl">
               <thead><tr><th>时间</th><th>门</th><th>用户</th><th>方式</th><th>结果</th><th>原因</th><th>IP</th></tr></thead>
-              <tbody id="adm-access-logs"><tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr></tbody>
+              <tbody id="adm-access-logs"><tr><td colspan="7" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr></tbody>
             </table>
           </div>
         </div>
@@ -2925,7 +2931,7 @@ async function loadMe() {
             <b>备份里包含全部数据和系统配置里的密钥</b>，存到外部存储桶建议设置加密口令（AES-256-GCM）；也可命令行解密：<code>node server/backup.js decrypt 备份文件 输出.db.gz 口令</code>，再 gunzip 得到数据库文件。
             ⚠️ Zeabur 等容器的本地磁盘重新部署会清空，本地目录请挂载持久卷，或者同时开 R2 / OSS。
           </div>
-          <div class="card-body"><div id="backup-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="backup-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
       <div class="page" id="page-adm-anomalies">
@@ -2936,7 +2942,7 @@ async function loadMe() {
           </div>
           <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">账号存在，但没有任何能登录的方式（没有三方登录绑定、密码、邮箱、手机、Passkey，也没有组织密码）。多半是通讯录同步进来后没绑上企业微信 / 飞书登录，或者组织 / 同步源被删掉后留下的。能补绑的可以直接补绑；要删的勾选后删除——删除走「注销与删除」的规则（保留期内可恢复），企业微信 / 飞书里对应的成员可以一并删除 / 禁用，或保留。</div>
           <div id="an-bulk" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;padding:0 20px 8px;font-size:12px;"></div>
-          <div class="card-body"><div id="an-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="an-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
       <div class="page" id="page-adm-deletions">
@@ -2948,7 +2954,7 @@ async function loadMe() {
           </div>
           <div id="del-config" style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;"></div>
           <div id="del-bulk" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:0 20px 4px;font-size:12px;color:var(--txd);"></div>
-          <div class="card-body"><div id="del-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="del-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
         <div class="card" style="margin-top:16px;">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
@@ -2962,7 +2968,7 @@ async function loadMe() {
         <details class="card" style="margin-top:16px;" open>
           <summary class="card-header" style="cursor:pointer;list-style:none;user-select:none;"><h3>账号合并记录 <span style="font-size:11px;color:var(--txd);font-weight:400;">（点击折叠 / 展开）</span></h3></summary>
           <div id="merge-note" style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;"></div>
-          <div class="card-body"><div id="merge-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="merge-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </details>
       </div>
       <div class="page" id="page-adm-grants">
@@ -2974,7 +2980,7 @@ async function loadMe() {
           <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
             清除实名、删除 / 注销账号等高危操作默认只有超级管理员能做。在这里把权限授给某个人，并限定范围：全部用户、某个组织的成员、某个分组、某个标签，或某个组织文件夹下各组织的成员。授权与撤销都记入审计存证。
           </div>
-          <div class="card-body"><div id="grant-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="grant-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
       <div class="page" id="page-adm-limited">
@@ -2986,7 +2992,7 @@ async function loadMe() {
           <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
             从管理员等级派生一个<b>临时 / 限权管理员</b>：限定能管的<b>应用</b>（勾了才给，不勾=不限应用）、<b>组织 / 分组</b>范围、以及<b>生效时段</b>（起止时间，到期自动失效）。限权管理员登录后只能看到「应用管理」「组织管理」两个菜单，写操作严格限制在授权范围内。
           </div>
-          <div class="card-body"><div id="limited-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="limited-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
       <div class="page" id="page-adm-verify-files">
@@ -2999,7 +3005,7 @@ async function loadMe() {
             企业微信「可信域名」、微信公众号业务域名等，会要求把一个验证文件放在域名根目录（如 <code>https://本站域名/WW_verify_xxxx.txt</code>）。在这里上传或粘贴，本站就会在根路径下提供它；<b>到期自动删除</b>（默认 72 小时，验证通过后平台一般不再检查）。<br>
             只支持 .txt / .html / .htm / .xml / .json，单个 ≤ 64KB；.html 也按纯文本提供，不会被当成网页执行。添加、延期、删除都会记入审计存证。
           </div>
-          <div class="card-body"><div id="verify-file-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="verify-file-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
       <div class="page" id="page-adm-sms-channels">
@@ -3011,7 +3017,7 @@ async function loadMe() {
           <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
             手机号现在带国家码存储（如 <code>+8613800000000</code> / <code>+85212345678</code>）。在这里给不同区号各自配置一套 QWQ Message 凭证（就像添加登录凭证那样），发短信时按手机号区号路由到对应分发中心。<b>优先级：组织覆盖该区号 &gt; 这里的全局区号通道 &gt; 组织默认凭证 &gt; 系统配置里的全局短信凭证</b>。没单独配的区号回退全局短信凭证。默认区号在「系统配置 → 消息分发（QWQ Message）」里设（<code>DEFAULT_PHONE_CC</code>）。
           </div>
-          <div class="card-body"><div id="sms-channel-list" style="font-size:12px;color:var(--txd);">加载中…</div></div>
+          <div class="card-body"><div id="sms-channel-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
         </div>
       </div>
 
@@ -3020,7 +3026,7 @@ async function loadMe() {
         <div class="card">
           <div class="card-header"><h3>版本信息</h3></div>
           <div class="card-body">
-            <div id="about-version" style="font-size:14px;color:var(--txd);">加载中…</div>
+            <div id="about-version" style="font-size:14px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn" onclick="loadVersionInfo(true)">检查更新</button>
               <a class="btn" href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" style="text-decoration:none;">查看仓库</a>
@@ -3058,7 +3064,7 @@ async function loadMe() {
             <h3>核验字段</h3>
             <div style="display:flex;gap:6px;"><button class="btn" style="font-size:11px;" onclick="openVerifyValues()">填写用户字段值</button><button class="btn primary" style="font-size:11px;" onclick="openVerifyFieldModal()">+ 新建字段</button></div>
           </div>
-          <div class="card-body"><div id="adm-vfield-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-vfield-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 脱敏姓名 / 所在主体 / 所在分组为内置项，始终展示。此处是可增删的自定义字段（生日年月/别名/工号…），每人填值、可设是否脱敏。</div>
           </div>
         </div>
@@ -3067,7 +3073,7 @@ async function loadMe() {
             <h3>核验员</h3>
             <button class="btn primary" style="font-size:11px;" onclick="openVerifierModal()">+ 授权核验员</button>
           </div>
-          <div class="card-body"><div id="adm-verifier-list" style="font-size:13px;color:var(--txd);">加载中…</div>
+          <div class="card-body"><div id="adm-verifier-list" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <div style="font-size:11px;color:var(--txd);margin-top:8px;">💡 核验员可扫对方动态码查验脱敏身份（长期或限期；可限定只核验某组织成员）。管理员天然是核验员。</div>
           </div>
         </div>
@@ -3084,7 +3090,7 @@ async function loadMe() {
             <table class="tbl">
               <thead><tr><th>标题</th><th>级别</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
               <tbody id="adm-announce-tbody">
-                <tr><td colspan="5" style="text-align:center;color:var(--txd);padding:24px;">加载中…</td></tr>
+                <tr><td colspan="5" style="text-align:center;color:var(--txd);padding:24px;"><span class="ld"><span class="ld-spin"></span>加载中</span></td></tr>
               </tbody>
             </table>
           </div>
@@ -3192,7 +3198,7 @@ async function loadMe() {
               <button class="btn primary" onclick="savePollStrategy()">保存轮询配置</button>
             </div>
             <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--tx);">服务商调用统计</div>
-            <div id="provider-stats-list" style="font-size:12px;color:var(--txd);">加载中…</div>
+            <div id="provider-stats-list" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             <button class="btn" style="font-size:11px;margin-top:10px;" onclick="loadProviderStats()">刷新统计</button>
           </div>
         </div>
@@ -3210,7 +3216,7 @@ async function loadMe() {
               勾选超链接则额外生成 <code style="background:var(--sf2);padding:1px 5px;border-radius:2px;">FOOTER_变量名_URL</code>。
             </div>
             <div id="footer-items-list">
-              <div style="text-align:center;padding:16px;color:var(--txd);font-size:12px;">加载中…</div>
+              <div style="text-align:center;padding:16px;color:var(--txd);font-size:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
             </div>
           </div>
         </div>
@@ -3224,7 +3230,7 @@ async function loadMe() {
     <h3>签到成功！</h3>
     <p>今日获得积分奖励</p>
     <div class="pts-big" id="ck-modal-pts">+10</div>
-    <p style="margin-top:8px;font-size:12px;color:var(--txd);" id="ck-modal-sub">加载中…</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--txd);" id="ck-modal-sub"><span class="ld"><span class="ld-spin"></span>加载中</span></p>
     <button class="btn primary" style="margin-top:20px;width:100%;justify-content:center;" onclick="closeModal()">确认</button>
   </div>
 </div>
@@ -3440,7 +3446,7 @@ async function loadMe() {
     </div>
     <div id="orgmem-merge" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--bd);border-radius:3px;background:var(--sf);font-size:12px;"></div>
     <div id="orgmem-creds" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--ac);border-radius:3px;background:var(--sf);font-size:12px;"></div>
-    <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;">加载中…</div>
+    <div id="orgmem-list" style="max-height:38vh;overflow:auto;font-size:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     <details id="orgmem-pending" style="margin-top:10px;font-size:12px;border:1px solid #E8C26A;border-radius:3px;padding:8px 10px;" ontoggle="if(this.open)loadPendingMembers()">
       <summary style="cursor:pointer;color:#8a6d3b;"><span data-ic="clock" style="margin-right:5px;"></span>待分配成员</summary>
       <div style="font-size:11px;color:var(--txd);margin:6px 0;">这些成员在同步源的「待分配部门」里，还没分到实际部门。给每个成员选部门后「分配」（会同步回飞书/企微），或「挂起」暂不处理。</div>
@@ -3453,7 +3459,7 @@ async function loadMe() {
         <span style="font-size:11px;color:var(--txd);">部门列表（缩进表示层级）</span>
         <button class="btn primary" style="font-size:11px;" onclick="createDept()">+ 新建部门</button>
       </div>
-      <div id="orgmem-depts" style="max-height:24vh;overflow:auto;font-size:12px;">加载中…</div>
+      <div id="orgmem-depts" style="max-height:24vh;overflow:auto;font-size:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     </details>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);"><span data-ic="import" style="margin-right:5px;"></span>批量导入（外部通讯录）</summary>
@@ -3467,7 +3473,7 @@ async function loadMe() {
         <span style="font-size:11px;color:var(--txd);">每个同步源对应一个外部通讯录（如一家企业微信），可分别启停、同步。</span>
         <button class="btn primary" style="font-size:11px;flex:none;" onclick="openDirSourceModal(_orgMemSid)">+ 添加同步源</button>
       </div>
-      <div id="orgmem-dirsrc" style="font-size:12px;">加载中…</div>
+      <div id="orgmem-dirsrc" style="font-size:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     </details>
     <details style="margin-top:10px;font-size:12px;">
       <summary style="cursor:pointer;color:var(--txm);"><span data-ic="users" style="margin-right:5px;"></span>从开放组织复用成员（v3.5.18）</summary>
@@ -5824,10 +5830,10 @@ function renderUserDetailFromData(u) {
       </div>
     </div>
     <div class="detail-section"><h4>分组 / 标签 <span style="font-size:10px;color:var(--txd);font-weight:400;">（组织维度，与等级无关）</span></h4>
-      <div id="ud-gt-${u.id}" style="font-size:12px;color:var(--txd);">加载中…</div>
+      <div id="ud-gt-${u.id}" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     </div>
     <div class="detail-section"><h4>联系方式 <span style="font-size:10px;color:var(--txd);font-weight:400;">（多手机/邮箱，企业微信登录会灌入）</span></h4>
-      <div id="ud-contacts-${u.id}" style="font-size:12px;color:var(--txd);">加载中…</div>
+      <div id="ud-contacts-${u.id}" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     </div>
     <div id="ud-sib-${u.id}"></div>
     <div id="ud-del-${u.id}"></div>
@@ -6003,7 +6009,7 @@ async function runBackupNow(id) {
 async function showBackupFiles(id) {
   const box = document.getElementById('bk-files-' + id);
   if (box.innerHTML) { box.innerHTML = ''; return; }
-  box.innerHTML = '<div style="margin-top:6px;">加载中…</div>';
+  box.innerHTML = LD;
   const { ok, data } = await api('GET', `/admin/backups/${id}/files`);
   if (!ok) { box.innerHTML = '<div style="color:var(--err);margin-top:6px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
   box.innerHTML = data.files.length ? '<div style="margin-top:8px;">' + _udTable(['文件', '大小', '时间', ''], data.files.map(f => [
@@ -7285,7 +7291,7 @@ async function openDirSourceModal(sid, srcId, presetParent) {
   if ($('#dsm-parent')) $('#dsm-parent').onchange = () => { applyParent(); visibleIds = null; $('#dsm-tree').style.display = 'none'; renderChips(); };
   $('#dsm-dept-addbtn').onclick = () => { const v = parseInt($('#dsm-dept-add').value, 10); if (v > 0) { picked.set(v, picked.get(v) || ''); $('#dsm-dept-add').value = ''; renderChips(); syncTree(); } };
   $('#dsm-load-dept').onclick = async () => {
-    const box = $('#dsm-tree'); box.style.display = 'block'; box.innerHTML = '<span style="color:var(--txd);">加载中…</span>';
+    const box = $('#dsm-tree'); box.style.display = 'block'; box.innerHTML = LD;
     let nodes;
     if (_IS_DEV) nodes = [{ id: 3, name: '销售部', parent: 1 }, { id: 31, name: '华东大区', parent: 3 }, { id: 32, name: '华南大区', parent: 3 }];
     else {
@@ -7446,7 +7452,7 @@ async function openFeishuSourceModal(sid, srcId, presetParent) {
   const syncTree = () => ov.querySelectorAll('.fsm-deptcb').forEach(cb => { cb.checked = picked.has(cb.value); });
   renderChips();
   $('#fsm-load').onclick = async () => {
-    const box = $('#fsm-tree'); box.style.display = 'block'; box.innerHTML = '<span style="color:var(--txd);">加载中…</span>';
+    const box = $('#fsm-tree'); box.style.display = 'block'; box.innerHTML = LD;
     let nodes;
     if (_IS_DEV) nodes = [{ id: '0', name: '全部（企业根部门）', parent: null, order: -1 }, { id: 'od-rd', name: '研发部', parent: '0' }, { id: 'od-fe', name: '前端组', parent: 'od-rd' }];
     else {
@@ -7611,7 +7617,7 @@ async function loadOauthSubjects() {
   loadDirDuplicates();
   renderDefaultSubjectCreds();   // 默认主体（本站）三方凭证（原系统配置→三方登录）
   const box = document.getElementById('oauth-subjects-list');
-  if (box) box.innerHTML = '加载中…';
+  if (box) box.innerHTML = LD;
   const { ok, data } = await api('GET', '/admin/oauth-subjects');
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">加载失败</div>'; return; }
   _oauthPlatforms = data.platforms || [];
@@ -8219,7 +8225,7 @@ async function lookupTrace() {
 async function loadAuditChain() {
   const box = document.getElementById('audit-list');
   const ib = document.getElementById('audit-integrity');
-  if (box) box.innerHTML = '加载中…';
+  if (box) box.innerHTML = LD;
   const { ok, data } = await api('GET', '/admin/audit?limit=100');
   if (!ok) { if (ib) ib.textContent = ''; if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">加载失败</div>'; return; }
   const ig = data.integrity || {};
@@ -8249,7 +8255,7 @@ let _accessQrTimer = null, _accessQrTick = null;
 
 async function loadMyAccess() {
   const box = document.getElementById('access-my-doors');
-  if (box) box.innerHTML = '加载中…';
+  if (box) box.innerHTML = LD;
   const { ok, data } = await api('GET', '/user/access/doors');
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const doors = data.doors || [];
@@ -8357,7 +8363,7 @@ const _devId = (ctx, s) => (ctx === 'org' ? 'org-dev-' : 'dev-') + s;
 async function loadDevices(ctx) {
   ctx = ctx || _devCtx; _devCtx = ctx;
   const box = document.getElementById(_devId(ctx, 'list'));
-  if (box) box.innerHTML = '加载中…';
+  if (box) box.innerHTML = LD;
   const org = _curAdminOrg();
   const { ok, data } = await api('GET', '/admin/devices' + (org ? '?org=' + encodeURIComponent(org) : ''));
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);padding:8px 4px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
@@ -8659,7 +8665,7 @@ async function loadPrintAudit() {
   const org = _curAdminOrg ? _curAdminOrg() : '';
   if (!org) { card.style.display = 'none'; return; }
   card.style.display = '';
-  box.innerHTML = '<div style="color:var(--txd);font-size:12px;">加载中…</div>';
+  box.innerHTML = LD;
   const { ok, data } = await api('GET', '/admin/print-audit?org=' + encodeURIComponent(org) + '&days=' + _printAuditDays);
   if (!ok) { box.innerHTML = '<div style="color:var(--err);font-size:12px;">' + esc(data?.error || '加载失败') + '</div>'; return; }
   const s = data.stats || { total: 0, pages: 0, by_status: {}, top_printers: [], top_users: [] };
@@ -8724,7 +8730,7 @@ async function openMdmPanel(dev, ctx) {
   m.innerHTML = `<div class="modal" style="min-width:460px;max-width:600px;text-align:left;">
     <h3 style="margin-bottom:4px;">MDM · ${esc(dev.name||'(未命名)')}</h3>
     <div style="font-size:11px;color:var(--txd);margin-bottom:12px;">${esc(DEVICE_KIND_LABEL[dev.kind]||dev.kind)}${dev.serial?' · SN '+esc(dev.serial):''}${dev.os_version?' · '+esc(dev.os_version):''}${dev.model?' · '+esc(dev.model):''}</div>
-    <div id="mdm-body" style="font-size:13px;color:var(--txd);">加载中…</div>
+    <div id="mdm-body" style="font-size:13px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     <div style="display:flex;justify-content:flex-end;margin-top:14px;">
       <button class="btn" onclick="document.getElementById('mdm-modal').classList.remove('show')">关闭</button>
     </div></div>`;
@@ -8924,7 +8930,7 @@ async function openMdmProfiles() {
   m.innerHTML = `<div class="modal" style="min-width:460px;max-width:620px;text-align:left;">
     <h3 style="margin-bottom:4px;">MDM 配置描述文件</h3>
     <div style="font-size:11px;color:var(--txd);margin-bottom:10px;">配置载荷（WiFi/限制/证书…）以 JSON 描述，经「推送描述文件」命令下发给设备。</div>
-    <div id="mdmprof-body" style="font-size:13px;">加载中…</div>
+    <div id="mdmprof-body" style="font-size:13px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     <div style="display:flex;justify-content:space-between;margin-top:14px;">
       <button class="btn primary" onclick="editMdmProfile(null)">+ 新建描述文件</button>
       <button class="btn" onclick="document.getElementById('mdmprof-modal').classList.remove('show')">关闭</button>
@@ -8987,7 +8993,7 @@ async function delMdmProfile(id, name) {
 // ── 管理端：门禁管理 ──
 async function loadAccessAdmin() {
   const box = document.getElementById('adm-door-list');
-  if (box) box.innerHTML = '加载中…';
+  if (box) box.innerHTML = LD;
   const org = _curAdminOrg();
   const { ok, data } = await api('GET', '/admin/access/doors' + (org ? '?org=' + encodeURIComponent(org) : ''));
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
@@ -9697,7 +9703,7 @@ async function openDoorRules(doorId, doorName) {
     <div class="modal-head"><h3>授权规则 · ${esc(doorName)}</h3><button class="modal-x" onclick="this.closest('.modal-mask').remove()">×</button></div>
     <div class="modal-body" style="padding:16px;">
       <div style="font-size:12px;color:var(--txd);margin-bottom:10px;">拒绝规则优先于允许规则：可按分组/等级批量放行，再单独「拒绝」某人。</div>
-      <div id="rule-list" style="margin-bottom:14px;">加载中…</div>
+      <div id="rule-list" style="margin-bottom:14px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
       <div style="border-top:1px solid var(--bd);padding-top:12px;">
         <div style="font-weight:600;font-size:13px;margin-bottom:8px;">新增规则</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -10299,7 +10305,7 @@ async function bootVersionCheck() {
 let _memos = [];
 async function loadMemos() {
   const box = document.getElementById('memo-list');
-  if (box) box.innerHTML = '加载中…';
+  if (box) box.innerHTML = LD;
   const { ok, data } = await api('GET', '/memos');
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   _memos = data.memos || [];
@@ -10322,7 +10328,7 @@ function renderMemoList() {
     </div>`).join('');
 }
 async function loadAdmMemos() {
-  const box = document.getElementById('adm-memo-list'); if (box) box.innerHTML = '加载中…';
+  const box = document.getElementById('adm-memo-list'); if (box) box.innerHTML = LD;
   const { ok, data } = await api('GET', '/admin/memos');
   if (!ok) { if (box) box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const rows = data.memos || [];
@@ -10779,7 +10785,7 @@ async function suspendPending(userId, name) {
 
 async function loadOrgMembers() {
   const box = document.getElementById('orgmem-list');
-  box.innerHTML = '加载中…';
+  box.innerHTML = LD;
   await loadOrgDepts(); renderOrgDepts();
   const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/members');
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
@@ -10939,7 +10945,7 @@ async function createOrgMember() {
 async function loadShareable() {
   const box = document.getElementById('orgmem-share-list');
   const q = document.getElementById('orgmem-share-q').value.trim();
-  box.innerHTML = '加载中…';
+  box.innerHTML = LD;
   const { ok, data } = await api('GET', '/admin/orgs/' + _orgMemSid + '/shareable' + (q ? ('?q=' + encodeURIComponent(q)) : ''));
   if (!ok) { box.innerHTML = '<div style="color:var(--err);">加载失败</div>'; return; }
   const rows = data.data || [];
@@ -11293,7 +11299,7 @@ async function openPubAccounts(gid, gname) {
         <button class="btn primary" onclick="createPubAccount()">新建</button>
       </div>
       <div style="font-size:11px;color:var(--txd);margin-bottom:8px;">公共账号仅能被下方指定的、且在本分组内的成员切换使用；只保留第三方登录等基础功能。</div>
-      <div id="pub-list">加载中…</div>
+      <div id="pub-list"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
     </div></div>`;
   renderPubList();
 }
@@ -11720,7 +11726,7 @@ async function openAppEdit(id) {
           <div class="form-row full"><label>Back-Channel Logout 地址（可选，OIDC 标准登出通知；SSO 用 client_secret 签 logout_token 推来）</label><input type="text" id="ae-bcl" value="${esc(a.backchannel_logout_uri||'')}" placeholder="https://yourapp.com/oidc/backchannel-logout" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label>ID Token 签名算法（HS256 = 用 client_secret，现成 OIDC 库都支持；RS256 = 用平台私钥，公钥见 /oauth/jwks，给 kube-apiserver 等只认非对称签名的验证方）</label><select id="ae-alg"><option value="HS256" ${a.id_token_alg === 'RS256' ? '' : 'selected'}>HS256（默认）</option><option value="RS256" ${a.id_token_alg === 'RS256' ? 'selected' : ''}>RS256</option></select></div>
           <div class="form-row full"><label>必传字段（用户授权时不可取消，openid 天然必传）</label>${reqScopeBoxes('ae', a.required_scopes)}</div>
-          <div class="form-row full"><label>开放给组织（都不勾 = 全局通用应用；勾选后仅所选组织的成员可见可登）</label><div id="ae-orgs" style="display:flex;flex-wrap:wrap;gap:10px;font-size:13px;">加载中…</div></div>
+          <div class="form-row full"><label>开放给组织（都不勾 = 全局通用应用；勾选后仅所选组织的成员可见可登）</label><div id="ae-orgs" style="display:flex;flex-wrap:wrap;gap:10px;font-size:13px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
           <div class="form-row"><label>用户端可见</label>
             <select id="ae-visible"><option value="true" ${a.visible?'selected':''}>是</option><option value="false" ${!a.visible?'selected':''}>否</option></select></div>
           <div class="form-row"><label>状态</label>

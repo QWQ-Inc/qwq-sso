@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.121**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.122**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.122 统一加载态：裸「加载中…」换转圈 spinner（UI 细化）
+
+三级版本（纯前端）。全站列表容器的加载占位原是裸文字「加载中…」→ 统一成转圈 spinner。
+- CSS：`.ld`（inline-flex 居中 + `--txd` 小字）、`.ld-spin`（13px 描边圆环、顶边 `--ac`、`@keyframes ld-rot` .6s 匀速；`border-radius:50%` 显式保圆，不受方正收口影响）。JS 常量 `LD`（在 `ic()`/`hydrateIcons` 之后定义，与各 `load*()` 同一主 `<script>` 作用域）。
+- 覆盖 84 处：`box.innerHTML='加载中…'` 等 13 处 → `LD`（Node split/join 替换 4 个精确引号串）；静态 HTML 71 处（`<div id>加载中…</div>` / 表格 `<td>加载中…</td>` 初始占位）→ 全局把文字 `加载中…` 换成 spinner 内联 span。**替换前先把 `LD` 定义注释里的「加载中…」改掉**，避免全局替换把 spinner 塞进注释。
+- ⚠️ 全部 `加载中` 均为 HTML 上下文（无 toast/textContent，已 grep 确认），故全局文本替换安全；`LD`/spinner span 内是「加载中」无省略号，不会二次命中。
+- ⚠️ 测试：dev 实测 memo 静态容器初始即 spinner、用户/设备列表正常加载（LD 在作用域、无 ReferenceError）、DOM 里 59 个未加载容器 spinner、`.ld-spin` CSS 生效、零相关报错。见 [[ui-design-preference]]。
 
 ## v3.5.121 emoji→小图标续：账号设定头 + 组织/打开 chrome（用户「继续」）
 

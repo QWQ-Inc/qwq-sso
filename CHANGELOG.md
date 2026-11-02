@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.122 — 统一加载态：裸「加载中…」换成转圈 spinner（UI 细化）
+
+- 全站列表容器的加载占位原来是裸文字「加载中…」（一闪而过、很糙）→ 统一成**转圈 spinner + 「加载中」**。
+- 新增 CSS `.ld`（行内居中 + 柔灰小字）/ `.ld-spin`（13px 描边圆环、顶边品牌绿、.6s 匀速转）+ JS 常量 `LD`。
+- 覆盖全部 84 处：JS 里 `box.innerHTML='加载中…'` 等 13 处换成 `LD`；静态 HTML 的 71 处（`<div id=xxx>加载中…</div>`、表格 `<td>加载中…</td>` 占位）全局换成 spinner 内联标记。渲染时真正发请求的延迟里就能看到转圈（dev mock 太快会一闪）。
+- ⚠️ 测试：dev 浏览器实测——memo 等静态容器初始即显 spinner、用户/设备列表正常加载（`LD` 在作用域内无 ReferenceError）、未加载容器里有 59 个 spinner、`.ld-spin` 圆环 CSS 生效、零相关报错；UTF-8 + 内联 JS 解析通过。纯前端。
+
 ## v3.5.121 — emoji→小图标续：账号设定头 + 组织/打开 chrome（用户反馈「继续」）
 
 - 承接 v3.5.114/116。扫清剩余的「散落 chrome emoji」：
