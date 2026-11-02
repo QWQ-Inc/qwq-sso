@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.127 — emoji→小图标续：等级 tab / 组织高级配置 / 门禁门名 / 设备领取码
+
+- 承接 v3.5.126 继续收 chrome emoji。`ICON_PATHS` 加 `gear`（齿轮）。
+- 转换：等级管理「普通用户/管理员」tab 👤🛡️→user/shield、组织「本组织高级配置」⚙️→gear、门禁门名 🚪→door、线上电子门 🖥️→laptop、设备「生成领取码」🎫→ticket。
+- ⚠️ 跳过 `dir-dup-title`「⚠️ 企业微信重复账号」（JS 用 textContent 动态改写、SVG 放不进 + 语义警示符）与句子里的 📁 文件夹标签，保留。
+- ⚠️ 测试：内联 JS 解析通过（0 错误），grep 确认本批 6 处目标清零、gear 就位。纯前端。
+
 ## v3.5.126 — emoji→小图标续：账号设定 / 公告 / 富文本工具栏 / 备份导入导出 / 备忘录附件簇
 
 - 承接 v3.5.125 继续收 chrome emoji。`ICON_PATHS` 加 8 个：`camera` / `download` / `upload` / `mail` / `image` / `video` / `megaphone` / `attach`。

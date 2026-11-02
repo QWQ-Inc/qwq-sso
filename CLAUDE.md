@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.126**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.127**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,16 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.127 emoji→小图标续：等级 tab / 组织高级配置 / 门禁门名 / 设备领取码（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.126 继续收 chrome emoji。
+- `ICON_PATHS` 加 `gear`（齿轮·设置），共 45 个。
+- **静态 HTML（`<span data-ic>` / `data-ic` 属性）**：等级管理用户组切换「👤普通用户 / 🛡️管理员」tab（`lvl-gtab-icon` span 直接加 `data-ic`）→user/shield；组织弹窗「⚙️本组织高级配置」`<summary>`→gear。
+- **JS 模板串 `${ic()}`**：门禁页门名 🚪→door、线上电子门名 🖥️→laptop、设备「🎫生成领取码」→ticket。
+- ⚠️ **跳过**：`dir-dup-title`「⚠️ 企业微信重复账号」——该标题被 JS 用 `.textContent` 动态改写（7608 带人数），SVG 放不进 textContent，且 ⚠️ 是语义警示符，保留；`📁 套用文件夹通讯录「…」`/`📁 文件夹名` 在解释性句子里（偏散文），保留。
+- ⚠️ 判定沿用（见 [[ui-design-preference]]）：只换散落 chrome emoji，保留 hero 装饰图、`icon:` 数据字段、👁 眼睛开关、散文 ⚠️💡、✓✗ 状态标、MDM 命令图标映射。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；grep 确认本批 6 处目标 emoji 清零、gear 就位。纯前端，无后端改动。
 
 ## v3.5.126 emoji→小图标续：账号设定 / 公告 / 富文本工具栏 / 备份导入导出 / 备忘录附件簇（用户「继续」）
 

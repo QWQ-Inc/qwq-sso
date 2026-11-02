@@ -1144,6 +1144,7 @@ const ICON_PATHS = {
   video:  '<rect x="2.8" y="5.2" width="10" height="9.6" rx="1.5"/><path d="M12.8 8.8 17 6.5v7l-4.2-2.3z"/>',
   megaphone:'<path d="M4 8.3A1 1 0 015 7.3h2.4L13 3.8v12.4L7.4 12.7H5a1 1 0 01-1-1V8.3z"/><path d="M7.4 7.5v5"/><path d="M15.2 8.4a2.4 2.4 0 010 3.2"/>',
   attach: '<path d="M13.8 7.3 8.1 13a2.4 2.4 0 01-3.4-3.4l6.1-6.1a1.5 1.5 0 012.2 2.2l-6 6a.6.6 0 01-.9-.9l5.3-5.3"/>',
+  gear:   '<circle cx="10" cy="10" r="2.4"/><path d="M10 2.6v2M10 15.4v2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M2.6 10h2M15.4 10h2M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
 };
 // 静态 HTML 里用 <span data-ic="name"></span> 占位，启动时一次性填入 SVG（无法在静态 HTML 里调 ic()）
 function hydrateIcons(root) {
@@ -2140,12 +2141,12 @@ async function loadMe() {
         <!-- 用户组切换 -->
         <div class="lvl-group-tabs" id="lvl-group-tabs">
           <button class="lvl-gtab active" onclick="switchLvlGroup('user')">
-            <span class="lvl-gtab-icon">👤</span>
+            <span class="lvl-gtab-icon" data-ic="user"></span>
             <span>普通用户</span>
             <span class="lvl-gtab-count">5 个等级</span>
           </button>
           <button class="lvl-gtab" onclick="switchLvlGroup('admin')">
-            <span class="lvl-gtab-icon">🛡️</span>
+            <span class="lvl-gtab-icon" data-ic="shield"></span>
             <span>管理员</span>
             <span class="lvl-gtab-count">3 个等级</span>
           </button>
@@ -3403,7 +3404,7 @@ async function loadMe() {
     </details>
 
     <details style="margin-top:12px;padding-top:12px;border-top:1px solid var(--bd);">
-      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;">⚙️ 本组织高级配置（MDM / 水印 / 门禁 / Wallet）· 可选</summary>
+      <summary style="font-size:12px;font-weight:700;color:var(--txt);cursor:pointer;"><span data-ic="gear"></span> 本组织高级配置（MDM / 水印 / 门禁 / Wallet）· 可选</summary>
       <div style="font-size:11px;color:var(--txd);margin:8px 0 4px;">这些功能默认用全局「系统配置」。在这里填，本组织就用自己的一套；留空＝回退全局。密钥显示 •••• 表示已配置、留空不改。</div>
       <div id="sm-feat-container"></div>
     </details>
@@ -8285,7 +8286,7 @@ async function loadMyAccess() {
   if (box) box.innerHTML = doors.length
     ? doors.map(d => `<div style="padding:10px 12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;color:var(--tx);">🚪 ${esc(d.name)}
+          <div style="font-weight:600;color:var(--tx);">${ic('door')} ${esc(d.name)}
             ${d.code_mode === 'sub_only' ? '<span style="font-size:10px;color:#B26A00;background:rgba(255,149,0,.14);padding:1px 6px;border-radius:3px;margin-left:4px;">仅子码</span>' : ''}
             ${d.blackout_now ? '<span style="font-size:10px;color:var(--err);margin-left:4px;">当前禁入</span>' : ''}</div>
           ${d.location ? `<div style="font-size:12px;color:var(--txd);margin-top:2px;">${esc(d.location)}</div>` : ''}
@@ -8299,7 +8300,7 @@ async function loadMyAccess() {
   const online = data.online || [];
   if (onCard) onCard.style.display = online.length ? '' : 'none';
   if (onBox && online.length) onBox.innerHTML = online.map(d => `<div style="padding:10px 12px;border:1px solid var(--bd);border-radius:3px;margin-bottom:8px;">
-      <div style="font-weight:600;color:var(--tx);">🖥️ ${esc(d.name)} <span style="font-size:10px;color:#1a7f37;margin-left:4px;">可访问</span></div>
+      <div style="font-weight:600;color:var(--tx);">${ic('laptop')} ${esc(d.name)} <span style="font-size:10px;color:#1a7f37;margin-left:4px;">可访问</span></div>
       ${d.location ? `<div style="font-size:12px;color:var(--txd);margin-top:2px;">${esc(d.location)}</div>` : ''}
     </div>`).join('');
   loadFaceStatus();
@@ -8468,7 +8469,7 @@ function openDeviceModal(dev, ctx) {
         <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt);"><input type="checkbox" id="dev-require-claim" checked> 下发给用户后需对方确认认领才生效（不勾=直接生效）</label>
         ${editing ? `<div style="font-size:12px;color:var(--txd);margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           当前认领：<b style="color:${dev.claim_status==='pending'?'#b8730a':dev.claim_status==='unclaimed'?'#8a5a00':'#1a7f37'};">${dev.claim_status==='pending'?'待用户确认':dev.claim_status==='unclaimed'?'待用码认领':'已认领'}</b>
-          <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="genDeviceClaimCode('${esc(dev.id)}')">🎫 生成领取码</button>
+          <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="genDeviceClaimCode('${esc(dev.id)}')">${ic('ticket')} 生成领取码</button>
           ${dev.claim_code?`<code style="user-select:all;background:var(--bg);padding:1px 6px;border-radius:4px;">${esc(dev.claim_code)}</code>`:''}
         </div><div style="font-size:11px;color:var(--txd);margin-top:4px;">生成领取码会清空当前所有者,把这串码发给用户,谁输入谁获得使用权。</div>` : ''}
       </div>
