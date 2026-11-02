@@ -483,6 +483,14 @@ a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-s
 .ld{display:inline-flex;align-items:center;gap:7px;color:var(--txd);font-size:12px;padding:8px 4px;}
 .ld-spin{width:13px;height:13px;border:2px solid var(--bd2);border-top-color:var(--ac);border-radius:50%;animation:ld-rot .6s linear infinite;flex:none;box-sizing:border-box;}
 @keyframes ld-rot{to{transform:rotate(360deg)}}
+/* 全局细化（v3.5.123）：细滚动条 + 品牌色选中 */
+*{scrollbar-width:thin;scrollbar-color:var(--bd2) transparent;}
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px;border:2px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:var(--txd);border:2px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-corner{background:transparent;}
+::selection{background:var(--ac3);color:var(--tx);}
 
 /* ══════════ v3.5.111 组件细化：下拉箭头 + 弹窗入场动画 + toast ══════════ */
 /* 原生 select 去掉 OS 三角，换统一的柔灰 chevron（与前面规则同特异性、后置，赢 background-image/padding 长手） */

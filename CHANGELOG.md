@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.123 — 全局细化：细滚动条 + 品牌色文本选中（UI 细化）
+
+- 系统默认的粗滚动条在精致 UI 里很突兀 → 全站换成**细滚动条**（9px、透明轨道、`--bd2` 柔灰拇指 + 2px 透明内边、hover 变深、`border-radius:3px` 方正感），`scrollbar-width:thin` 兼顾 Firefox。
+- 文本选中 `::selection` 换成**品牌色淡底**（dashboard `--ac3` 浅绿 + 深字；login 用 `--accent-glow` 半透明、setup 用 `--ac3`，各自主题安全）。
+- 纯 CSS、一块搞定、零逐站风险，dashboard / login / setup 三页一致。
+- ⚠️ 测试：dev 浏览器确认 `::-webkit-scrollbar-thumb` 与 `::selection` 规则已应用、滚动容器（nav-scroll / content）在、用户列表正常；三页 UTF-8 + dashboard 内联 JS 解析通过。
+- ⚠️ 空状态（「还没有 xxx」约 90 处）文案与结构各异、还混着 uiAlert / 说明性文字，不能一刀切替换 → 本版未做，留作后续按页定向处理。
+
 ## v3.5.122 — 统一加载态：裸「加载中…」换成转圈 spinner（UI 细化）
 
 - 全站列表容器的加载占位原来是裸文字「加载中…」（一闪而过、很糙）→ 统一成**转圈 spinner + 「加载中」**。

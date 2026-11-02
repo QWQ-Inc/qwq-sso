@@ -160,6 +160,13 @@ input[type=checkbox]{border-radius:5px!important;}
 input[type=radio]{border-radius:50%!important;}
 input[type=checkbox]:checked{border-color:var(--ac);background:var(--ac) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2 5 8.7l4.5-5' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/68% no-repeat!important;}
 input[type=radio]:checked{border-color:var(--ac);box-shadow:inset 0 0 0 4px var(--ac);}
+/* 全局细化（v3.5.123）：细滚动条 + 品牌色选中 */
+*{scrollbar-width:thin;scrollbar-color:var(--bd2) transparent;}
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px;border:2px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:var(--txd);border:2px solid transparent;background-clip:padding-box;}
+::selection{background:var(--ac3);}
 </style>
 </head>
 <body>

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.122**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.123**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.123 全局细化：细滚动条 + 品牌色文本选中（UI 细化）
+
+三级版本（纯前端）。系统默认粗滚动条在精致 UI 里突兀 → 全站细滚动条 + `::selection` 品牌淡底。dashboard / login / setup 三页一致。
+- 一块 CSS：`*{scrollbar-width:thin;scrollbar-color:…}` + `::-webkit-scrollbar(-thumb/-track/-corner)`（9px、透明轨道、`--bd2`/`--border` 拇指 + `border:2px solid transparent;background-clip:padding-box` 做内边细条、`border-radius:3px`、hover 变深）；`::selection` 用浅品牌底（dashboard `--ac3`+`--tx`、login `--accent-glow`、setup `--ac3`）。
+- ⚠️ 各页 token 不同：dashboard `--bd2/--txd/--ac3/--tx`、login `--border/--text-muted/--accent-glow`、setup `--bd2/--txd/--ac3`——加前先 grep 确认 token 存在。
+- ⚠️ **空状态没做**：「还没有 xxx」约 90 处（46「还没有」+45「暂无」）文案 / 结构各异，且混着 `uiAlert`、说明性 prose（如「只给『还没有』的成员补上」）——不能像 spinner 那样一刀切全局替换，要按页定向、判断哪些真是 list-empty-state，留作后续。
+- ⚠️ 测试：dev 浏览器确认 `::-webkit-scrollbar-thumb`/`::selection` 规则已应用、滚动容器在、列表正常；三页 UTF-8 + 内联 JS 解析通过。见 [[ui-design-preference]]。
 
 ## v3.5.122 统一加载态：裸「加载中…」换转圈 spinner（UI 细化）
 
