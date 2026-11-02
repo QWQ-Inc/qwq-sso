@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.129 — emoji→小图标收尾：导出 / 发送按钮箭头前缀统一
+
+- dashboard 散落 chrome emoji 已基本收尽，本版收 3 个箭头前缀动作按钮：「↓ 导出 CSV」/「↓ 导出 .env」→ download、「▶ 发送请求」→ send（与备份导出图标对齐，复用现有图标）。
+- ⚠️ 保留：`▾`/`▸` 下拉/折叠箭头（功能性几何符、部分 JS textContent 动态设）；标准页（login/setup 等）emoji 多为 hero 品牌图 / 头像 / 功能身份图标 / 状态标，且无 ic() 助手，保留。
+- 至此 emoji→小图标扫荡（v3.5.114/116/121/125~129）基本完成：dashboard 按钮 / 卡头 / 列表名 / 弹窗头 chrome emoji 全部换成统一描边小图标（图标库 46 个），保留 hero / 数据字段 / 散文 / 状态标 / 几何符。
+- ⚠️ 测试：内联 JS 解析通过（0 错误），grep 确认本批 3 处目标清零。纯前端。
+
 ## v3.5.128 — emoji→小图标续：弹窗头 accent / 会话横幅 / 商城 CTA / 认证时间 / 组织密码 badge
 
 - 承接 v3.5.127 继续收 chrome emoji，主要是弹窗头部装饰图标（同 v3.5.126 公告头模式）。`ICON_PATHS` 加 `cart`（购物车）。

@@ -1558,7 +1558,7 @@ async function loadMe() {
             <h3>近期登录记录</h3>
             <div style="display:flex;align-items:center;gap:10px;">
               <span id="loginlog-meta" style="font-size:11px;color:var(--txd);"></span>
-              <button class="btn" id="loginlog-export-btn" style="font-size:11px;padding:3px 10px;display:none;" onclick="exportMyLoginLogs()">↓ 导出 CSV</button>
+              <button class="btn" id="loginlog-export-btn" style="font-size:11px;padding:3px 10px;display:none;" onclick="exportMyLoginLogs()"><span data-ic="download"></span> 导出 CSV</button>
             </div>
           </div>
           <div class="card-body" style="padding:0">
@@ -2250,7 +2250,7 @@ async function loadMe() {
                   <label>请求体 (JSON，可选)</label>
                   <textarea id="test-body" rows="4" style="width:100%;padding:8px 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;color:var(--tx);font-size:12px;font-family:monospace;outline:none;resize:vertical;font-family:monospace;" placeholder='{"uid": "00142"}'></textarea>
                 </div>
-                <button class="btn primary" onclick="runApiTest()" style="justify-content:center;">▶ 发送请求</button>
+                <button class="btn primary" onclick="runApiTest()" style="justify-content:center;"><span data-ic="send"></span> 发送请求</button>
               </div>
             </div>
             <!-- 右：响应结果 -->
@@ -3171,7 +3171,7 @@ async function loadMe() {
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
             <button class="btn" onclick="goto('adm-sms-channels')"><span data-ic="phone"></span> 短信区号通道</button>
-            <button class="btn" onclick="exportEnv()">↓ 导出 .env</button>
+            <button class="btn" onclick="exportEnv()"><span data-ic="download"></span> 导出 .env</button>
             <button class="btn primary" onclick="saveAllEnv()">保存所有修改</button>
           </div>
         </div>

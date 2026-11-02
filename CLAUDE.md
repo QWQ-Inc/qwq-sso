@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.128**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.129**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.129 emoji→小图标收尾：导出 / 发送按钮箭头前缀统一（用户「继续」）
+
+三级版本（纯前端）。dashboard 散落 chrome emoji 已基本收尽，本版收 3 个箭头前缀的动作按钮（与备份导出的 download 图标对齐）：
+- 「↓ 导出 CSV」（登录日志）/「↓ 导出 .env」→ `download`；「▶ 发送请求」（API 测试）→ `send`。都是静态 HTML，`<span data-ic>` 占位。无新增图标（复用 download/send）。
+- ⚠️ **保留**：`▾`/`▸` 下拉与折叠箭头（6 处，功能性几何指示符，部分由 JS `textContent` 动态设、SVG 放不进）；标准页（login/setup/pass/access-terminal 等）的 emoji 多为 hero 品牌图 🔐、头像 👤、功能身份图标（setup `feat-icon` 一套，同 `icon:` 数据字段）、应用图标兜底 📦、状态 ✓✗⚠、箭头 →←——且这些页**无 `ic()` 助手**，为几个零散 emoji 给每页加整套基建不划算，保留。
+- ⚠️ 判定沿用（见 [[ui-design-preference]]）。至此 emoji→小图标扫荡（v3.5.114/116/121/125/126/127/128/129）基本完成：dashboard 的按钮 / 卡头 / 列表名前缀 / 弹窗头 chrome emoji 全部换成统一描边小图标（图标库 46 个），保留 hero 大图 / 数据字段 / 散文标记 / 状态标 / 功能性几何符。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；grep 确认本批 3 处目标清零。纯前端。
 
 ## v3.5.128 emoji→小图标续：弹窗头 accent / 会话横幅 / 商城 CTA / 认证时间 / 组织密码 badge（用户「继续」）
 
