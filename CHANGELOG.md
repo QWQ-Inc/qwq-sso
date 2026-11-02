@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.126 — emoji→小图标续：账号设定 / 公告 / 富文本工具栏 / 备份导入导出 / 备忘录附件簇
+
+- 承接 v3.5.125 继续收 chrome emoji。`ICON_PATHS` 加 8 个：`camera` / `download` / `upload` / `mail` / `image` / `video` / `megaphone` / `attach`。
+- 转换：账号设定「App 审批 / App 实时确认码」📱📲→phone、「实时确认」🔐→lock、「恢复码」🔑→key、重置密码「发送邮箱/短信验证码」📧📱→mail/phone、公告弹窗头 📢→megaphone、富文本工具栏（公告 + 文档）「链接/图片/视频」🔗🖼🎬→link/image/video、身份核验「扫码核验」📷→camera、「短信区号通道」📱→phone、数据备份「导出全部数据/导入恢复」⬇️⬆️→download/upload、备忘录附件「附件数/查看/下载」📎📕📄→attach/file。
+- ⚠️ 判定沿用：只换散落 chrome emoji，保留 KYC 🪪 hero、`icon:` 数据字段、👁🙈 眼睛开关（双态切换）、散文 ⚠️💡、✓✗ 状态标。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误），grep 确认本批 21 处目标 emoji 清零、8 个新图标就位。纯前端。
+
 ## v3.5.125 — emoji→小图标续：跨域联邦 / 门禁访客 / 我的设备簇 + 修 ic(external) 漏引号
 
 - 承接 v3.5.114/116/121 的 emoji→`ic()` 小图标，收点名剩下的**跨域联邦 / 门禁访客 / 我的设备**簇 + 几个明显按钮。`ICON_PATHS` 加 3 个：`pin`（定位针）/ `send`（纸飞机·推送）/ `ticket`（领取码）。

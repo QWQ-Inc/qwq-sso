@@ -1136,6 +1136,14 @@ const ICON_PATHS = {
   pin:    '<path d="M10 17.5s5-4.6 5-9a5 5 0 10-10 0c0 4.4 5 9 5 9z"/><circle cx="10" cy="8.4" r="2"/>',
   send:   '<path d="M16.8 3.2l-13 5 5.2 2.1 2.6 5.5 5.2-12.6z"/><path d="M8.9 10.2l3.4-3.4"/>',
   ticket: '<path d="M3 7.5a1 1 0 011-1h12a1 1 0 011 1V9a1.5 1.5 0 000 3v1.5a1 1 0 01-1 1H4a1 1 0 01-1-1V12a1.5 1.5 0 000-3V7.5z"/><path d="M12 6.8v6.4"/>',
+  camera: '<path d="M3 7a1.3 1.3 0 011.3-1.3h1.8L7.3 4h5.4l1.2 1.7h1.8A1.3 1.3 0 0117 7v8a1.3 1.3 0 01-1.3 1.3H4.3A1.3 1.3 0 013 15V7z"/><circle cx="10" cy="10.5" r="2.7"/>',
+  download:'<path d="M10 3v9M6.4 8.6L10 12.2l3.6-3.6"/><path d="M4 16h12"/>',
+  upload: '<path d="M10 12.2v-9M6.4 6.9 10 3.3l3.6 3.6"/><path d="M4 16h12"/>',
+  mail:   '<rect x="3" y="4.8" width="14" height="10.4" rx="1.5"/><path d="M3.6 5.8 10 10.6l6.4-4.8"/>',
+  image:  '<rect x="3" y="4" width="14" height="12" rx="1.5"/><circle cx="7.4" cy="8.2" r="1.4"/><path d="M4.2 14.5 8 11l2.8 2.2L13 11l2.8 2.6"/>',
+  video:  '<rect x="2.8" y="5.2" width="10" height="9.6" rx="1.5"/><path d="M12.8 8.8 17 6.5v7l-4.2-2.3z"/>',
+  megaphone:'<path d="M4 8.3A1 1 0 015 7.3h2.4L13 3.8v12.4L7.4 12.7H5a1 1 0 01-1-1V8.3z"/><path d="M7.4 7.5v5"/><path d="M15.2 8.4a2.4 2.4 0 010 3.2"/>',
+  attach: '<path d="M13.8 7.3 8.1 13a2.4 2.4 0 01-3.4-3.4l6.1-6.1a1.5 1.5 0 012.2 2.2l-6 6a.6.6 0 01-.9-.9l5.3-5.3"/>',
 };
 // 静态 HTML 里用 <span data-ic="name"></span> 占位，启动时一次性填入 SVG（无法在静态 HTML 里调 ic()）
 function hydrateIcons(root) {
@@ -1908,7 +1916,7 @@ async function loadMe() {
             <div style="font-size:13px;color:var(--txd);margin-bottom:10px;">扫对方的门禁动态码（或粘贴），核对脱敏身份信息。只读，不影响对方开门。</div>
             <video id="vfy-video" playsinline muted style="width:100%;max-width:300px;border-radius:3px;background:#000;aspect-ratio:1/1;object-fit:cover;display:none;"></video>
             <div style="margin-top:10px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-              <button class="btn primary" id="vfy-scan-btn" onclick="startVerifyCamera()">📷 扫码核验</button>
+              <button class="btn primary" id="vfy-scan-btn" onclick="startVerifyCamera()"><span data-ic="camera"></span> 扫码核验</button>
               <input id="vfy-code" placeholder="或粘贴 qr1 码" style="flex:1;min-width:160px;padding:9px;border:1px solid var(--bd);border-radius:3px;background:var(--sf);color:var(--tx);font-family:monospace;font-size:12px;">
               <button class="btn" onclick="doVerifyScan(document.getElementById('vfy-code').value.trim())">核验</button>
             </div>
@@ -2918,8 +2926,8 @@ async function loadMe() {
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3>数据导出 / 导入</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn primary" style="font-size:11px;" onclick="exportAllData()">⬇️ 导出全部数据</button>
-              <button class="btn" style="font-size:11px;" onclick="openImportRestore()">⬆️ 导入恢复…</button>
+              <button class="btn primary" style="font-size:11px;" onclick="exportAllData()"><span data-ic="download"></span> 导出全部数据</button>
+              <button class="btn" style="font-size:11px;" onclick="openImportRestore()"><span data-ic="upload"></span> 导入恢复…</button>
             </div>
           </div>
           <div style="padding:0 20px 12px;font-size:12px;color:var(--txd);line-height:1.8;">
@@ -3061,8 +3069,8 @@ async function loadMe() {
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3>数据导出 / 导入</h3>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="btn primary" style="font-size:11px;" onclick="exportAllData()">⬇️ 导出全部数据</button>
-              <button class="btn" style="font-size:11px;" onclick="openImportRestore()">⬆️ 导入恢复…</button>
+              <button class="btn primary" style="font-size:11px;" onclick="exportAllData()"><span data-ic="download"></span> 导出全部数据</button>
+              <button class="btn" style="font-size:11px;" onclick="openImportRestore()"><span data-ic="upload"></span> 导入恢复…</button>
             </div>
           </div>
           <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
@@ -3133,9 +3141,9 @@ async function loadMe() {
               <span style="width:1px;background:var(--bd);margin:0 2px;"></span>
               <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docCmd('formatBlock','H3')">大标题</button>
               <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docCmd('insertUnorderedList')">• 列表</button>
-              <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docInsertLink()">🔗 链接</button>
-              <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docInsertImage()">🖼 图片</button>
-              <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docInsertVideo()">🎬 视频</button>
+              <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docInsertLink()"><span data-ic="link"></span> 链接</button>
+              <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docInsertImage()"><span data-ic="image"></span> 图片</button>
+              <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docInsertVideo()"><span data-ic="video"></span> 视频</button>
               <span style="width:1px;background:var(--bd);margin:0 2px;"></span>
               <button type="button" class="btn" style="font-size:12px;padding:3px 8px;" onmousedown="event.preventDefault()" onclick="docCmd('removeFormat')">清除格式</button>
             </div>
@@ -3160,7 +3168,7 @@ async function loadMe() {
             <div style="font-size:12px;color:var(--txm);margin-top:3px;">管理系统所有外部接口的密钥、AppID 及系统行为配置项。标记 <span style="color:var(--err);font-weight:700;">*必填</span> 的变量缺失将导致对应功能不可用。</div>
           </div>
           <div style="display:flex;gap:8px;flex-shrink:0;">
-            <button class="btn" onclick="goto('adm-sms-channels')">📱 短信区号通道</button>
+            <button class="btn" onclick="goto('adm-sms-channels')"><span data-ic="phone"></span> 短信区号通道</button>
             <button class="btn" onclick="exportEnv()">↓ 导出 .env</button>
             <button class="btn primary" onclick="saveAllEnv()">保存所有修改</button>
           </div>
@@ -4148,7 +4156,7 @@ async function loadTwofaCard() {
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
           <div>
-            <div style="font-size:13px;font-weight:600;color:var(--txt);">📱 App 审批登录　<span class="badge ${data.app_enabled?'ok':''}" style="${data.app_enabled?'':'background:var(--bg);color:var(--txd);'}">${data.app_enabled?'已开启':'未开启'}</span></div>
+            <div style="font-size:13px;font-weight:600;color:var(--txt);">${ic('phone')} App 审批登录　<span class="badge ${data.app_enabled?'ok':''}" style="${data.app_enabled?'':'background:var(--bg);color:var(--txd);'}">${data.app_enabled?'已开启':'未开启'}</span></div>
             <div style="font-size:11.5px;color:var(--txd);margin-top:3px;line-height:1.6;">开启后登录时手机 App 会弹「批准/拒绝」,点批准即可登录,不用手输动态码(仍可回退用动态码/恢复码)。需装并登录 QWQ App。</div>
           </div>
           <button class="btn ${data.app_enabled?'':'primary'}" onclick="toggleApp2fa(${data.app_enabled?0:1})">${data.app_enabled?'关闭':'开启'}</button>
@@ -4157,12 +4165,12 @@ async function loadTwofaCard() {
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--bd);">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
           <div>
-            <div style="font-size:13px;font-weight:600;color:var(--txt);">📲 App 实时确认码　<span class="badge ${data.realtime_enabled?'ok':''}" style="${data.realtime_enabled?'':'background:var(--bg);color:var(--txd);'}">${data.realtime_enabled?'已开启':'未开启'}</span></div>
+            <div style="font-size:13px;font-weight:600;color:var(--txt);">${ic('phone')} App 实时确认码　<span class="badge ${data.realtime_enabled?'ok':''}" style="${data.realtime_enabled?'':'background:var(--bg);color:var(--txd);'}">${data.realtime_enabled?'已开启':'未开启'}</span></div>
             <div style="font-size:11.5px;color:var(--txd);margin-top:3px;line-height:1.6;">服务端实时下发的滚动验证码，只在打开「实时确认」时显示；在本站登录二段或第三方应用/门户输入即可完成双重验证（与 TOTP 不同，离线不可用、可随时轮换）。</div>
           </div>
           <button class="btn ${data.realtime_enabled?'':'primary'}" onclick="toggleRealtime2fa(${data.realtime_enabled?0:1})">${data.realtime_enabled?'关闭':'开启'}</button>
         </div>
-        ${data.realtime_enabled ? `<div style="margin-top:10px;"><button class="btn" onclick="openRealtimePanel()">🔐 实时确认（获取确认码）</button></div>` : ''}
+        ${data.realtime_enabled ? `<div style="margin-top:10px;"><button class="btn" onclick="openRealtimePanel()">${ic('lock')} 实时确认（获取确认码）</button></div>` : ''}
       </div>`;
   }
 }
@@ -4248,7 +4256,7 @@ function showRecoveryCodes(codes) {
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px;';
   ov.innerHTML = `
     <div style="background:var(--sf,#fff);border-radius:3px;max-width:380px;width:100%;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,.28);">
-      <div style="font-size:15px;font-weight:700;margin-bottom:6px;">🔑 恢复码</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:6px;">${ic('key')} 恢复码</div>
       <div style="font-size:12px;color:var(--txm);line-height:1.7;margin-bottom:12px;">请立即保存到安全的地方。手机丢失时，每个恢复码可代替动态码登录一次。<b>此列表仅显示这一次。</b></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-family:monospace;font-size:13px;background:var(--sf2);padding:12px;border-radius:3px;margin-bottom:12px;">
         ${codes.map(c=>`<div>${esc(c)}</div>`).join('')}
@@ -4941,8 +4949,8 @@ async function loadProfile() {
       <div style="font-size:13px;font-weight:700;margin-bottom:10px;">重置登录密码</div>
       <div style="font-size:12px;color:var(--txm);margin-bottom:10px;line-height:1.7;">通过绑定的邮箱或手机号验证身份后重置密码。三方登录账号如未设置密码，请先绑定邮箱或手机。</div>
       <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
-        ${u.email ? `<button class="btn" style="font-size:12px;" onclick="sendResetCode('email')">📧 发送邮箱验证码</button>` : ''}
-        ${u.phone ? `<button class="btn" style="font-size:12px;" onclick="sendResetCode('sms')">📱 发送短信验证码</button>` : ''}
+        ${u.email ? `<button class="btn" style="font-size:12px;" onclick="sendResetCode('email')">${ic('mail')} 发送邮箱验证码</button>` : ''}
+        ${u.phone ? `<button class="btn" style="font-size:12px;" onclick="sendResetCode('sms')">${ic('phone')} 发送短信验证码</button>` : ''}
         ${!u.email && !u.phone ? '<div style="color:var(--txd);font-size:12px;">请先绑定邮箱或手机号</div>' : ''}
       </div>
       <div id="reset-pw-form" style="display:none;">
@@ -8810,7 +8818,7 @@ async function refreshMdmPanel() {
     <div style="margin-bottom:6px;color:var(--txt);">下发命令</div>
     <div style="margin-bottom:6px;">${cmdBtns}</div>
     <div id="mdm-profile-pick"></div>
-    ${installed.length?`<div style="margin:10px 0 4px;color:var(--txt);">已装描述文件</div>${installed.map(p=>`<span style="display:inline-block;font-size:11px;background:var(--bg);padding:2px 8px;border-radius:3px;margin:2px;">📄 ${esc(p.profile_name||p.profile_id)} <span style="color:var(--txd);">(${esc(p.state)})</span></span>`).join('')}`:''}
+    ${installed.length?`<div style="margin:10px 0 4px;color:var(--txt);">已装描述文件</div>${installed.map(p=>`<span style="display:inline-block;font-size:11px;background:var(--bg);padding:2px 8px;border-radius:3px;margin:2px;">${ic('file')} ${esc(p.profile_name||p.profile_id)} <span style="color:var(--txd);">(${esc(p.state)})</span></span>`).join('')}`:''}
     <div style="margin:12px 0 4px;color:var(--txt);">命令历史</div>
     <div style="max-height:200px;overflow:auto;">${cmdRows}</div>`;
   window._mdmProfiles = profiles;
@@ -10335,7 +10343,7 @@ function renderMemoList() {
     <div style="border:1px solid var(--bd);border-radius:3px;padding:10px 12px;margin-bottom:8px;cursor:pointer;" onclick="openMemo('${m.id}')">
       <div style="display:flex;align-items:center;gap:8px;">
         <span style="font-weight:600;color:var(--txt);flex:1;">${esc(m.title || '(无标题)')}</span>
-        ${m.attachments ? `<span style="font-size:11px;color:var(--txd);">📎${m.attachments}</span>` : ''}
+        ${m.attachments ? `<span style="font-size:11px;color:var(--txd);">${ic('attach')}${m.attachments}</span>` : ''}
         <span style="font-size:11px;color:var(--txd);">${esc((m.updated_at || '').replace('T', ' ').slice(5, 16))}</span>
       </div>
       ${m.body ? `<div style="font-size:12px;color:var(--txm);margin-top:4px;max-height:36px;overflow:hidden;">${esc(m.body).slice(0, 160)}</div>` : ''}
@@ -10350,7 +10358,7 @@ async function loadAdmMemos() {
   if (!rows.length) { box.innerHTML = '<div style="color:var(--txd);padding:8px 4px;">暂无备忘录。</div>'; return; }
   box.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;">
     <thead><tr style="text-align:left;color:var(--txd);border-bottom:1px solid var(--bd);">
-      <th style="padding:6px 8px;">归属</th><th style="padding:6px 8px;">标题</th><th style="padding:6px 8px;">标签</th><th style="padding:6px 8px;">📎</th><th style="padding:6px 8px;">更新</th><th style="padding:6px 8px;"></th></tr></thead>
+      <th style="padding:6px 8px;">归属</th><th style="padding:6px 8px;">标题</th><th style="padding:6px 8px;">标签</th><th style="padding:6px 8px;">${ic('attach')}</th><th style="padding:6px 8px;">更新</th><th style="padding:6px 8px;"></th></tr></thead>
     <tbody>${rows.map(m => `<tr style="border-bottom:1px solid var(--bd);">
       <td style="padding:6px 8px;">${esc(m.owner_name || '—')} <span style="color:var(--txd);">#${String(m.owner_uid_seq || '').padStart(5, '0')}</span></td>
       <td style="padding:6px 8px;color:var(--txt);">${esc(m.title || '(无标题)')}</td>
@@ -10441,9 +10449,9 @@ function renderMemoAtts(id, atts) {
       return `<span style="border:1px solid var(--bd);border-radius:4px;padding:3px 8px;font-size:12px;cursor:zoom-in;" onclick="memoViewAtt('${id}','${a.id}','${mime}','${esc(a.filename)}')" title="点击查看大图"><img data-att="${id}/${a.id}" style="height:22px;vertical-align:middle;border-radius:2px;margin-right:4px;">${esc(a.filename)}${del}</span>`;
     if (a.mime === 'application/pdf')
       // PDF 内联查看（新标签打开）
-      return `<span style="border:1px solid var(--bd);border-radius:4px;padding:3px 8px;font-size:12px;cursor:pointer;" onclick="memoViewAtt('${id}','${a.id}','${mime}','${esc(a.filename)}')" title="点击查看">📕 ${esc(a.filename)}<span style="color:var(--txd);"> ${Math.round((a.size||0)/1024)}KB</span>${del}</span>`;
+      return `<span style="border:1px solid var(--bd);border-radius:4px;padding:3px 8px;font-size:12px;cursor:pointer;" onclick="memoViewAtt('${id}','${a.id}','${mime}','${esc(a.filename)}')" title="点击查看">${ic('file')} ${esc(a.filename)}<span style="color:var(--txd);"> ${Math.round((a.size||0)/1024)}KB</span>${del}</span>`;
     // 其余文件（docx 等）：下载
-    return `<span style="border:1px solid var(--bd);border-radius:4px;padding:3px 8px;font-size:12px;cursor:pointer;" onclick="memoDownload('${id}','${a.id}','${esc(a.filename)}')" title="点击下载">📄 ${esc(a.filename)}<span style="color:var(--txd);"> ${Math.round((a.size||0)/1024)}KB</span>${del}</span>`;
+    return `<span style="border:1px solid var(--bd);border-radius:4px;padding:3px 8px;font-size:12px;cursor:pointer;" onclick="memoDownload('${id}','${a.id}','${esc(a.filename)}')" title="点击下载">${ic('file')} ${esc(a.filename)}<span style="color:var(--txd);"> ${Math.round((a.size||0)/1024)}KB</span>${del}</span>`;
   }).join('');
   if (!_IS_DEV) box.querySelectorAll('img[data-att]').forEach(im => {
     const [mid, aid] = im.dataset.att.split('/');
@@ -11460,7 +11468,7 @@ function openAnnounceModal(a) {
   document.getElementById('bind-modal').innerHTML = `
     <div class="modal" style="min-width:480px;text-align:left;padding:0;overflow:hidden;">
       <div style="padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-        <span style="font-size:16px;">📢</span>
+        ${ic('megaphone','ic-lg')}
         <div style="flex:1;font-size:14px;font-weight:700;">${edit?'编辑公告':'发布公告'}</div>
         <button class="btn" style="font-size:11px;" onclick="document.getElementById('bind-modal').classList.remove('show')">关闭</button>
       </div>
@@ -11470,8 +11478,8 @@ function openAnnounceModal(a) {
             <button type="button" class="btn" style="font-size:12px;padding:2px 7px;font-weight:700;" onmousedown="event.preventDefault()" onclick="rtExec('bold')">B</button>
             <button type="button" class="btn" style="font-size:12px;padding:2px 7px;font-style:italic;" onmousedown="event.preventDefault()" onclick="rtExec('italic')">I</button>
             <button type="button" class="btn" style="font-size:12px;padding:2px 7px;" onmousedown="event.preventDefault()" onclick="rtExec('insertUnorderedList')">• 列表</button>
-            <button type="button" class="btn" style="font-size:12px;padding:2px 7px;" onmousedown="event.preventDefault()" onclick="rtLink()">🔗 链接</button>
-            <button type="button" class="btn" style="font-size:12px;padding:2px 7px;" onmousedown="event.preventDefault()" onclick="rtImage()">🖼 图片</button>
+            <button type="button" class="btn" style="font-size:12px;padding:2px 7px;" onmousedown="event.preventDefault()" onclick="rtLink()">${ic('link')} 链接</button>
+            <button type="button" class="btn" style="font-size:12px;padding:2px 7px;" onmousedown="event.preventDefault()" onclick="rtImage()">${ic('image')} 图片</button>
           </div>
           <div id="an-content" contenteditable="true" style="min-height:120px;max-height:36vh;overflow:auto;padding:10px;font-size:13px;line-height:1.7;background:var(--sf);border:1px solid var(--bd);border-radius:4px;color:var(--tx);outline:none;">${edit?(a.content||''):''}</div>
         </div>

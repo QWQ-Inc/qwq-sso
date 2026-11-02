@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.125**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.126**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.126 emoji→小图标续：账号设定 / 公告 / 富文本工具栏 / 备份导入导出 / 备忘录附件簇（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.125 继续收 chrome emoji。
+- `ICON_PATHS` 加 8 个：`camera`（扫码）/ `download` / `upload`（备份导出/导入）/ `mail`（邮箱）/ `image` / `video`（富文本）/ `megaphone`（公告）/ `attach`（附件回形针），共 44 个。
+- **JS 模板串 `${ic()}`**：账号设定「📱App 审批 / 📲App 实时确认码」→phone、「🔐实时确认」→lock、「🔑恢复码」→key、重置密码「📧发送邮箱 / 📱发送短信」→mail/phone、MDM 已装描述文件 📄→file、备忘录「📎附件数 / 列表 📎列头 / 📕查看 / 📄下载」→attach/file、公告弹窗头 📢→megaphone(ic-lg) + 工具栏「🔗链接 / 🖼图片」→link/image。
+- **静态 HTML（`<span data-ic>`）**：文档富文本工具栏「🔗链接 / 🖼图片 / 🎬视频」→link/image/video、身份核验「📷扫码核验」→camera、「📱短信区号通道」→phone、数据备份「⬇️导出全部数据 / ⬆️导入恢复」→download/upload（adm-about + adm-backups 两处，`replace_all`）。
+- ⚠️ **判定沿用**（见 [[ui-design-preference]]）：只换散落 chrome emoji；**保留** KYC 🪪（18~22px hero 装饰）、`icon:` 数据字段里的 🪪（env 组 / 页面图标）、👁🙈 眼睛开关（双态 emoji 切换、改 SVG 需两图标+改逻辑、低价值）、散文 ⚠️💡、✓✗ 状态标。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；grep 确认本批 21 处目标 emoji 清零、8 个新图标就位。纯前端，无后端改动。各页仍有零星 chrome emoji（如 bind-icon 📧📱 带色头像、🎁🏢 等 hero），后续按需继续。
 
 ## v3.5.125 emoji→小图标续：跨域联邦 / 门禁访客 / 我的设备簇 + 修 ic(external) 漏引号（用户「继续」）
 
