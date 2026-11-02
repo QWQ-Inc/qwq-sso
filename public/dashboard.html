@@ -491,6 +491,10 @@ a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:none;box-s
 ::-webkit-scrollbar-thumb:hover{background:var(--txd);border:2px solid transparent;background-clip:padding-box;}
 ::-webkit-scrollbar-corner{background:transparent;}
 ::selection{background:var(--ac3);color:var(--tx);}
+/* 全局细化（v3.5.124）：行内代码 / 代码块统一（方正浅底）。更具体的规则（.api-base-url code 等）仍优先 */
+code{font-family:ui-monospace,'SF Mono','Cascadia Code',Consolas,Menlo,monospace;font-size:.88em;background:var(--sf2);color:var(--txm);padding:1.5px 5px;border-radius:3px;border:1px solid var(--bd);word-break:break-all;}
+pre{font-family:ui-monospace,'SF Mono','Cascadia Code',Consolas,Menlo,monospace;font-size:12px;background:var(--sf2);color:var(--txm);padding:10px 12px;border-radius:3px;border:1px solid var(--bd);overflow:auto;line-height:1.55;}
+pre code{background:none;border:0;padding:0;font-size:inherit;color:inherit;word-break:normal;}
 
 /* ══════════ v3.5.111 组件细化：下拉箭头 + 弹窗入场动画 + toast ══════════ */
 /* 原生 select 去掉 OS 三角，换统一的柔灰 chevron（与前面规则同特异性、后置，赢 background-image/padding 长手） */

@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.124 — 全局细化：行内代码 / 代码块统一样式（UI 细化）
+
+- 全站 `<code>`（API 端点、env 变量名、scope、UserId 等，约 41 处）原来是**浏览器默认裸等宽字**、无底无框 → 统一成**方正浅底代码片**（`--sf2` 浅底 + 1px 细框 + 3px 圆角 + 等宽 + `break-all` 防长串溢出），`<pre>` 代码块同款。
+- 用**元素选择器**（`code{}`/`pre{}`），特异性最低 → 已有的具体样式（`.api-base-url code` 绿色、scope 芯片白底、密钥展示框等）**照旧优先**，只给「散文里没样式的裸 code」补上芯片感。实测注入一段 prose 里的 `<code>` 命中新样式；scope/密钥芯片保持原样。
+- dashboard / login(1) / setup(5) 三页各按 token 加，一致。
+- ⚠️ 测试：dev 浏览器实测——plain `<code>` 命中 `--sf2`/3px/细框、`.api-base-url code` 仍绿、scope 芯片仍白底；三页 UTF-8 + dashboard 内联 JS 解析通过。纯 CSS。
+
 ## v3.5.123 — 全局细化：细滚动条 + 品牌色文本选中（UI 细化）
 
 - 系统默认的粗滚动条在精致 UI 里很突兀 → 全站换成**细滚动条**（9px、透明轨道、`--bd2` 柔灰拇指 + 2px 透明内边、hover 变深、`border-radius:3px` 方正感），`scrollbar-width:thin` 兼顾 Firefox。

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.123**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.124**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.124 全局细化：行内代码 / 代码块统一样式（UI 细化）
+
+三级版本（纯前端）。全站 `<code>`（API 端点 / env 变量名 / scope / UserId，约 41 处）原是浏览器默认裸等宽字、无底无框 → 统一成方正浅底代码片。
+- `code{font:等宽;background:--sf2;color:--txm;padding:1.5px 5px;border:1px solid --bd;border-radius:3px;word-break:break-all}` + `pre{…}` + `pre code{重置}`。**用元素选择器（特异性最低）**，故已有具体样式（`.api-base-url code` 绿、scope 芯片白底、密钥框）全部照旧优先，只补「散文里裸 code」。
+- ⚠️ **坑**：很多 `<code>` 本就有具体样式（scope 芯片 / 密钥框），直接抽样会看到它们而误以为新规则没生效——要**注入一段 prose 里的 `<code>` 测**才看得到新样式命中（实测 bg=`--sf2` rgb(238,241,232)、radius 3px）。
+- 三页 token：dashboard `--sf2/--txm/--bd`、login `--surface2/--text-muted/--border`、setup `--sf2/--txd/--bd`。
+- ⚠️ 测试：dev 实测 plain `<code>` 命中新样式、`.api-base-url code` 仍绿、scope 芯片仍白底；三页 UTF-8 + 内联 JS 解析通过。见 [[ui-design-preference]]。
 
 ## v3.5.123 全局细化：细滚动条 + 品牌色文本选中（UI 细化）
 
