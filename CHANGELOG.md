@@ -4,6 +4,12 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.131.3 — 删掉死按钮「全部分类 ▾」（onclick 调未定义的 showCategoryMenu）
+
+- 应用市场搜索栏有个静态按钮 `<button id="category-btn" onclick="showCategoryMenu()">全部分类 ▾</button>`，但 `showCategoryMenu` 全文从未定义——点一下就 `ReferenceError: showCategoryMenu is not defined`。
+- 是早期「下拉选分类」设计的遗留：v3.4.44 起应用市场的分类筛选已改由 `renderMarket()` 在网格顶部渲染分类 chip（`_marketCat` 过滤，和商城分类同一套路），这个旧按钮被取代后没删、函数也没写。删掉整个按钮即可——分类筛选不丢（chip 承担），`category-btn` 这个 id 无任何 JS 引用。
+- ⚠️ 测试：静态扫描「内联 handler 调用未定义函数」全文 685 个 handler / 636 次调用，删除后 0 处未定义（`not` 是 `:not()` CSS 选择器误报）；两个内联 `<script>` 块解析 0 错误。纯前端 bug 修复。
+
 ## v3.5.131.2 — 修全新数据库首次启动即崩溃（`no such column: print_queues`）
 
 - 现象：全新部署（数据目录为空）启动时 `server/db.js` 报 `SqliteError: no such column: print_queues`，进程退出、反复重启（CrashLoopBackOff）。

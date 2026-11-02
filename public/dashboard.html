@@ -1794,9 +1794,7 @@ async function loadMe() {
         <div id="tab-market">
           <div class="search-bar">
             <input type="text" id="market-search" placeholder="搜索应用…" oninput="renderMarket()"/>
-            <select id="market-org" onchange="onMarketOrgChange()" style="display:none;padding:7px 10px;border:1px solid var(--bd);border-radius:3px;font-size:13px;background:var(--sf);color:var(--tx);"></select>
-            <button class="btn" id="category-btn" onclick="showCategoryMenu()">全部分类 ▾</button>
-          </div>
+            <select id="market-org" onchange="onMarketOrgChange()" style="display:none;padding:7px 10px;border:1px solid var(--bd);border-radius:3px;font-size:13px;background:var(--sf);color:var(--tx);"></select>          </div>
           <div id="fed-apps-user"></div>
           <div class="app-grid" id="market-grid">
             <!-- JS 渲染，数据来自共享 APP_LIST -->

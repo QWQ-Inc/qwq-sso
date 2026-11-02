@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131.2**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131.3**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,15 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.131.3 删掉死按钮「全部分类 ▾」（onclick 调未定义函数 showCategoryMenu）（代码审查发现）
+
+四级补丁（纯前端 bug 修复）。承接 v3.5.131.1 的崩溃类静态体检，这次扫「内联 handler 调用未定义函数」时发现。
+- 🐛 应用市场搜索栏的静态按钮 `<button id="category-btn" onclick="showCategoryMenu()">全部分类 ▾</button>`（dashboard.html ~1798），`showCategoryMenu` 全文无定义（function/const/window/= 都没有）→ 点击 `ReferenceError`，死按钮。与 v3.3.11「管理按钮没绑事件」同类。
+- 根因：早期「下拉选分类」设计遗留。v3.4.44 起应用市场分类筛选已由 `renderMarket()`（~5226）在网格顶部渲染**分类 chip**（`_marketCat` 过滤，同商城分类）承担，旧下拉按钮被取代后没删、`showCategoryMenu` 也从没写。**删掉整个按钮**即可——`category-btn` 这个 id 无任何 JS 引用（grep 确认只此一行），分类筛选不丢（chip 已覆盖）。
+- ⚠️ 扫描方法（`scratchpad/handler-check.js`）：收集全文函数定义名（`function foo`/`const foo=`/`foo=function|=>`/`window.foo=`），收集所有内联事件属性（onclick/onchange/oninput/… 共 18 类）handler 体里的首个 `名(` 调用，白名单滤掉浏览器全局/关键字，差集即未定义。全文 685 handler / 636 次调用，修前命中 `showCategoryMenu`（真）+ `not`（误报：`querySelectorAll('…:not(…)')` 里的 CSS `:not(`），删后 0 处未定义。
+- ⚠️ **崩溃类静态体检至此三类全清**：① `ic(裸标识符)`（v3.5.131.1，7 处已修）② 图标名有效性（45 空状态+103 `ic()`+34 `data-ic` 全在 ICON_PATHS）③ `getElementById(字面量).xxx` 空引用（508 处，仅 door-note 1 处无对应 id 且已带 `?.`）④ 内联 handler 未定义函数（本版，1 处已删）。以后扫 bug 可复用 scratchpad 下 icon-check/gbi-check/handler-check 三个脚本。
+- ⚠️ 测试：删后 handler-check 0 未定义；两个内联 `<script>` 块 `new Function()` 解析 0 错误；grep 确认 showCategoryMenu/category-btn 全文无残留。见 [[ui-design-preference]]。
 
 ## v3.5.131.2 修全新数据库首次启动即崩溃（ALTER 写在建表之前）
 
