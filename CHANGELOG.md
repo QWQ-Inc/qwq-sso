@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.128 — emoji→小图标续：弹窗头 accent / 会话横幅 / 商城 CTA / 认证时间 / 组织密码 badge
+
+- 承接 v3.5.127 继续收 chrome emoji，主要是弹窗头部装饰图标（同 v3.5.126 公告头模式）。`ICON_PATHS` 加 `cart`（购物车）。
+- 弹窗头：API 密钥 🔑→key、新增商品 🎁→gift、申请接入新应用 / 新增应用 📦→apps、页脚项目 📄→file。
+- 其它：组织会话横幅 🔒→lock、首页「前往积分商城」CTA 🛒→cart、KYC 认证时间 🕐→clock、组织成员「已设组织密码」badge 🔑→key、Passkey 行首 🔑→key。
+- ⚠️ 跳过：等级编辑弹窗 lm-icon 📝（JS 设成该等级 badge 数据）、兑换结果弹窗 cam-icon 🎁（hero 装饰），保留。
+- ⚠️ 测试：内联 JS 解析通过（0 错误），grep 确认本批 10 处目标清零、cart 就位。纯前端。至此全站明显散落 chrome emoji 基本收尽。
+
 ## v3.5.127 — emoji→小图标续：等级 tab / 组织高级配置 / 门禁门名 / 设备领取码
 
 - 承接 v3.5.126 继续收 chrome emoji。`ICON_PATHS` 加 `gear`（齿轮）。

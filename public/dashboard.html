@@ -578,7 +578,7 @@ function showOrgScopedBanner(){
   const bar = document.createElement('div');
   bar.id = 'org-scoped-banner';
   bar.style.cssText = 'position:sticky;top:0;z-index:2000;display:flex;align-items:center;gap:10px;justify-content:center;padding:8px 14px;background:#1D4E89;color:#fff;font-size:12.5px;';
-  bar.innerHTML = `<span>🔒 仅组织会话（IAM 用户）· 已限定到当前组织，不可切换；如需其他组织请退出重新登录</span>`;
+  bar.innerHTML = `<span>${ic('lock')} 仅组织会话（IAM 用户）· 已限定到当前组织，不可切换；如需其他组织请退出重新登录</span>`;
   const btn = document.createElement('button');
   btn.textContent = '退出';
   btn.style.cssText = 'background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:11px;cursor:pointer;';
@@ -1145,6 +1145,7 @@ const ICON_PATHS = {
   megaphone:'<path d="M4 8.3A1 1 0 015 7.3h2.4L13 3.8v12.4L7.4 12.7H5a1 1 0 01-1-1V8.3z"/><path d="M7.4 7.5v5"/><path d="M15.2 8.4a2.4 2.4 0 010 3.2"/>',
   attach: '<path d="M13.8 7.3 8.1 13a2.4 2.4 0 01-3.4-3.4l6.1-6.1a1.5 1.5 0 012.2 2.2l-6 6a.6.6 0 01-.9-.9l5.3-5.3"/>',
   gear:   '<circle cx="10" cy="10" r="2.4"/><path d="M10 2.6v2M10 15.4v2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M2.6 10h2M15.4 10h2M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
+  cart:   '<path d="M2.5 3.2h2.2l1.7 8.8a1 1 0 001 .8h6.6a1 1 0 001-.8L16.5 6.2H6"/><circle cx="7.6" cy="15.8" r="1.1"/><circle cx="13.8" cy="15.8" r="1.1"/>',
 };
 // 静态 HTML 里用 <span data-ic="name"></span> 占位，启动时一次性填入 SVG（无法在静态 HTML 里调 ic()）
 function hydrateIcons(root) {
@@ -1578,7 +1579,7 @@ async function loadMe() {
 
         <div style="margin-top:4px;">
           <button class="btn" onclick="goto('shop')" style="font-size:12px;">
-            🛒 前往积分商城兑换权益 →
+            <span data-ic="cart"></span> 前往积分商城兑换权益 →
           </button>
         </div>
 
@@ -2278,7 +2279,7 @@ async function loadMe() {
       <div class="modal-mask" id="api-modal">
         <div class="modal" style="min-width:460px;text-align:left;padding:0;overflow:hidden;">
           <div style="padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-            <span style="font-size:16px;">🔑</span>
+            <span data-ic="key"></span>
             <div style="flex:1;font-size:14px;font-weight:700;" id="api-modal-title">新建 API 密钥</div>
             <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="closeApiModal()">关闭</button>
           </div>
@@ -2531,7 +2532,7 @@ async function loadMe() {
       <div class="modal-mask" id="goods-modal">
         <div class="modal" style="min-width:520px;max-width:620px;text-align:left;padding:0;overflow:hidden;max-height:90vh;display:flex;flex-direction:column;">
           <div style="padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;flex-shrink:0;">
-            <span style="font-size:16px;">🎁</span>
+            <span data-ic="gift"></span>
             <div style="flex:1;font-size:14px;font-weight:700;" id="gm-title">新增商品</div>
             <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="closeGoodsModal()">关闭</button>
           </div>
@@ -4355,7 +4356,7 @@ async function loadPasskeyCard() {
   const list = data.passkeys || [];
   const rows = list.length ? list.map(p => `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd);">
-      <span style="font-size:16px;">🔑</span>
+      ${ic('key')}
       <div style="flex:1;">
         <div style="font-size:13px;font-weight:500;">${esc(p.name)}</div>
         <div style="font-size:11px;color:var(--txd);">添加于 ${esc((p.created_at||'').slice(0,10))}${p.last_used_at?' · 最近使用 '+esc(p.last_used_at.slice(0,10)):''}</div>
@@ -5306,7 +5307,7 @@ function showApplyAppModal() {
   document.getElementById('bind-modal').innerHTML = `
     <div class="modal" style="min-width:480px;text-align:left;padding:0;overflow:hidden;">
       <div style="padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-        <span style="font-size:16px;">📦</span>
+        ${ic('apps')}
         <div style="flex:1;font-size:14px;font-weight:700;">申请接入新应用</div>
         <button class="btn" style="font-size:11px;" onclick="document.getElementById('bind-modal').classList.remove('show')">关闭</button>
       </div>
@@ -5401,7 +5402,7 @@ async function renderKycCard() {
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bd);border-radius:2px;background:var(--sf2);font-size:11px;">
           <span>${ic(org)}</span><span style="font-weight:600;color:var(--txm);">认证服务</span><span>${u.kyc_provider||'—'}</span></div>
         <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--bd);border-radius:2px;background:var(--sf2);font-size:11px;">
-          <span>🕐</span><span style="font-weight:600;color:var(--txm);">认证时间</span><span>${fmtTime(u.kyc_verified_at)}</span></div>
+          ${ic('clock')}<span style="font-weight:600;color:var(--txm);">认证时间</span><span>${fmtTime(u.kyc_verified_at)}</span></div>
       </div>
       <p style="font-size:11px;color:var(--txd);margin-top:10px;">${_KYC_USER_DELETE ? '认证后不支持修改，但可删除后重新认证。' : '认证后不支持修改；如需删除请联系管理员。'}</p>
       <div id="kyc-siblings"></div>`;
@@ -10823,7 +10824,7 @@ async function loadOrgMembers() {
   updateOrgMemSel();
   box.innerHTML = rows.length ? rows.map(m => {
     const uidShow = m.uid_code || ('#' + String(m.uid_seq).padStart(5, '0'));
-    const hasPw = m.has_pw ? '<span style="color:#1D4E89;font-size:10px;margin-left:4px;">🔑 已设组织密码</span>' : '';
+    const hasPw = m.has_pw ? `<span style="color:#1D4E89;font-size:10px;margin-left:4px;">${ic('key')} 已设组织密码</span>` : '';
     const deptShow = m.dept_name ? `<span style="color:#7A5AA8;font-size:10px;margin-left:4px;">${ic(org)} ${esc(m.dept_name)}</span>` : '';
     const pendingBadge = m.pending === 1 ? '<span style="color:#8a6d3b;font-size:10px;margin-left:4px;">⏳ 待分配</span>' : (m.pending === 2 ? '<span style="color:var(--txd);font-size:10px;margin-left:4px;">挂起</span>' : '');
     const disabledBadge = m.status === 'disabled' ? '<span style="color:var(--err);font-size:10px;margin-left:4px;">已停用</span>' : '';
@@ -13639,7 +13640,7 @@ function openFooterModal(suffix,val,urlVal,hasUrl,isEdit) {
   document.getElementById('bind-modal').innerHTML = `
     <div class="modal" style="min-width:480px;text-align:left;padding:0;overflow:hidden;">
       <div style="padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-        <span style="font-size:16px;">📄</span>
+        ${ic('file')}
         <div style="flex:1;font-size:14px;font-weight:700;">${isEdit?'编辑':'新增'}页脚项目</div>
         <button class="btn" style="font-size:11px;" onclick="document.getElementById('bind-modal').classList.remove('show')">关闭</button>
       </div>
@@ -14103,7 +14104,7 @@ function openNewAppModal() {
   document.getElementById('bind-modal').innerHTML = `
     <div class="modal" style="min-width:480px;text-align:left;padding:0;overflow:hidden;">
       <div style="padding:14px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px;">
-        <span style="font-size:16px;">📦</span>
+        ${ic('apps')}
         <div style="flex:1;font-size:14px;font-weight:700;">新增应用</div>
         <button class="btn" style="font-size:11px;" onclick="document.getElementById('bind-modal').classList.remove('show')">关闭</button>
       </div>

@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.127**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.128**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.128 emoji→小图标续：弹窗头 accent / 会话横幅 / 商城 CTA / 认证时间 / 组织密码 badge（用户「继续」）
+
+三级版本（纯前端）。承接 v3.5.127 继续收 chrome emoji，这批主要是**弹窗头部装饰图标**（和 v3.5.126 公告头 📢 同一个模式：`<span style="font-size:16px;">emoji</span>` + 标题 + 关闭）。
+- `ICON_PATHS` 加 `cart`（购物车），共 46 个。
+- **弹窗头 accent**：API 密钥 🔑→key、新增商品 🎁→gift、申请接入新应用 📦→apps、页脚项目 📄→file、新增应用 📦→apps（静态 api/goods-modal 用 `data-ic`，JS innerHTML 弹窗用 `${ic()}`）。
+- **其它 chrome**：组织会话横幅「🔒 仅组织会话」→lock、首页「🛒 前往积分商城」CTA→cart、KYC「🕐 认证时间」→clock、组织成员「🔑 已设组织密码」badge→key、Passkey 列表行首 🔑→key。
+- ⚠️ **跳过**：等级编辑弹窗 `lm-icon` 的 📝——被 JS 用 `.textContent = currentEditLvl.badge` 设成**该等级的 badge emoji**（数据字段），保留；兑换结果弹窗 `cam-icon` 的 🎁（20px hero 装饰），保留。
+- ⚠️ **消歧坑**：`<span style="font-size:16px;">🔑</span>` / `📦</span>` 在多处重复（API 弹窗头 vs Passkey 行、接入应用 vs 新增应用），Edit old_string 带了后面的标题文字才唯一。
+- ⚠️ 判定沿用（见 [[ui-design-preference]]）：保留 hero 大图、`icon:` / badge 数据字段、散文 ⚠️💡、✓✗ 状态标、👁 眼睛开关、MDM 命令图标。
+- ⚠️ 测试：内联 JS 解析通过（2 块 0 错误）；grep 确认本批 10 处目标清零、cart 就位。纯前端，无后端改动。至此全站明显散落 chrome emoji 基本收尽，剩余多为刻意保留类。
 
 ## v3.5.127 emoji→小图标续：等级 tab / 组织高级配置 / 门禁门名 / 设备领取码（用户「继续」）
 
