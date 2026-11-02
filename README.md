@@ -218,15 +218,20 @@ npx zeabur@latest template update -c <模板代码> -f zeabur-template.yaml   # 
 
 ---
 
+## 🤝 参与贡献
+
+欢迎提交 Issue 与 Pull Request。开始前请先读：
+
+- [贡献指南 · CONTRIBUTING.md](./CONTRIBUTING.md) — 本地运行、代码约定、提交 / PR 流程
+- [行为准则 · CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- [安全策略 · SECURITY.md](./SECURITY.md) — 安全漏洞请走私密渠道，**不要**用公开 Issue 提交
+
+---
+
 ## 📞 联系我们
 
-我们有代为配置（部署）服务，如果您不会配置，或者想要更为实惠的云服务（服务器、域名、CDN 等）资源，请咨询微信客服：
-
-> 微信扫码咨询客服（企业微信 · 微信客服）
-
-如您有其他问题，可以加入官方微信交流群了解详情：
-
-> QWQ-SSO 官方群（企业微信群）
+- GitHub：[@userbai](https://github.com/userbai)
+- 邮箱：[ruixu@wecom.qwq.us](mailto:ruixu@wecom.qwq.us)
 
 ---
 
