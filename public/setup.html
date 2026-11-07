@@ -309,8 +309,8 @@ code{font-family:ui-monospace,'SF Mono',Consolas,Menlo,monospace;font-size:.88em
           <label>服务根地址（BASE_URL）<span class="req">*</span></label>
           <input type="url" id="base-url" placeholder="https://sso.yourcompany.com"/>
           <div class="hint">
-            对外可访问的完整地址，<strong>末尾不加 /</strong>。<br>
-            本地开发填 <code style="background:var(--sf2);padding:1px 4px;border-radius:2px;">http://localhost:3000</code>，生产环境填真实域名。<br>
+            对外可访问的完整地址，<strong>末尾不加 /</strong>。已自动填成当前访问地址，确认即可。<br>
+            可填真实域名，也可填 <code style="background:var(--sf2);padding:1px 4px;border-radius:2px;">http://你的IP:11451</code> 这种 IP+端口形式；本地开发填 <code style="background:var(--sf2);padding:1px 4px;border-radius:2px;">http://localhost:11451</code>。<br>
             OAuth 回调地址将自动以此地址为前缀生成。
           </div>
         </div>
@@ -321,6 +321,30 @@ code{font-family:ui-monospace,'SF Mono',Consolas,Menlo,monospace;font-size:.88em
             <option value="development">development（开发环境，验证码打印到控制台）</option>
           </select>
         </div>
+        <details style="margin-top:4px;">
+          <summary style="cursor:pointer;font-size:13px;color:var(--txm);user-select:none;">高级设置（密钥，可选）</summary>
+          <div style="margin-top:10px;">
+            <div style="font-size:12px;color:var(--txm);line-height:1.7;margin-bottom:8px;">
+              系统<strong>已在首次启动时自动生成强随机 JWT / 会话密钥</strong>，无需再设环境变量。<br>
+              留空即沿用自动生成的值；只有想用自己指定的密钥时才填写（或点「随机生成」）。
+            </div>
+            <div class="form-row">
+              <label>JWT 密钥（JWT_SECRET）</label>
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="jwt-secret" placeholder="留空＝沿用已自动生成的密钥" style="flex:1;" autocomplete="off"/>
+                <button type="button" class="btn" style="padding:6px 12px;white-space:nowrap;" onclick="genSecret('jwt-secret')">随机生成</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>会话密钥（SESSION_SECRET）</label>
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="session-secret" placeholder="留空＝沿用已自动生成的密钥" style="flex:1;" autocomplete="off"/>
+                <button type="button" class="btn" style="padding:6px 12px;white-space:nowrap;" onclick="genSecret('session-secret')">随机生成</button>
+              </div>
+              <div class="hint">⚠️ 改动 JWT 密钥会让已签发的登录令牌全部失效；首装时尚无用户登录，可放心设置。</div>
+            </div>
+          </div>
+        </details>
       </div>
       <div class="btn-row">
         <button class="btn" onclick="goStep(1)">← 上一步</button>
@@ -625,6 +649,8 @@ async function nextStep(from) {
     formData.site_name = document.getElementById('site-name').value.trim() || '统一登录系统';
     formData.base_url  = baseUrl.replace(/\/$/, '');
     formData.node_env  = document.getElementById('node-env').value;
+    formData.jwt_secret     = document.getElementById('jwt-secret').value.trim();
+    formData.session_secret = document.getElementById('session-secret').value.trim();
     goStep(3);
     return;
   }
@@ -701,6 +727,13 @@ function showLoading(msg) {
 }
 function hideLoading() {
   document.getElementById('loading').classList.remove('show');
+}
+
+// ── 随机生成密钥（48 字节 → base64url，浏览器本地生成）──
+function genSecret(id) {
+  const b = new Uint8Array(48); crypto.getRandomValues(b);
+  const s = btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const el = document.getElementById(id); if (el) el.value = s;
 }
 
 // ── 自动填充 Base URL ──

@@ -47,7 +47,7 @@ const providerRoutes = require('./provider'); // 第三方 → 用 QWQ SSO 登�
 const apiRoutes    = require('./api');
 
 const app  = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 11451;   // 平台一般会注入 PORT；自托管默认 11451
 
 // Zeabur 等平台在反向代理后面：信任代理，让 req.protocol/req.ip 反映真实值
 // （Passkey 的 origin 校验依赖正确的 https 协议判断）
@@ -133,7 +133,7 @@ function buildFooterHtml() {
     : '';
 
   // 版本信息点击跳转 GitHub（不可修改）
-  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.132</a>`;
+  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.133</a>`;
 
   return `<footer style="text-align:center;padding:20px 20px 8px;margin-top:24px;font-size:11px;color:rgba(0,0,0,.38);border-top:1px solid rgba(0,0,0,.07);line-height:1.9;user-select:none;">
   <div style="font-weight:500;">${copyright}</div>${infoLine}

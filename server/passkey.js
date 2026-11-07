@@ -35,7 +35,7 @@ function rpConfig(req) {
     origin = `${proto}://${host}`;
   } else {
     // 兜底：BASE_URL
-    const base = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const base = (process.env.BASE_URL || 'http://localhost:11451').replace(/\/$/, '');
     try { rpID = new URL(base).hostname; origin = new URL(base).origin; }
     catch (_) { rpID = 'localhost'; origin = base; }
   }

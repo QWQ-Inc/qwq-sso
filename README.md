@@ -1,9 +1,9 @@
-# QWQ SSO — 统一登录系统 v3.5.132
+# QWQ SSO — 统一登录系统 v3.5.133
 
 > 多渠道登录 · 用户/管理控制台 · 积分商城 · KYC 实名认证 · 开放 API · OIDC 身份提供方
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.5.132-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
+[![Version](https://img.shields.io/badge/version-3.5.133-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen.svg)](https://nodejs.org)
 
 ---
@@ -86,34 +86,25 @@ cp .env.example .env
 npm start
 ```
 
-访问 `http://localhost:3000`，按向导完成初始化。
+访问 `http://localhost:11451`，按向导完成初始化（端口可用 `PORT` 覆盖）。
 
-### Zeabur 一键部署
+### 容器化面板部署（通用）
 
-[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/9GA34G)
+本项目是一个普通 Node.js 服务，可部署到**任意支持从 GitHub 导入 / 构建的容器化平台**（Render、Railway、Fly.io、Hugging Face Spaces、自建 Docker / Docker Compose、宝塔 / 1Panel 等，Zeabur 亦同理），步骤一致：
 
-点击上方按钮从 Zeabur 模板市场一键部署（自动随机生成 `JWT_SECRET`/`SESSION_SECRET`、挂载持久化数据卷）。部署完成后访问 `https://你的域名/setup` 完成初始化向导（创建超级管理员）。
+1. Fork 本仓库，在面板里「从 GitHub 导入 / 新建服务」指向它（构建命令 `npm install`、启动命令 `npm start`）。
+2. **挂载一个持久卷到 `/data`，并设 `DB_PATH=/data/sso.db`**（SQLite 库在这里，否则重建容器会丢数据）。
+3. 可选环境变量：`BASE_URL`（公开访问地址）——**不填也行**，向导会自动探测当前访问地址并预填；`JWT_SECRET`/`SESSION_SECRET`——**不填也行**，首次启动会自动生成强随机密钥并持久化到库里，也可在向导的「高级设置」里自定义。
+4. 平台通常会注入 `PORT`；若自托管未注入，默认监听 `11451`。
+5. 访问 `https://你的地址/setup` 完成初始化向导（创建超级管理员）。没有公开域名时用 `http://你的IP:11451/setup` 也可以。
 
-> ⚠️ **数据持久化**：数据库是 SQLite，模板已把 `DB_PATH` 指到挂载于 `/data` 的卷。请勿删除该卷，否则重新部署时数据会全部丢失。
+> ⚠️ **数据持久化**：数据库是 SQLite，务必挂载 `/data` 卷并指好 `DB_PATH`。请勿删除该卷，否则重新部署时数据会全部丢失。装好后可在管理端「数据备份 / 导出」定期导出，换平台时在安装向导的「从备份恢复」里一键导回。
 
-#### 手动从 GitHub 导入
+> 💡 从旧部署迁移：先在旧实例导出一份备份（含全部配置与凭据），在新平台按上面步骤起好空实例，到 `/setup` 页点「从备份恢复」上传即可，恢复时还能顺手改 `BASE_URL` / 消息分发等配置。
 
-1. Fork 本仓库
-2. 在 Zeabur 新建项目 → 从 GitHub 导入
-3. **给服务挂载一个卷到 `/data`**，并设 `DB_PATH=/data/sso.db`（否则重部署丢数据）
-4. 设置必要环境变量：`JWT_SECRET`、`SESSION_SECRET`（随机长字符串）、`BASE_URL`（你的公开域名）
-5. 访问 `https://your-domain.zeabur.app/setup` 完成初始化
+#### Zeabur 模板（可选）
 
-#### 维护模板
-
-模板定义在仓库根目录 [`zeabur-template.yaml`](./zeabur-template.yaml)。发布 / 更新：
-
-```bash
-npx zeabur@latest auth login
-npx zeabur@latest template deploy -f zeabur-template.yaml   # 测试部署
-npx zeabur@latest template create -f zeabur-template.yaml   # 发布到模板市场（返回模板代码）
-npx zeabur@latest template update -c <模板代码> -f zeabur-template.yaml   # 后续更新
-```
+仓库根目录另带 [`zeabur-template.yaml`](./zeabur-template.yaml) 供 Zeabur 一键部署与模板市场发布；非 Zeabur 平台无需关心它。
 
 ---
 
@@ -173,7 +164,7 @@ npx zeabur@latest template update -c <模板代码> -f zeabur-template.yaml   # 
 | 前端 | 原生 HTML/CSS/JS（单文件，无构建工具）|
 | 数据库 | SQLite（`data/sso.db`，自动创建）|
 | 认证 | JWT · bcryptjs · WebAuthn（Passkey）|
-| 部署 | Zeabur / 任意 Node.js 环境 |
+| 部署 | 任意容器化面板（Render / Railway / Fly.io / 自建 Docker / Zeabur 等）/ 任意 Node.js 环境 |
 
 ---
 

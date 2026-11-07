@@ -1855,6 +1855,23 @@ const envStmts = {
   }
 })();
 
+// v3.5.133：首次启动自动生成 JWT_SECRET / SESSION_SECRET（env 与库里都没有时），写进 env_config + process.env。
+// 这样全新部署无需预设任何密钥环境变量即可启动（容器化面板直接导入 → 访问 /setup 即可）。
+// ⚠️ 只在真正缺失时生成；env 或库里已有则绝不覆盖——防止覆盖平台面板里正确配置的值导致 token 集体失效
+//    （与 index.js loadEnvFromDb「只填补空缺」同一原则）。本进程即时生效：env_config 有值但 process.env 没有时也载入。
+(function ensureSecrets() {
+  const crypto = require('crypto');
+  for (const k of ['JWT_SECRET', 'SESSION_SECRET']) {
+    if (process.env[k] && String(process.env[k]).trim()) continue;              // env 已有，用它
+    let v = ''; try { const r = envStmts.get.get(k); v = r && r.value ? r.value : ''; } catch (_) {}
+    if (v && String(v).trim()) { process.env[k] = v; continue; }                // 库里已有，载入本进程
+    v = crypto.randomBytes(48).toString('base64url');                           // 都没有，生成强随机并持久化
+    try { envStmts.set.run(k, v); } catch (_) {}
+    process.env[k] = v;
+    console.log(`[SECRET] 已自动生成 ${k}（首次启动，强随机 48 字节）`);
+  }
+})();
+
 // ──────────────────────────────────────────
 // 安装状态检测
 // ──────────────────────────────────────────

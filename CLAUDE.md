@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.132**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.133**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,17 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.133 自托管友好：密钥首启自动生成 + 向导可填 + BASE_URL 按请求域名 + 默认端口 11451 + 文档去 Zeabur 中心化（用户反馈）
+
+三级版本。用户（Zeabur 部署文档截图）：「文档口径加为在容器化面板导入，zeabur 要倒闭了。jwt 密钥和随机长字符串能不能在向导里面填，公开域名按照请求域名来，至少保留一个请求域名和本机 ip+端口（默认 11451）/指定路径…」。背景：原来全新部署**必须先设** `JWT_SECRET`/`SESSION_SECRET`/`BASE_URL` 三个环境变量（Zeabur 模板帮忙注入），换平台就麻烦。本版把这几项做成「不设也能装」。
+- **密钥首启自动生成**（`db.js` `ensureSecrets` IIFE，接在 `applyPostRestoreEnv` 后、`isSetupDone` 前）：`JWT_SECRET`/`SESSION_SECRET` 若 env 与 `env_config` 里都没有，则 `crypto.randomBytes(48).base64url` 生成、写库 + `process.env`。**只在真正缺失时生成**（env 或库里已有绝不覆盖，与 index.js loadEnvFromDb「只填补空缺」同原则，防覆盖平台面板正确值导致 token 集体失效）；库里有 env 没有则载入本进程。⚠️ 落点在 db.js require 期间，所以 index.js 第 43 行 `require('./db')` 返回后、第 64 行 session 用 `SESSION_SECRET` 前它已就位；JWT 在签/验 token 时读，更晚。恢复场景（v3.5.102+）：恢复库自带备份的密钥 → ensureSecrets 从 env_config 载入本进程，正好续用备份密钥（改进而非冲突）。`auth.js`/`index.js` 原有 `'dev-secret…'` 兜底保留但实际不再触发。
+- **向导可自定义密钥**（`setup.js /complete` 收 `jwt_secret`/`session_secret`，填了才 `env.set.run` + **即时更新 `process.env`**，避免「库里新密钥、运行中仍用旧、重启后 token 全失效」错位；`setup.html` Step 2 加 `<details>`「高级设置（密钥）」两字段 + `genSecret()`（浏览器 `crypto.getRandomValues` 48 字节 → base64url），留空＝沿用自动生成，提示改 JWT 会让已签发令牌失效但首装无用户可放心设）。`baseVars` 写入时也顺带更新 process.env。
+- **BASE_URL 按请求域名**：运行时本就有兜底（`provider.js:129 base(req)`、`api.js:8935 thisBaseUrl(req)` = `BASE_URL || ${proto}://${host}`），向导 `base-url` 也早已 `DOMContentLoaded` 自动填 `location.origin`。本版把提示写清（已自动填当前访问地址，确认即可；可填域名也可 `http://IP:11451`）。⚠️ **没动** `provider.js` 的 `backchannelLogout` iss（该 helper 无 req 在作用域）与 microsoft/qq 的 `redirect_uri`（必须与服务商注册地址精确一致，不能用任意请求 host）——这些仍需配 BASE_URL，属正常。
+- **默认端口 11451**：`index.js` `PORT || 3000`→`|| 11451`（平台一般注入 PORT，自托管才用默认）；`passkey.js` 兜底 `localhost:3000`→`11451`；README 的 `localhost:3000`→`11451`。
+- **文档去 Zeabur 中心化**：README 部署段从「Zeabur 一键 + 手动」改为**通用容器化面板**口径（Render/Railway/Fly.io/自建 Docker/Zeabur 等步骤一致：挂 `/data` 卷 + `DB_PATH`、可选 `BASE_URL`（不填自动探测）、密钥不填自动生成、默认 11451、访问 `/setup`），加「从旧部署迁移＝导出备份→新平台空实例→`/setup` 点从备份恢复」指引；Zeabur 模板降级为「可选」小节。技术栈表「部署」行同步改通用。
+- ⚠️ 测试：`restore-cfg-test` 之外新增 ensureSecrets node:sqlite 复刻 9 项全过（全空生成两密钥且 base64url、持久化、二次启动不重生成只载入、env 已有不生成不覆盖库旧值、genSecret 无 +/= 格式）；server 4 文件 `node --check` + setup.html 内联 JS 解析通过；dev 浏览器实测向导 Step 2（BASE_URL 预填 location.origin、高级密钥区展开、随机生成填出 64 位 base64url）。真实容器启动的 ensureSecrets 落库靠逻辑复刻 + 与既有 env_config 读写同构覆盖（本机无 better-sqlite3）。
+- ⚠️ **未做（用户消息被截断，待确认）**：末句「本机 ip+端口…/指定路径（比如六位随机，举例 `114.5.1.4:11451/419198` 访问）…后续可以将端口访问改为关闭或…」——这是「把应用挂到一个保密子路径前缀下 + 可关端口直连」的访问门禁子功能，涉及子路径挂载（base href/所有路由/静态服务加前缀）+ 端口开关，且句子断在「或」。属安全敏感的独立特性，已单独向用户确认再做。
 
 ## v3.5.132 安装页「从备份恢复」改弹窗 + 恢复前配置复核（站点基本 + 消息分发凭证）（用户反馈）
 

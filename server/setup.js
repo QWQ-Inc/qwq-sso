@@ -117,6 +117,8 @@ router.post('/complete', async (req, res) => {
     admin_name, admin_email, admin_password,
     // Step 2: 站点基本配置
     site_name, base_url, node_env,
+    // Step 2 高级（可选）：自定义密钥。留空＝沿用启动时自动生成的强随机密钥（db.js ensureSecrets）
+    jwt_secret, session_secret,
     // Step 3: 功能开关
     features,          // { sms, email, wechat, kyc, shop, api, ... }
     // Step 4: 可选：消息分发中心（QWQ Message）快速配置
@@ -159,7 +161,12 @@ router.post('/complete', async (req, res) => {
       NODE_ENV:   node_env || 'production',
       SITE_NAME:  site_name || '统一登录系统',
     };
-    Object.entries(baseVars).forEach(([k, v]) => env.set.run(k, v));
+    Object.entries(baseVars).forEach(([k, v]) => { env.set.run(k, v); process.env[k] = v; });
+
+    // ── 2b. 可选：自定义密钥（留空则沿用启动时自动生成的值，不改动）──
+    // 填了就持久化并即时更新本进程，避免「库里是新密钥、运行中仍用旧密钥、重启后 token 全失效」的错位。
+    if (jwt_secret && String(jwt_secret).trim()) { const v = String(jwt_secret).trim(); env.set.run('JWT_SECRET', v); process.env.JWT_SECRET = v; }
+    if (session_secret && String(session_secret).trim()) { const v = String(session_secret).trim(); env.set.run('SESSION_SECRET', v); process.env.SESSION_SECRET = v; }
 
     // ── 3. 写入功能开关 ──
     const feat = features || {};
