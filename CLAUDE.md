@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.131.3**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.132**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,25 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.132 安装页「从备份恢复」改弹窗 + 恢复前配置复核（站点基本 + 消息分发凭证）（用户反馈）
+
+三级版本。用户（setup.html 恢复面板截图）：「从备份恢复板块做个弹出式窗口怎么样，而且覆盖后可以即时更改配置信息（正常走 setup 但是带着导入的数据，可以改部分，已有的再修改就强确认）或跳过直接完成？」确认的可改字段范围：**站点基本（BASE_URL/SITE_NAME/NODE_ENV）+ 消息分发凭证（QWQ_MESSAGE_URL/KEY/SMS_GROUP/EMAIL_GROUP）**，不含功能开关。
+
+### ⚠️ 关键设计：配置复核放在恢复**之前**的同一首装窗口，不重开向导
+恢复机制（`db.js applyPendingRestore` 在开库前换库 → 恢复后库 `SETUP_DONE=1` → 安装守卫跳登录页，向导不再跑）决定了「恢复后带着数据重走 setup」做不到——而且 `/setup/*` 路由是**免鉴权**的（首装信任模型，只 gate 于 `!isSetupDone()`），恢复后在有真实数据的系统上重开无鉴权向导会是安全漏洞。所以把「改哪几项配置」放在**恢复动作之前**的复核步（和恢复同信任级，都在首装窗口内），改动作为一次性 env override 跟着重启落地。
+
+### 后端（白名单两道过滤 + 一次性标记）
+- `backup.js`：`RESTORE_ENV_KEYS`（7 个白名单键）+ `RESTORE_SECRET_KEYS`（`QWQ_MESSAGE_KEY`）。`readRestoreConfig(dbBuf, dataDir)`：只读临时开暂存库，读出白名单 env（非密钥回明文、密钥只回 `secret_set` 布尔不回明文）+ `admin_email`，供复核预填。`stageRestoreEnv(dbFile, overrides)`：把改动按白名单过滤后写 `<库>.post-restore-env.json`（和 pending-restore 一起留库旁）；密钥类留空＝跳过（保留备份值）；空 overrides 删陈旧标记。都加进 exports。
+- `db.js`：`envStmts` 后加 `applyPostRestoreEnv` IIFE——开库后、env 可用时读标记，**按硬编码的同一份白名单过滤**（即便标记被伪造也只放行这 7 个键，绝不写别的），`envStmts.set.run` + `process.env[k]=v`，再删标记。⚠️ 白名单在 db.js 里**硬编码**（不 require backup 避免循环依赖，防御性第二道）。
+- `setup.js`：`restore/stage` 多返回 `config: backup.readRestoreConfig(...)`；`restore/apply` 收 `overrides` → `backup.stageRestoreEnv(DB_FILE, overrides||{})`。两道白名单过滤（stageRestoreEnv 写时 + db.js 落地时）。
+- ⚠️ 存储桶恢复（from-bucket）仍是直接恢复、无配置复核（它不走 stage 预览）；本版只给上传文件这条路加复核。
+
+### 前端（setup.html）
+- 恢复面板从内联展开卡片改为**弹窗**（`#restore-modal` 遮罩 + 居中卡片 + × 关闭 + 点遮罩关闭）；内层 id 全保留，原分页/文件/桶逻辑不动。
+- stage 成功后在预览 + 兼容性提示下方渲染「恢复后配置复核（可选）」：`RCFG` 7 项预填备份值，改了导入值的非密钥字段**弹出强确认勾选框**「确认用新值覆盖导入值「…」」（没勾/BASE_URL 改空则 `collectOverrides` 拦截并 alert）；密钥字段打码占位「留空＝保留备份里的值 · 备份里已配置」。按钮：**「应用改动并恢复」**（收集已确认的 overrides）/ **「跳过，直接恢复」**（无 overrides）。两条都走原 `confirmAndRun`（输入「恢复全站数据」确认）。
+- ⚠️ 测试：`restore-cfg-test.mjs` 18 项全过（stageRestoreEnv 白名单过滤 JWT_SECRET 被丢、密钥纯空白跳过/非空写入、空 overrides 删标记、db.js 落地只应用白名单内 2 项且伪造键不入库、落地删标记、readRestoreConfig 非密钥回明文/密钥只回布尔/缺键回空串/admin_email）。setup/backup/db `node --check` + setup.html 内联 JS 解析通过。dev 浏览器实渲染（mock stage 响应）：弹窗开/关（×/遮罩）、复核预填、改 BASE_URL 弹强确认框、未勾被拦（alert）、勾选+填密钥→apply 带 `overrides:{BASE_URL,QWQ_MESSAGE_KEY}` + confirm「恢复全站数据」、跳过→无 overrides。
+- ⚠️ 真实恢复链路（better-sqlite3 换库 + 进程重启）本机无法端到端（无真依赖），逻辑靠单测 + readRestoreConfig/落地与既有 inspectDbBuffer/applyPendingRestore 同构（只读临时库 / 开库前后一次性文件操作）覆盖。
 
 ## v3.5.131.3 删掉死按钮「全部分类 ▾」（onclick 调未定义函数 showCategoryMenu）（代码审查发现）
 

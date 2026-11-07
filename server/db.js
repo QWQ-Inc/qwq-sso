@@ -1828,6 +1828,33 @@ const envStmts = {
   set:    db.prepare('INSERT OR REPLACE INTO env_config (key_name,value,updated_at) VALUES (?,?,datetime(\'now\'))'),
 };
 
+// v3.5.132：恢复后配置复核。安装页「从备份恢复」时可顺手改几项配置，backup.stageRestoreEnv 把它们写进
+// <库>.post-restore-env.json（和 pending-restore 一起留在库旁）。换库已在本文件顶部 applyPendingRestore 完成，
+// 这里是开库后、env 可用时把那份一次性覆盖写进恢复后的库，再删标记。
+// ⚠️ 白名单硬编码在此（与 backup.js 的 RESTORE_ENV_KEYS 同一份）：即便标记被伪造，也只放行这几项，绝不写别的键。
+(function applyPostRestoreEnv() {
+  const RESTORE_ENV_KEYS = ['BASE_URL', 'SITE_NAME', 'NODE_ENV', 'QWQ_MESSAGE_URL', 'QWQ_MESSAGE_KEY', 'QWQ_MESSAGE_SMS_GROUP', 'QWQ_MESSAGE_EMAIL_GROUP'];
+  const marker = DB_FILE + '.post-restore-env.json';
+  try {
+    if (!fs.existsSync(marker)) return;
+    let data = {};
+    try { data = JSON.parse(fs.readFileSync(marker, 'utf8')) || {}; } catch (_) { data = {}; }
+    let n = 0;
+    for (const k of RESTORE_ENV_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(data, k)) continue;
+      const v = String(data[k]);
+      envStmts.set.run(k, v);
+      process.env[k] = v;   // 本进程即时生效（index.js 的 loadEnvFromDb 只填补空缺，不会覆盖）
+      n++;
+    }
+    if (n) console.log(`[RESTORE] 已应用恢复后配置覆盖 ${n} 项`);
+  } catch (e) {
+    console.error('[RESTORE] 恢复后配置覆盖应用失败：', e.message);
+  } finally {
+    try { if (fs.existsSync(marker)) fs.unlinkSync(marker); } catch (_) {}
+  }
+})();
+
 // ──────────────────────────────────────────
 // 安装状态检测
 // ──────────────────────────────────────────

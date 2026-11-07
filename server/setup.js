@@ -44,21 +44,25 @@ router.post('/restore/stage', express.raw({ type: () => true, limit: 512 * 1024 
         backupTables: bs.tables, liveTables: mdb.liveSchema().tables,
       });
     } catch (_) {}
+    // 恢复前配置复核：从备份里读出白名单 env（站点基本 + 消息分发）供前端预填
+    let config = null; try { config = backup.readRestoreConfig(dbBuf, DATA_DIR); } catch (_) {}
     const token = uuidv4();
     const staged = path.join(DATA_DIR, `.restore-stage-${token}.db`);
     fs.writeFileSync(staged, dbBuf, { mode: 0o600 });
     setupStages.set(token, { file: staged, at: Date.now(), info });
-    res.json({ success: true, token, info, compat });
+    res.json({ success: true, token, info, compat, config });
   } catch (e) { res.status(400).json({ error: e.message, need_pass: !!e.needPass }); }
 });
 router.post('/restore/apply', (req, res) => {
   if (isSetupDone()) return res.status(403).json({ error: '系统已安装' });
-  const { token, confirm } = req.body || {};
+  const { token, confirm, overrides } = req.body || {};
   if (confirm !== '恢复全站数据') return res.status(400).json({ error: '请输入「恢复全站数据」确认', confirm_text: '恢复全站数据' });
   const st = setupStages.get(token);
   if (!st || !fs.existsSync(st.file)) return res.status(404).json({ error: '暂存文件已失效，请重新上传' });
   try {
     backup.stageRestore(DB_FILE, fs.readFileSync(st.file));
+    // 顺手改的配置随重启落地（stageRestoreEnv 按白名单过滤；db.js 开库后再按同一白名单应用）
+    try { backup.stageRestoreEnv(DB_FILE, overrides || {}); } catch (_) {}
     setupStages.delete(token); try { fs.unlinkSync(st.file); } catch (_) {}
     res.json({ success: true, restart: true, message: '已载入恢复数据，系统将重启。请稍候十几秒后刷新访问登录页。' });
     setTimeout(() => process.exit(0), 800);

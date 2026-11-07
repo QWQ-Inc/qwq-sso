@@ -4,6 +4,14 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.132 — 安装页「从备份恢复」改弹窗 + 恢复前配置复核
+
+- 从备份恢复面板从内联展开卡片改为**弹窗**（遮罩 + 居中卡片 + × / 点遮罩关闭）。
+- 校验通过后新增「恢复后配置复核（可选）」：**站点基本**（BASE_URL/SITE_NAME/NODE_ENV）+ **消息分发凭证**（QWQ_MESSAGE_URL/KEY/SMS_GROUP/EMAIL_GROUP）预填备份里的值；改了导入值的字段要勾选「确认覆盖」（强确认），密钥留空＝保留备份里的值。底部「应用改动并恢复 / 跳过，直接恢复」两条路。
+- 改动作为一次性 env override 跟着恢复重启落地（`<库>.post-restore-env.json` 标记，开库后按**白名单**应用再删），而不是恢复后重开免鉴权的安装向导。
+- 后端：`backup.js` 加 `readRestoreConfig`（只读暂存库取白名单 env，密钥只回是否已配置）/ `stageRestoreEnv`（按白名单写标记）；`db.js` 开库后 `applyPostRestoreEnv`（硬编码白名单二次过滤，伪造键绝不入库）；`setup.js` stage 返回 config、apply 收 overrides。
+- ⚠️ 测试：18 项单测全过（白名单过滤、密钥留空跳过、落地删标记、伪造键不入库）；setup/backup/db 语法 + setup.html 内联 JS 解析通过；dev 浏览器实渲染弹窗开关 / 复核预填 / 强确认拦截 / 带 overrides 与跳过两条路。存储桶恢复仍是直接恢复、无复核。
+
 ## v3.5.131.3 — 删掉死按钮「全部分类 ▾」（onclick 调未定义的 showCategoryMenu）
 
 - 应用市场搜索栏有个静态按钮 `<button id="category-btn" onclick="showCategoryMenu()">全部分类 ▾</button>`，但 `showCategoryMenu` 全文从未定义——点一下就 `ReferenceError: showCategoryMenu is not defined`。

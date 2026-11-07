@@ -195,8 +195,14 @@ code{font-family:ui-monospace,'SF Mono',Consolas,Menlo,monospace;font-size:.88em
       已经在别处部署过、手上有导出 / 备份文件？可以直接
       <a href="#" id="restore-toggle" style="color:var(--ac2);font-weight:600;text-decoration:none;">从备份恢复全站数据 →</a>
     </div>
-    <div class="card" id="restore-panel" style="display:none;margin-top:10px;">
-      <div class="card-header"><h2>从备份恢复</h2><p>用一份导出 / 备份恢复全站数据（含用户、应用、凭据密钥、全部配置）。恢复后系统会用它覆盖并重启，然后直接用备份里的管理员账号登录，无需再走安装向导。加密的备份需填当初的口令。<br>⚠️ 若原来有些密钥只配在平台（Zeabur 等）面板的环境变量、没进系统配置页，这些不在备份里，恢复后需在新环境重设一遍。</p></div>
+  </div>
+  <!-- 恢复弹窗 -->
+  <div id="restore-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.45);overflow-y:auto;padding:24px 14px;">
+    <div class="card" id="restore-panel" style="max-width:560px;margin:0 auto;box-sizing:border-box;">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+        <div><h2 style="margin:0;">从备份恢复</h2><p style="margin:6px 0 0;">用一份导出 / 备份恢复全站数据（含用户、应用、凭据密钥、全部配置）。恢复后系统会用它覆盖并重启，然后直接用备份里的管理员账号登录，无需再走安装向导。加密的备份需填当初的口令。<br>⚠️ 若原来有些密钥只配在平台（Zeabur 等）面板的环境变量、没进系统配置页，这些不在备份里，恢复后需在新环境重设一遍。</p></div>
+        <button type="button" id="restore-close" aria-label="关闭" style="flex-shrink:0;border:none;background:none;font-size:22px;line-height:1;color:var(--txm);cursor:pointer;">×</button>
+      </div>
       <div class="card-body" style="font-size:13px;">
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button type="button" class="rtab-btn" data-rtab="file" style="flex:1;padding:8px;border:1px solid var(--bd);border-radius:4px;background:var(--ac3);cursor:pointer;font-size:12px;">📄 上传文件</button>
@@ -731,7 +737,12 @@ document.addEventListener('DOMContentLoaded', () => {
 (function () {
   const $ = s => document.getElementById(s);
   const toggle = $('restore-toggle'); if (!toggle) return;
-  toggle.addEventListener('click', e => { e.preventDefault(); const p = $('restore-panel'); p.style.display = p.style.display === 'none' ? '' : 'none'; });
+  const modal = $('restore-modal');
+  const openModal = () => { modal.style.display = ''; };
+  const closeModal = () => { modal.style.display = 'none'; };
+  toggle.addEventListener('click', e => { e.preventDefault(); openModal(); });
+  $('restore-close').addEventListener('click', closeModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });   // 点遮罩空白处关闭
   // 文件 / 存储桶 分页
   document.querySelectorAll('.rtab-btn').forEach(b => b.addEventListener('click', () => {
     const t = b.dataset.rtab;
@@ -787,7 +798,68 @@ document.addEventListener('DOMContentLoaded', () => {
       <br>· 导出不含平台面板里直接设的环境变量，恢复后需重设。</div>`;
     return `<div style="border:1px solid var(--err,#d33);background:rgba(211,51,51,.07);border-radius:4px;padding:8px 10px;margin-top:8px;line-height:1.8;font-size:13px;">⚠️ <b>降级导入</b>：备份来自更新的 <b>v${esc(bV)}</b>，当前 <b>v${esc(cV)}</b>。可继续，但请了解：${b1}${b2}</div>`;
   }
-  // 上传文件：先 stage 预览，再 apply
+  // ── 恢复前「配置复核」（v3.5.132）：站点基本 + 消息分发凭证，预填备份里的值，改了导入值要勾确认 ──
+  const RCFG = [
+    { k: 'BASE_URL', label: '站点地址 BASE_URL', hint: 'Passkey / OIDC 回调、页脚都依赖它，换域名务必改', required: true },
+    { k: 'SITE_NAME', label: '站点名称 SITE_NAME' },
+    { k: 'NODE_ENV', label: '运行环境 NODE_ENV' },
+    { k: 'QWQ_MESSAGE_URL', label: '消息分发地址 QWQ_MESSAGE_URL' },
+    { k: 'QWQ_MESSAGE_KEY', label: '消息分发密钥 QWQ_MESSAGE_KEY', secret: true },
+    { k: 'QWQ_MESSAGE_SMS_GROUP', label: '短信通道组 QWQ_MESSAGE_SMS_GROUP' },
+    { k: 'QWQ_MESSAGE_EMAIL_GROUP', label: '邮件通道组 QWQ_MESSAGE_EMAIL_GROUP' },
+  ];
+  function rsReviewHtml(cfg) {
+    const e = (cfg && cfg.env) || {}, sset = (cfg && cfg.secret_set) || {};
+    const rows = RCFG.map(f => {
+      if (f.secret) {
+        return `<div style="margin-top:8px;">
+          <label style="font-size:11px;color:var(--txm);">${esc(f.label)} <span style="color:var(--txd,#999);">· 备份里${sset[f.k] ? '已配置' : '未配置'}</span></label>
+          <input id="rcf-${f.k}" data-secret="1" type="password" placeholder="留空＝保留备份里的值" style="${inp}margin-top:3px;"></div>`;
+      }
+      const iv = e[f.k] == null ? '' : e[f.k];
+      return `<div style="margin-top:8px;">
+        <label style="font-size:11px;color:var(--txm);">${esc(f.label)}${f.hint ? ` <span style="color:var(--txd,#999);">· ${esc(f.hint)}</span>` : ''}</label>
+        <input id="rcf-${f.k}" data-imported="${esc(iv)}" value="${esc(iv)}" style="${inp}margin-top:3px;">
+        <label id="rcc-${f.k}" style="display:none;font-size:11px;color:var(--err,#d33);margin-top:3px;cursor:pointer;"><input type="checkbox" id="rcx-${f.k}" style="vertical-align:-1px;"> 确认用新值覆盖导入值「<span id="rco-${f.k}"></span>」</label></div>`;
+    }).join('');
+    return `<div style="border:1px solid var(--bd);border-radius:4px;padding:10px;margin-top:10px;background:var(--sf,#fafafa);">
+      <div style="font-weight:600;margin-bottom:2px;">恢复后配置复核（可选）</div>
+      <div style="font-size:11px;color:var(--txm);margin-bottom:4px;">不改的照搬备份里的值；改了导入值的要勾选确认。只影响这几项配置，不动账号。</div>${rows}</div>`;
+  }
+  function wireReview() {
+    RCFG.filter(f => !f.secret).forEach(f => {
+      const el = $('rcf-' + f.k); if (!el) return;
+      const sync = () => {
+        const changed = el.value !== (el.dataset.imported || '');
+        const row = $('rcc-' + f.k); if (row) row.style.display = changed ? '' : 'none';
+        if (changed) { const o = $('rco-' + f.k); if (o) o.textContent = el.dataset.imported || '（空）'; }
+        else { const x = $('rcx-' + f.k); if (x) x.checked = false; }
+      };
+      el.addEventListener('input', sync);
+    });
+  }
+  function collectOverrides() {
+    const ov = {}, bad = [];
+    for (const f of RCFG) {
+      const el = $('rcf-' + f.k); if (!el) continue;
+      if (f.secret) { const v = el.value; if (v && v.trim()) ov[f.k] = v; continue; }
+      const imported = el.dataset.imported || '';
+      if (el.value === imported) continue;                                   // 没改
+      if (f.required && !el.value.trim()) { bad.push(f.label + '（不能为空）'); continue; }
+      const x = $('rcx-' + f.k);
+      if (!x || !x.checked) { bad.push(f.label + '（需勾选「确认覆盖」）'); continue; }
+      ov[f.k] = el.value;
+    }
+    return { ov, bad };
+  }
+  async function applyRestore(confirm, overrides) {
+    const body = { token: _token, confirm };
+    if (overrides && Object.keys(overrides).length) body.overrides = overrides;
+    const rr = await fetch('/setup/restore/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const dd = await rr.json().catch(() => ({}));
+    $('rs-result').innerHTML = rr.ok ? '<span style="color:var(--ok);">' + esc(dd.message || '已恢复，系统正在重启。请稍候刷新页面。') + '</span>' : '<span style="color:var(--err);">' + esc(dd.error || '恢复失败') + '</span>';
+  }
+  // 上传文件：先 stage 预览 + 配置复核，再 apply
   let _token = null;
   $('rs-file-btn').addEventListener('click', async () => {
     const f = $('rs-file').files[0]; if (!f) { alert('请选择备份文件'); return; }
@@ -800,14 +872,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { $('rs-result').innerHTML = '<span style="color:var(--err);">' + esc(d.error || '校验失败') + (d.need_pass ? '（请填解密口令）' : '') + '</span>'; return; }
       _token = d.token; const i = d.info || {};
+      const review = d.config ? rsReviewHtml(d.config) : '';
       $('rs-result').innerHTML = `<div style="border:1px solid var(--ok);border-radius:4px;padding:8px 10px;line-height:1.9;">✓ 文件有效：用户 <b>${i.users ?? '—'}</b> · 应用 <b>${i.apps ?? '—'}</b> · 环境变量 <b>${i.env_config ?? '—'}</b> · 组织 <b>${i.oauth_subjects ?? '—'}</b> · 凭证 <b>${i.oauth_providers ?? '—'}</b></div>
-        ${rsCompatHtml(d.compat)}
-        <button type="button" id="rs-file-apply" style="margin-top:10px;padding:9px 16px;border:none;border-radius:4px;background:var(--err,#d33);color:#fff;font-weight:600;cursor:pointer;">确认恢复（覆盖并重启）</button>`;
-      $('rs-file-apply').addEventListener('click', () => confirmAndRun(async confirm => {
-        const rr = await fetch('/setup/restore/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: _token, confirm }) });
-        const dd = await rr.json().catch(() => ({}));
-        $('rs-result').innerHTML = rr.ok ? '<span style="color:var(--ok);">' + esc(dd.message || '已恢复，系统正在重启。请稍候刷新页面。') + '</span>' : '<span style="color:var(--err);">' + esc(dd.error || '恢复失败') + '</span>';
-      }));
+        ${rsCompatHtml(d.compat)}${review}
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          <button type="button" id="rs-file-apply" style="flex:1;min-width:150px;padding:9px 16px;border:none;border-radius:4px;background:var(--err,#d33);color:#fff;font-weight:600;cursor:pointer;">${review ? '应用改动并恢复' : '确认恢复（覆盖并重启）'}</button>
+          ${review ? '<button type="button" id="rs-file-skip" style="flex:1;min-width:150px;padding:9px 16px;border:1px solid var(--bd);border-radius:4px;background:var(--sf);cursor:pointer;">跳过，直接恢复</button>' : ''}
+        </div>`;
+      if (review) wireReview();
+      $('rs-file-apply').addEventListener('click', () => {
+        let ov = null;
+        if (review) { const r2 = collectOverrides(); if (r2.bad.length) { alert('以下改动需先处理：\n· ' + r2.bad.join('\n· ')); return; } ov = r2.ov; }
+        confirmAndRun(confirm => applyRestore(confirm, ov));
+      });
+      const skip = $('rs-file-skip');
+      if (skip) skip.addEventListener('click', () => confirmAndRun(confirm => applyRestore(confirm, null)));
     } catch (e) { $('rs-result').innerHTML = '<span style="color:var(--err);">' + esc(e.message) + '</span>'; }
   });
   // 从存储桶：列出 → 选一份恢复

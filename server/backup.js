@@ -358,6 +358,50 @@ function stageRestore(dbFile, dbBuf) {
   return pending;
 }
 
+// ── 恢复后配置复核（v3.5.132）──
+// 安装页恢复时可顺手改几项配置，随重启一次性写进恢复后的库。白名单——只有这些键能被 override，
+// db.js 落地时也会再按同一份名单过滤（即便标记被伪造也只放行这些；db.js 里硬编码了同一份）。
+const RESTORE_ENV_KEYS = ['BASE_URL', 'SITE_NAME', 'NODE_ENV', 'QWQ_MESSAGE_URL', 'QWQ_MESSAGE_KEY', 'QWQ_MESSAGE_SMS_GROUP', 'QWQ_MESSAGE_EMAIL_GROUP'];
+const RESTORE_SECRET_KEYS = ['QWQ_MESSAGE_KEY'];   // 密钥类：预览只回「是否已配置」，不回明文
+// 从暂存库只读取出白名单 env + 管理员邮箱，供恢复前复核预填
+function readRestoreConfig(dbBuf, dataDir) {
+  const Database = require('better-sqlite3');
+  const tmp = path.join(dataDir, `.rcfg-${process.pid}-${Date.now()}.db`);
+  fs.writeFileSync(tmp, dbBuf);
+  let ro;
+  try {
+    ro = new Database(tmp, { readonly: true, fileMustExist: true });
+    const getEnv = k => { try { const r = ro.prepare('SELECT value FROM env_config WHERE key_name=?').get(k); return r ? r.value : ''; } catch (_) { return ''; } };
+    const env = {}, secret_set = {};
+    for (const k of RESTORE_ENV_KEYS) {
+      const v = getEnv(k);
+      if (RESTORE_SECRET_KEYS.includes(k)) secret_set[k] = !!(v && String(v).trim());
+      else env[k] = v || '';
+    }
+    let admin_email = '';
+    try { const a = ro.prepare("SELECT email FROM users WHERE role='admin' ORDER BY admin_level, id LIMIT 1").get(); admin_email = (a && a.email) || ''; } catch (_) {}
+    return { env, secret_set, admin_email };
+  } finally { try { ro && ro.close(); } catch (_) {} try { fs.unlinkSync(tmp); } catch (_) {} }
+}
+// 写「恢复后 env 覆盖」标记（<库>.post-restore-env.json）：和 pending-restore 一起留在库旁，
+// 下次启动 db.js 换库 + 开库后应用再删。只保留白名单键；密钥类留空＝不覆盖（保留备份里的值）。
+function stageRestoreEnv(dbFile, overrides) {
+  const marker = dbFile + '.post-restore-env.json';
+  const clean = {};
+  for (const k of RESTORE_ENV_KEYS) {
+    if (!overrides || !Object.prototype.hasOwnProperty.call(overrides, k)) continue;
+    const v = overrides[k];
+    if (v == null) continue;
+    const s = String(v);
+    if (RESTORE_SECRET_KEYS.includes(k) && !s.trim()) continue;
+    clean[k] = s;
+  }
+  if (!Object.keys(clean).length) { try { if (fs.existsSync(marker)) fs.unlinkSync(marker); } catch (_) {} return null; }
+  fs.writeFileSync(marker + '.tmp', JSON.stringify(clean), { mode: 0o600 });
+  fs.renameSync(marker + '.tmp', marker);
+  return marker;
+}
+
 // ── 本地目录 ──
 function localDir(cfg, dataDir) {
   const d = String(cfg.dir || '').trim();
@@ -422,6 +466,7 @@ async function read(target, cfg, dataDir, name) {
 
 module.exports = { encrypt, decrypt, sigv4, snapshot, writeTo, list, read, stamp, localDir,
   ossHost, ossSign, decodeBackup, buildExportZip, inspectDbBuffer, stageRestore,
+  readRestoreConfig, stageRestoreEnv, RESTORE_ENV_KEYS, RESTORE_SECRET_KEYS,
   readManifest, backupSchema, computeCompat, cmpSemver,
   zipWrite, zipRead, crc32, FILE_RE };
 
