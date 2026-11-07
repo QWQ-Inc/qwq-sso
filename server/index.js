@@ -41,6 +41,7 @@ const path      = require('path');
 const rateLimit = require('express-rate-limit');
 
 const { isSetupDone } = require('./db');
+const gate         = require('./gate');       // 访问前缀门（v3.5.134）
 const setupRoutes  = require('./setup');
 const oauthRoutes  = require('./oauth');      // 本系统 → 去登录微信/飞书等（消费方）
 const providerRoutes = require('./provider'); // 第三方 → 用 QWQ SSO 登录（提供方）
@@ -69,6 +70,22 @@ app.use(session({
     maxAge: 7 * 24 * 60 * 60 * 1000,
   },
 }));
+
+// ── 访问前缀门（v3.5.134）：ACCESS_PREFIX 设了就隐藏整个人机界面，知道前缀才能进 ──
+// 机器对接端点（OIDC / OAuth 回调 / 开放 API / 设备代理，见 gate.EXEMPT）始终放行，否则 SSO 会断。
+app.use((req, res, next) => {
+  const prefix = gate.normPrefix(process.env.ACCESS_PREFIX);
+  if (!prefix) return next();                                  // 未开启
+  const d = gate.decide(req.path, req.headers.cookie || '', prefix);
+  if (d.action === 'exempt') return next();                    // 机器端点放行
+  if (d.action === 'block') return res.status(404).type('html').send(gate.notFoundHtml());
+  if (d.setCookie) {                                           // 敲门成功，种门票
+    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.setHeader('Set-Cookie', gate.cookieHeader(prefix, secure));
+  }
+  req.url = gate.stripUrl(req.url, prefix);                    // 带前缀深链 → 剥成正常路径
+  next();
+});
 
 // ── 安装守卫：未完成安装时，非 /setup 请求全部重定向 ──
 app.use((req, res, next) => {
@@ -133,7 +150,7 @@ function buildFooterHtml() {
     : '';
 
   // 版本信息点击跳转 GitHub（不可修改）
-  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.133</a>`;
+  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.134</a>`;
 
   return `<footer style="text-align:center;padding:20px 20px 8px;margin-top:24px;font-size:11px;color:rgba(0,0,0,.38);border-top:1px solid rgba(0,0,0,.07);line-height:1.9;user-select:none;">
   <div style="font-weight:500;">${copyright}</div>${infoLine}
@@ -169,9 +186,13 @@ app.use('/',      providerRoutes);
 app.use('/',      express.static(path.join(__dirname, '../public')));
 
 // ── 启动 ──
-app.listen(PORT, () => {
-  console.log(`[SSO] 服务已启动：http://localhost:${PORT}`);
+// 端口关闭（v3.5.134）：ACCESS_PREFIX_CLOSED=1 时只绑 127.0.0.1，外部完全不可达，
+// 恢复需 SSH 改库 env_config（ACCESS_PREFIX_CLOSED=0）后重启。
+const BIND_HOST = process.env.ACCESS_PREFIX_CLOSED === '1' ? '127.0.0.1' : '0.0.0.0';
+app.listen(PORT, BIND_HOST, () => {
+  console.log(`[SSO] 服务已启动：监听 ${BIND_HOST}:${PORT}` + (BIND_HOST === '127.0.0.1' ? '（端口访问已关闭，仅本机 / SSH 可达）' : ''));
   console.log(`[SSO] 安装完成：${isSetupDone()}`);
+  if (gate.normPrefix(process.env.ACCESS_PREFIX)) console.log('[SSO] 访问前缀门已开启（人机界面需经保密前缀进入）');
   console.log(`[SSO] JWT_EXPIRES_IN="${process.env.JWT_EXPIRES_IN || '7d（默认）'}"`);
   console.log(`[SSO] JWT_SECRET 已设置：${!!process.env.JWT_SECRET}`);
 });

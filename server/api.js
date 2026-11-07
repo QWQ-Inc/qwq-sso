@@ -6833,6 +6833,50 @@ router.get('/admin/env', requireAdmin(1), (req, res) => {
   // 同时返回 env 和 vars 两个 key，兼容不同前端调用
   res.json({ success: true, env: map, vars: map });
 });
+// ── 访问前缀门（v3.5.134，仅超管）──
+const gate = require('./gate');
+function gateState() {
+  const prefix = gate.normPrefix(process.env.ACCESS_PREFIX);
+  const base = (process.env.BASE_URL || '').replace(/\/+$/, '');
+  return {
+    enabled: !!prefix,
+    prefix,
+    knock_url: prefix ? (base ? base + '/' + prefix : '/' + prefix) : '',
+    port_closed: process.env.ACCESS_PREFIX_CLOSED === '1',
+  };
+}
+router.get('/admin/access-gate', requireAdmin(1), (req, res) => {
+  res.json({ success: true, ...gateState() });
+});
+router.put('/admin/access-gate', requireAdmin(1), (req, res) => {
+  let { prefix } = req.body || {};
+  prefix = gate.normPrefix(prefix);
+  if (prefix && !gate.validPrefix(prefix)) {
+    return res.status(400).json({ error: '前缀只能是 1~64 位字母 / 数字 / _ / -，不能含斜杠' });
+  }
+  env.set.run('ACCESS_PREFIX', prefix);
+  process.env.ACCESS_PREFIX = prefix;        // 立即生效
+  // 关键：设/改前缀后，给当前这位管理员补一张新前缀的门票，避免自己当场被 404 锁在外面
+  if (prefix) {
+    const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.setHeader('Set-Cookie', gate.cookieHeader(prefix, secure));
+  }
+  res.json({ success: true, message: prefix ? '访问前缀已开启并立即生效' : '访问前缀门已关闭', ...gateState() });
+});
+router.put('/admin/access-gate/port', requireAdmin(1), (req, res) => {
+  const closed = req.body && (req.body.closed === true || req.body.closed === '1' || req.body.closed === 1);
+  const v = closed ? '1' : '0';
+  env.set.run('ACCESS_PREFIX_CLOSED', v);
+  process.env.ACCESS_PREFIX_CLOSED = v;      // 下次启动按它决定绑定地址
+  res.json({
+    success: true,
+    port_closed: closed,
+    message: closed
+      ? '已设为「关闭端口访问」——重启后仅本机可达，外部完全进不来。若之后进不去面板，需用 SSH 改库：UPDATE env_config SET value=\'0\' WHERE key_name=\'ACCESS_PREFIX_CLOSED\' 后重启。'
+      : '已设为「开放端口访问」，重启后生效。',
+  });
+});
+
 router.post('/admin/env', requireAdmin(1), (req, res) => {
   const { vars } = req.body;
   if (!vars || typeof vars !== 'object') return res.status(400).json({ error: '参数错误' });

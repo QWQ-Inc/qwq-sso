@@ -1,9 +1,9 @@
-# QWQ SSO — 统一登录系统 v3.5.133
+# QWQ SSO — 统一登录系统 v3.5.134
 
 > 多渠道登录 · 用户/管理控制台 · 积分商城 · KYC 实名认证 · 开放 API · OIDC 身份提供方
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-3.5.133-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
+[![Version](https://img.shields.io/badge/version-3.5.134-blue.svg)](https://github.com/QWQ-Inc/qwq-sso)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-brightgreen.svg)](https://nodejs.org)
 
 ---
@@ -101,6 +101,19 @@ npm start
 > ⚠️ **数据持久化**：数据库是 SQLite，务必挂载 `/data` 卷并指好 `DB_PATH`。请勿删除该卷，否则重新部署时数据会全部丢失。装好后可在管理端「数据备份 / 导出」定期导出，换平台时在安装向导的「从备份恢复」里一键导回。
 
 > 💡 从旧部署迁移：先在旧实例导出一份备份（含全部配置与凭据），在新平台按上面步骤起好空实例，到 `/setup` 页点「从备份恢复」上传即可，恢复时还能顺手改 `BASE_URL` / 消息分发等配置。
+
+#### 访问控制（保密前缀门，可选）
+
+没有反向代理 / WAF 时，可在「管理端 → 关于 → 访问控制」给整个人机界面加一道保密路径门（仅超级管理员）：
+
+- 设一个保密前缀（如 `419198`）后，不知道它的人访问任何页面都只看到 **404**；知道的人访问 `你的地址/419198` 即可进入（会种一枚签名门票 cookie，之后正常使用）。前缀随时可改 / 随机 / 关闭，改完当前管理员会自动拿到新门票不会被锁在外面。
+- ⚠️ 为不影响第三方登录，**机器对接端点始终对外可达**：OIDC `/.well-known/*`、`/oauth/*`、OAuth 回调 `/auth/*`、开放 API `/api/v1/*`、`/api/public/*`、设备 / 打印代理。门禁只藏「人用的界面」（登录页 / 控制台 / 安装页 / 控制台 API）。
+- 更硬核：可勾「关闭端口访问」——重启后服务**只监听 `127.0.0.1`**，外部完全不可达。若之后连面板也进不去，需 SSH 改库恢复：
+  ```bash
+  sqlite3 /data/sso.db "UPDATE env_config SET value='0' WHERE key_name='ACCESS_PREFIX_CLOSED'"
+  # 然后重启服务
+  ```
+  （把门禁前缀也清掉：同理把 `ACCESS_PREFIX` 的 value 改成空串。）
 
 #### Zeabur 模板（可选）
 

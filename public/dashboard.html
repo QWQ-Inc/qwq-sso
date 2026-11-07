@@ -3081,7 +3081,16 @@ async function loadMe() {
           </div>
           <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
             导出整站数据为一份 <code>.zip</code>；或上传一份导出 / 备份文件覆盖恢复全站并重启。完整的定时备份目标（本地 / R2 / OSS）在「<a href="#" onclick="goto('adm-backups');return false;" style="color:var(--ac2);">数据备份</a>」页管理。
-            <br>⚠️ 导出含<b>全部密钥（明文）</b>与全站数据（用户密码为哈希、实名已脱敏），<b>强烈建议加密</b>、妥善保管；不含 Zeabur 等平台面板里直接设的环境变量。
+            <br>⚠️ 导出含<b>全部密钥（明文）</b>与全站数据（用户密码为哈希、实名已脱敏），<b>强烈建议加密</b>、妥善保管；不含平台面板里直接设的环境变量。
+          </div>
+        </div>
+        <div class="card" id="about-access-card" style="display:none;">
+          <div class="card-header"><h3><span data-ic="lock"></span> 访问控制（保密前缀门）</h3></div>
+          <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
+            开启后，整个人机界面（登录页 / 控制台 / 安装页）都藏在一个保密路径后面——不知道前缀的人访问任何地址都只看到 404。
+            知道前缀的人访问 <code>你的地址/&lt;前缀&gt;</code> 即可进入（会种一枚门票，之后正常使用）。
+            <br>⚠️ 为不影响第三方登录，<b>机器对接端点始终对外可达</b>（OIDC <code>/oauth/*</code>、<code>/.well-known/*</code>、OAuth 回调 <code>/auth/*</code>、开放 API <code>/api/v1/*</code>、<code>/api/public/*</code>、设备 / 打印代理）。
+            <div id="access-gate-box" style="margin-top:14px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
           </div>
         </div>
       </div>
@@ -10280,6 +10289,9 @@ async function loadVersionInfo(force) {
   // 数据导出/导入卡片只给超级管理员（后端 requireAdmin(1)）
   const dataCard = document.getElementById('about-data-card');
   if (dataCard) dataCard.style.display = adminRole === 'superadmin' ? '' : 'none';
+  // 访问控制（保密前缀门）同样仅超管
+  const accCard = document.getElementById('about-access-card');
+  if (accCard) { accCard.style.display = adminRole === 'superadmin' ? '' : 'none'; if (adminRole === 'superadmin') loadAccessGate(); }
   if (box) box.innerHTML = '检查中…';
   const { ok, data } = await api('GET', '/admin/version' + (force ? '?force=1' : ''));
   if (!ok) { if (box) box.textContent = '检查失败'; return; }
@@ -10304,6 +10316,69 @@ async function loadVersionInfo(force) {
          <div id="about-applylog" style="margin-top:10px;font-family:monospace;font-size:11px;white-space:pre-wrap;color:var(--txd);"></div>`
       : '<div style="font-size:12px;color:var(--txd);">（自托管一键更新未开启。如需启用：系统配置 → 版本更新 → 设 SELFHOST_UPDATE=on，仅限自托管直跑环境）</div>';
   }
+}
+// ── 访问控制（保密前缀门，v3.5.134）──
+let _gateState = null;
+async function loadAccessGate() {
+  const box = document.getElementById('access-gate-box'); if (!box) return;
+  const { ok, data } = await api('GET', '/admin/access-gate');
+  if (!ok) { box.textContent = '加载失败'; return; }
+  _gateState = data; renderAccessGate();
+}
+function renderAccessGate() {
+  const box = document.getElementById('access-gate-box'); if (!box || !_gateState) return;
+  const s = _gateState;
+  const inp = 'box-sizing:border-box;padding:7px 9px;border:1px solid var(--bd);border-radius:3px;';
+  box.innerHTML = `
+    <div style="padding:10px 12px;border:1px solid var(--bd);border-radius:3px;background:var(--sf2);margin-bottom:12px;">
+      当前状态：${s.enabled ? `<b style="color:#1a7f37;">已开启</b>　进入地址 <code style="background:var(--sf);padding:1px 5px;border-radius:2px;">${esc(s.knock_url || ('/' + s.prefix))}</code>` : '<b style="color:var(--txd);">未开启</b>（任何人都能直接访问登录页 / 控制台）'}
+    </div>
+    <label style="font-size:11px;color:var(--txm);">保密前缀（1~64 位字母 / 数字 / _ / -）</label>
+    <div style="display:flex;gap:6px;margin-top:3px;">
+      <input id="gate-prefix" value="${esc(s.prefix || '')}" placeholder="如 419198；留空＝关闭门禁" style="${inp}flex:1;">
+      <button class="btn" style="white-space:nowrap;" onclick="randomizeGatePrefix()">随机生成</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+      <button class="btn primary" onclick="saveAccessGate()">${s.enabled ? '更新前缀' : '开启门禁'}</button>
+      ${s.enabled ? '<button class="btn" onclick="disableGate()">关闭门禁</button>' : ''}
+    </div>
+    <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--bd);">
+      <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;">
+        <input type="checkbox" id="gate-portclosed" ${s.port_closed ? 'checked' : ''} style="margin-top:3px;">
+        <span><b>关闭端口访问</b>（重启后只监听 127.0.0.1，外部完全不可达）<br>
+        <span style="font-size:11px;color:var(--txd);">⚠️ 用于彻底下线对外访问。开启后若连面板也进不去，需 SSH 改库：<code>UPDATE env_config SET value='0' WHERE key_name='ACCESS_PREFIX_CLOSED'</code> 后重启。</span></span>
+      </label>
+      <button class="btn" style="margin-top:8px;" onclick="toggleGatePort()">保存端口设置（重启生效）</button>
+    </div>`;
+}
+function randomizeGatePrefix() {
+  const el = document.getElementById('gate-prefix'); if (!el) return;
+  const a = new Uint8Array(6); crypto.getRandomValues(a); let s = '';
+  for (let i = 0; i < 6; i++) s += (a[i] % 10); el.value = s;
+}
+async function saveAccessGate() {
+  const prefix = (document.getElementById('gate-prefix').value || '').trim();
+  if (prefix && !/^[A-Za-z0-9_-]{1,64}$/.test(prefix)) return showToast('前缀只能是 1~64 位字母 / 数字 / _ / -', 'err');
+  if (prefix && !await uiConfirm('开启后，不知道前缀「' + prefix + '」的人将无法访问登录页 / 控制台（只看到 404）。你当前会话会自动获得访问门票，不会被锁在外面。确定？')) return;
+  const { ok, data } = await api('PUT', '/admin/access-gate', { prefix });
+  if (!ok) return showToast(data.error || '保存失败', 'err');
+  _gateState = data; renderAccessGate(); showToast(data.message || '已保存', 'ok');
+}
+async function disableGate() {
+  if (!await uiConfirm('确定关闭门禁？关闭后任何人都能直接访问登录页 / 控制台。')) return;
+  const { ok, data } = await api('PUT', '/admin/access-gate', { prefix: '' });
+  if (!ok) return showToast(data.error || '操作失败', 'err');
+  _gateState = data; renderAccessGate(); showToast('访问前缀门已关闭', 'ok');
+}
+async function toggleGatePort() {
+  const cb = document.getElementById('gate-portclosed'); const closed = cb.checked;
+  if (closed) {
+    const c = await uiPrompt('这会在下次重启后让服务只监听本机、外部完全进不来。若之后连面板也打不开，只能 SSH 改数据库恢复。\n输入「关闭端口」确认：');
+    if (c !== '关闭端口') { cb.checked = false; return; }
+  }
+  const { ok, data } = await api('PUT', '/admin/access-gate/port', { closed });
+  if (!ok) { cb.checked = !closed; return showToast(data.error || '操作失败', 'err'); }
+  if (_gateState) _gateState.port_closed = data.port_closed; showToast(data.message || '已保存', 'ok');
 }
 async function applyUpdate() {
   if (!await uiConfirm('确定一键拉取更新？将先备份数据库，再执行 git pull + npm ci。更新期间请勿操作。')) return;

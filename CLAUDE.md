@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.133**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.134**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.134 访问前缀门：整个人机界面藏在保密路径后 + 可关端口（仅本机）（用户反馈）
+
+三级版本。承接 v3.5.133，用户补齐截断需求：① **系统级挂载**（整站藏在保密路径后，如 `IP:11451/419198` 才能进）② **随时可改** ③ **关端口＝不监听（外部），进不去就 SSH**。
+- ⚠️ **核心取舍（本系统是 SSO/OIDC 提供方）**：`/oauth/*`、`/.well-known/*`、`/auth/*` 回调、`/api/v1/*`（开放 API）、`/api/public/*`、设备/打印代理**必须对外可达**，否则第三方登录全断。所以「系统级隐藏」落地为：默认 404 藏住**人机界面**（登录页/控制台/setup/控制台 API），但**放行机器对接端点**（`gate.EXEMPT` 列表）。= 藏人用的界面，不挡机器对接。
+- **进入方式＝敲门种票**（不是把前缀挂进每个 URL——那要改 OAuth redirect_uri/BASE_URL/静态引用/所有 location.href，风险大且与对外端点冲突）：访问 `/<前缀>` → 种一枚 HMAC 签名门票 cookie（绑定前缀+`SESSION_SECRET`）→ 之后用正常绝对路径即可。换/随机前缀 → 旧票失效全体重敲；**设前缀的那次 API 响应给当前管理员补新票**，不会把自己锁外面。进入后地址栏是正常路径（不是一直带 `/419198`）——这是与「字面挂载」的唯一差别，已在交付说明里讲清。
+- **新文件 `server/gate.js`**（纯逻辑，24 项单测）：`normPrefix`/`validPrefix`（1~64 位字母数字 _-）/`randomPrefix`（纯数字便于口述）/`cookieToken`（HMAC-SHA256，密钥 SESSION_SECRET||JWT_SECRET）/`decide(path,cookie,prefix)`→`exempt|pass|block`/`stripUrl`/`cookieHeader`/`notFoundHtml`（通用 404 不暴露有门禁）。`EXEMPT=['/.well-known/','/oauth/','/auth/','/fed/','/api/v1/','/api/public/','/api/mdm/','/api/print/']`。
+- **`index.js`**：门禁中间件（在安装守卫**之前**，最早）——`ACCESS_PREFIX` 空＝不启用；否则 decide → exempt/block(404)/pass(种票+`req.url=stripUrl` 剥前缀让下游路由看到正常路径)。⚠️ 剥前缀靠改 `req.url`，express 的 `req.path` getter 会据新 url 重算（parseurl 检测 url 变化重解析）。**端口关闭**：`app.listen(PORT, ACCESS_PREFIX_CLOSED==='1' ? '127.0.0.1' : '0.0.0.0')`——绑本机＝外部完全不可达，恢复靠 SSH 改库 `ACCESS_PREFIX_CLOSED=0` 重启（启动时读，面板改需重启生效）。
+- **`api.js`**（`requireAdmin(1)` 超管）：`GET /admin/access-gate`（状态+敲门地址）、`PUT /admin/access-gate {prefix}`（空=关；写 env+process.env **立即生效**；非空时响应 `Set-Cookie` 补票防锁死）、`PUT /admin/access-gate/port {closed}`（写 ACCESS_PREFIX_CLOSED，提示重启+SSH 恢复口径）。
+- **`dashboard.html`**：`adm-about`（关于页）加「访问控制」卡（**仅超管**显示，同 about-data-card 套路）：状态+敲门地址、前缀输入+随机生成、开启/更新/关闭、端口关闭勾选（强提示+SSH 恢复 SQL）。函数 `loadAccessGate/renderAccessGate/randomizeGatePrefix/saveAccessGate/disableGate/toggleGatePort`。init.js ENV_KEYS + README（访问控制小节 + SSH 恢复命令）同步。
+- ⚠️ 测试：`gate.js` 24 项单测（归一/合法性/敲门/伪造票/换前缀旧票失效/9 个机器端点 exempt/stripUrl/cookieHeader）+ 中间件接线 mock 9 项（block→404 不 next、exempt→next、敲门→种票+剥、持票→不再种票、https 带 Secure、功能关直接 next）全过；server 全量 `node --check` + dashboard/setup 内联 JS 解析通过；dev 浏览器实测访问控制卡两态渲染（未开启→开启门禁按钮 / 已开启→敲门地址+关闭门禁+端口开关）+ 随机生成 6 位数字。真实 express 集成（req.url 剥前缀后下游 routing）本机无 express 未端到端跑，靠 gate 单测 + 中间件 mock + express `req.path` 标准行为覆盖。
+- ⚠️ **门禁开启时的已知影响**（文档已注明）：域名验证文件（根路径 `/WW_verify_*.txt`）会被门禁 404——需在开门禁前完成第三方域名验证；`authorize.html`（OIDC 同意页静态文件）走 `/oauth/authorize` 流程时若用户无票可能 404（外部发起登录的同意页），当前 EXEMPT 未含该静态文件——若有外部 OIDC 应用用到同意页，暂不要开门禁，或后续把 `/authorize.html` 加进 EXEMPT。
 
 ## v3.5.133 自托管友好：密钥首启自动生成 + 向导可填 + BASE_URL 按请求域名 + 默认端口 11451 + 文档去 Zeabur 中心化（用户反馈）
 
