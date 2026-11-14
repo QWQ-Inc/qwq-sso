@@ -1349,6 +1349,29 @@ const plugins = require('./plugins');
 router.get('/admin/plugins', requireAdmin(1), (req, res) => {
   res.json({ success: true, plugins: plugins.list(), env_enabled: plugins.envEnabled(), hooks: plugins.HOOKS });
 });
+router.get('/admin/plugins/catalog', requireAdmin(1), (req, res) => {   // 内置插件市场（必须在 /:id 之前定义）
+  res.json({ success: true, catalog: plugins.catalog() });
+});
+router.get('/admin/plugins/panels', requireAdmin(1), (req, res) => {    // 插件注入的管理面板清单
+  res.json({ success: true, panels: plugins.panelList() });
+});
+router.post('/admin/plugins/import', requireAdmin(1), async (req, res) => {
+  // 从 URL 抓取插件源码返回供管理员在安装弹窗里审阅（不自动安装，避免盲装 / SSRF-to-action）
+  const url = String((req.body && req.body.url) || '').trim();
+  if (!/^https:\/\//i.test(url)) return res.status(400).json({ error: '只支持 https URL' });
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return res.status(400).json({ error: '拉取失败：HTTP ' + r.status });
+    const text = await r.text();
+    if (text.length > 512 * 1024) return res.status(400).json({ error: '内容过大（上限 512KB）' });
+    res.json({ success: true, source: text });
+  } catch (e) { res.status(400).json({ error: '拉取失败：' + (e.message || e) }); }
+});
+router.get('/admin/plugins/:id/panel', requireAdmin(1), (req, res) => {
+  const html = plugins.renderPanel(req.params.id, { req, admin: true });
+  if (html == null) return res.status(404).json({ error: '面板不存在' });
+  res.json({ success: true, html });
+});
 router.get('/admin/plugins/:id', requireAdmin(1), (req, res) => {
   const p = plugins.getView(req.params.id);
   if (!p) return res.status(404).json({ error: '插件不存在' });

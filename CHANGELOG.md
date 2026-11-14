@@ -4,6 +4,15 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.136 — 插件系统 v2：第三方登录钩子 + 插件注册上游 OIDC 提供方 + 注入管理面板 + 插件市场
+
+- **第三方 OAuth 登录钩子**：微信/飞书等第三方登录成功也触发 `login.success` / `login.token`（2FA 用户的最终签发点暂未接）。
+- **插件注册全新上游 OIDC/OAuth 登录提供方**：插件 `sso.authProvider(key, {...})` 即可接入任意标准 OIDC/OAuth2 上游 IdP；登录页出现「其它登录方式」按钮，用户点按走通用授权码流（`/auth/ext/<key>` → 上游授权 → 回调建号/绑定/登录）。
+- **插件注入管理端面板**：插件 `sso.adminPanel({title, render})`，左侧菜单多一项，面板 HTML 由插件服务端生成。
+- **插件市场**：内置 5 个示例插件一键安装（改 OIDC 声明 / 登录 Webhook / 自定义落地页 / 通用 OIDC 登录提供方 / 示例管理面板）；支持从 https URL 导入源码审阅后安装。
+- 🐛 修 v3.5.135 的安装崩溃：`validate` 的临时注册表漏了 authProviders/panels，装 auth-provider / 面板类插件会 TypeError。
+- ⚠️ 测试：引擎 16 项单测（authProvider/mapUser/面板渲染/市场/杀手锏）+ 全量语法 + dev 浏览器实测登录页按钮 / 市场 / 面板注入。
+
 ## v3.5.135 — 插件系统 v1：管理端导入模块、注册钩子、扩展 / 修改已有行为
 
 - 管理端「插件」页（仅超管）可导入一段插件代码，**热加载**后注册钩子，改写 / 扩展系统行为：改写 OIDC 声明（`oidc.claims`）、登录副作用与改写 SSO 令牌（`login.success` / `login.token`）、注册自定义页面 / 接口（`/ext/<插件id>/*`，比如自定义跳转页）。改源码 / 配置 / 启停都即时生效，无需重启。

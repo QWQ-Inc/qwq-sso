@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.135**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.136**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.136 插件系统 v2：第三方 OAuth 登录钩子 + 插件注册上游 OIDC 提供方 + 注入管理面板 + 插件市场（用户反馈）
+
+三级版本。承接 v3.5.135，用户「全做完得了」——把之前列的四个后续项一次接完。
+- **① 第三方 OAuth 登录钩子**：`oauth.js loginSuccess` 的非 2FA 完成点加 `runAction('login.success', {user, method:'第三方 OAuth', ip, req})` + `runFilter('login.token', payload, ctx)`（与 api.js finishLogin 对齐）。⚠️ 2FA 用户的最终签发在 `/2fa/login-verify`，那条路暂未接（密码/第三方开 2FA 的用户登录不触发 login.success，已在 PLUGINS.md 标注为已知缺口）。
+- **② 插件注册全新上游 OIDC/OAuth 登录提供方**：插件 `sso.authProvider(key, {authorizeUrl,tokenUrl,userinfoUrl,clientId,clientSecret,scope,mapUser,[exchange],[userinfo],[extraAuthParams]})` 注册；`oauth.js` 加**通用授权码流驱动** `GET /auth/ext/:key`（存 state=`ext:<key>` → 拼 authorize URL 跳转）+ `GET /auth/ext/:key/callback`（验 state → 换 token[默认标准 OAuth2 POST / spec.exchange] → 取 userinfo[userinfoUrl 带 Bearer / spec.userinfo / 回落解 id_token] → spec.mapUser → `findOrCreate({provider:'ext:'+key,...})` → `loginSuccess`）。复用既有 `findOrCreate`（provider 用 `ext:<key>`，与多主体 `platform:inst` 同构，user_oauth 无需改表）+ `loginSuccess`（含 2FA 门 / next 回跳 / 封存检查）。⚠️ `/auth/*` 在访问前缀门 gate.EXEMPT 里，登录可达。`reqCtx.run(req)`（oauth.js L31 的 router.use）覆盖 /auth/ext/*，所以 findOrCreate 的 bind/session 正常。公开 `GET /auth/ext-list` 供登录页列按钮。`login.html` 平台列表下加「其它登录方式」区（`loadExtLogins` 拉 ext-list，渲染 .platform-btn → `location=/auth/ext/<key>`），错误码 ext_failed/ext_state/ext_nocode 文案已加。
+- **③ 插件注入管理端 UI**：插件 `sso.adminPanel({title, icon, render(ctx)})`——`render` 服务端返回 HTML 字符串。`api.js` 加 `GET /admin/plugins/panels`（清单）+ `GET /admin/plugins/:id/panel`（渲染 HTML）。`dashboard.html`：`updateRestrictedNavItems` 里（超管）`loadPluginPanelsNav()` 往 `#nav-plugin-panels` 注入菜单项 → `openPluginPanel(id,title)` → `goto('plugin-panel')` → `renderPluginPanel()` 拉 `/:id/panel` innerHTML 进 `#page-plugin-panel`（`plugin-panel` 加入 SUPERADMIN_ONLY + PAGE 标题映射）。⚠️ 面板 HTML 由插件服务端生成，innerHTML 注入（同全权信任模型，XSS 是插件作者责任）。
+- **④ 插件市场**：`plugins.js` 内置 `CATALOG`（5 个示例插件，每个演示一类能力：claims-extra / login-webhook / landing-page / generic-oidc / admin-panel-demo，各带默认 config + source）。`api.js` 加 `GET /admin/plugins/catalog`（必须定义在 `/:id` 之前，否则 `:id='catalog'`）、`POST /admin/plugins/import`（**从 https URL 抓源码返回供审阅，不自动安装**，避免盲装 + SSRF-to-action；仅 https、≤512KB）。前端插件页加「插件市场」卡（一键安装 / 查看改后装）+「从 URL 导入」按钮。
+- 🐛 **本版修到一个 v3.5.135 的潜在崩溃**：`validate()`（install 时校验）用的 throwaway 注册表只含 filters/actions/routes，**漏了 authProviders/panels**——任何调 `sso.authProvider`/`sso.adminPanel` 的插件一安装就 `TypeError: Cannot set properties of undefined`。已补齐 throwaway 注册表与 reload 同构。
+- `plugins.js`：reg + reload 的注册表结构加 `authProviders:{}`/`panels:[]`；`makeSso` 加 `authProvider`/`adminPanel`；模块导出加 `authProvider/authProviderList/panelList/renderPanel/catalog`。
+- ⚠️ 测试：`plugin2-test.cjs`（真 plugins.js + node:sqlite 注入 db）16 项全过：catalog 含 generic-oidc/admin-panel-demo、装 generic-oidc 注册 authProvider+mapUser 映射与回退字段、配置不全不注册、停用/删除消失、adminPanel 注册+renderPanel 读真实用户数+未知 id null+render 抛错返回错误 HTML 不崩、claims-extra 合并声明、PLUGINS_ENABLED=off 全禁。server 全量 `node --check` + dashboard/login 内联 JS 解析通过。dev 浏览器实测：登录页「其它登录方式」按钮（acme/okta → /auth/ext/key）、插件市场渲染+一键安装入列+查看改后装开弹窗+从 URL 导入、面板菜单注入→打开→渲染服务端 HTML+标题更新。
+- ⚠️ 真实 OAuth 上游登录链路（axios + 真实 IdP + findOrCreate 落库）本机无 express/better-sqlite3 未端到端；靠引擎单测（plugin-side authProvider/mapUser）+ `/auth/ext/*` 为标准授权码流薄封装（复用 v3.5.x 已测的 findOrCreate/loginSuccess/genState）覆盖。**剩余可接**：2FA 完成点（/2fa/login-verify）的 login.success、更多钩子点（授权同意、建号、改密）、插件多文件 / npm 依赖、真正的远程市场索引。
 
 ## v3.5.135 插件系统 v1：管理端导入模块、注册钩子、扩展/修改已有行为（用户反馈）
 

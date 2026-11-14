@@ -16,6 +16,7 @@ const { AsyncLocalStorage } = require('async_hooks');
 const { v4: uuidv4 } = require('uuid');
 const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, state: stateStore, logs } = require('./db');
 const userMerge = require('./user-merge');
+const plugins = require('./plugins');   // 插件钩子 + 通用上游登录提供方（v3.5.136）
 const dirsyncWecom = require('./dirsync-wecom');
 const dirsyncFeishu = require('./dirsync-feishu');
 const { audit } = require('./audit');
@@ -338,7 +339,11 @@ function loginSuccess(res, user) {
     return res.redirect(`/login.html?${q}`);
   }
 
-  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level });
+  // 插件钩子（v3.5.136）：第三方登录成功副作用 + 改写 SSO 令牌负载
+  try { plugins.runAction('login.success', { user, method: '第三方 OAuth', ip: creq?.ip, req: creq }); } catch (_) {}
+  let _payload = { uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level };
+  try { const p = plugins.runFilter('login.token', _payload, { user, method: '第三方 OAuth' }); if (p && typeof p === 'object') _payload = p; } catch (_) {}
+  const token = signToken(_payload);
   // 中间页拿 token 存进 localStorage 后再跳到 next；有 next 时它会跳过倒计时直接回授权页
   const q = new URLSearchParams({ token, name: user.name || '' });
   if (next) q.set('next', next);
@@ -1003,6 +1008,65 @@ router.get('/qq/callback', async (req, res) => {
 // ── CSDN OAuth（暂不支持标准 OAuth，预留入口）──
 router.get('/csdn', (req, res) => {
   res.redirect('/login.html?error=csdn_not_configured');
+});
+
+// ── 插件注册的通用上游登录提供方（v3.5.136）──
+// 插件用 sso.authProvider(key, {authorizeUrl,tokenUrl,userinfoUrl,clientId,clientSecret,scope,mapUser}) 注册；
+// 这里用标准 OAuth2 授权码流通用驱动：/auth/ext/<key> → 上游授权 → /auth/ext/<key>/callback → 建号/绑定/登录。
+// 复用 findOrCreate（provider='ext:<key>'，与多主体的 platform:inst 同构）+ loginSuccess（含 2FA 门 / next 回跳）。
+function extBase(req) { return (process.env.BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, ''); }
+router.get('/ext-list', (req, res) => { res.json({ methods: plugins.authProviderList() }); });
+router.get('/ext/:key', (req, res) => {
+  const spec = plugins.authProvider(req.params.key);
+  if (!spec || !spec.authorizeUrl || !spec.clientId) return res.status(404).send('未知登录方式');
+  const state = genState();
+  saveState(state, 'ext:' + req.params.key);
+  const redirectUri = `${extBase(req)}/auth/ext/${req.params.key}/callback`;
+  let u; try { u = new URL(spec.authorizeUrl); } catch (_) { return res.status(500).send('authorize_url 无效'); }
+  u.searchParams.set('client_id', spec.clientId);
+  u.searchParams.set('redirect_uri', redirectUri);
+  u.searchParams.set('response_type', 'code');
+  if (spec.scope) u.searchParams.set('scope', spec.scope);
+  u.searchParams.set('state', state);
+  if (spec.extraAuthParams && typeof spec.extraAuthParams === 'object') for (const k of Object.keys(spec.extraAuthParams)) u.searchParams.set(k, spec.extraAuthParams[k]);
+  res.redirect(u.toString());
+});
+router.get('/ext/:key/callback', async (req, res) => {
+  const key = req.params.key;
+  const spec = plugins.authProvider(key);
+  if (!spec) return res.status(404).send('未知登录方式');
+  const st = consumeState(req.query.state);
+  if (!st || st.provider !== 'ext:' + key) return res.redirect('/login.html?error=ext_state');
+  const code = req.query.code;
+  if (!code) return res.redirect('/login.html?error=ext_nocode');
+  try {
+    const redirectUri = `${extBase(req)}/auth/ext/${key}/callback`;
+    // 1) 换令牌（spec.exchange 自定义，或默认标准 OAuth2 token POST）
+    let tokens;
+    if (typeof spec.exchange === 'function') tokens = await spec.exchange(code, { redirectUri, req });
+    else {
+      const r = await axios.post(spec.tokenUrl, new URLSearchParams({
+        grant_type: 'authorization_code', code, redirect_uri: redirectUri,
+        client_id: spec.clientId, client_secret: spec.clientSecret || '',
+      }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, timeout: 15000 });
+      tokens = r.data;
+    }
+    const accessToken = tokens.access_token || tokens.accessToken;
+    // 2) 取用户信息（spec.userinfo 自定义 / userinfoUrl 带 Bearer / 回落解 id_token）
+    let raw;
+    if (typeof spec.userinfo === 'function') raw = await spec.userinfo(tokens, { req });
+    else if (spec.userinfoUrl) { const r = await axios.get(spec.userinfoUrl, { headers: { Authorization: 'Bearer ' + accessToken }, timeout: 15000 }); raw = r.data; }
+    else if (tokens.id_token) { raw = JSON.parse(Buffer.from(String(tokens.id_token).split('.')[1], 'base64').toString('utf8')); }
+    else throw new Error('无法获取用户信息（未配置 userinfo_url 且无 id_token）');
+    // 3) 映射 → 建号 / 绑定 → 登录
+    const mapped = typeof spec.mapUser === 'function' ? spec.mapUser(raw) : { open_id: String(raw.sub || raw.id || ''), email: raw.email || null, name: raw.name || raw.email || null };
+    if (!mapped || !mapped.open_id) throw new Error('映射后缺少用户标识（open_id）');
+    const user = findOrCreate({ provider: 'ext:' + key, openId: String(mapped.open_id), name: mapped.name || ('用户' + String(mapped.open_id).slice(0, 6)), email: mapped.email || null, avatar: mapped.avatar || null });
+    return loginSuccess(res, user);
+  } catch (e) {
+    console.error('[ext-auth:' + key + ']', (e.response && e.response.data) || e.message);
+    return res.redirect('/login.html?error=ext_failed');
+  }
 });
 
 module.exports = router;

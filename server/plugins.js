@@ -60,7 +60,7 @@ const HOOKS = {
 };
 
 // 运行时注册表（reload 时整体替换，避免半更新态）
-let reg = { filters: {}, actions: {}, routes: [], loaded: [] };
+let reg = { filters: {}, actions: {}, routes: [], loaded: [], authProviders: {}, panels: [] };
 
 function killed() {
   const v = String(process.env.PLUGINS_ENABLED == null ? '' : process.env.PLUGINS_ENABLED).trim().toLowerCase();
@@ -81,6 +81,18 @@ function makeSso(row, target) {
       const pp = '/' + String(p || '').replace(/^\/+/, '');
       target.routes.push({ pluginId: row.id, method: m, path: `/ext/${row.id}${pp}`, handler: fn });
     },
+    // 注册一个上游登录提供方（通用 OAuth2 / OIDC 授权码流，由 oauth.js 的 /auth/ext/<key> 通用路由驱动）
+    authProvider(key, spec) {
+      const k = String(key || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+      if (!k || !spec || typeof spec !== 'object') return;
+      target.authProviders[k] = Object.assign({}, spec, { pluginId: row.id });
+    },
+    // 注册一个管理端面板（render(ctx) 服务端返回 HTML 字符串；管理端注入一个菜单项 + 页面展示）
+    adminPanel(spec) {
+      if (!spec || typeof spec.render !== 'function') return;
+      const n = target.panels.filter(p => p.pluginId === row.id).length;
+      target.panels.push({ id: row.id + (n ? '-' + n : ''), pluginId: row.id, title: spec.title || row.name || row.id, icon: spec.icon || 'bolt', render: spec.render });
+    },
     log: (...a) => console.log(`[plugin:${row.id}]`, ...a),
     audit: (type, detail) => { try { require('./audit').audit('plugin.' + String(type), { actor: 'plugin:' + row.id, detail: detail || {} }); } catch (_) {} },
     env: (k) => process.env[k],
@@ -100,12 +112,12 @@ function compile(row, target) {
   return { name: (mod && mod.name) || row.name || row.id, version: (mod && mod.version) || row.version || '' };
 }
 
-// 仅校验 + 取 meta（不污染全局注册表）
-function validate(row) { return compile(row, { filters: {}, actions: {}, routes: [] }); }
+// 仅校验 + 取 meta（不污染全局注册表）。throwaway 注册表要和 reload 用的同构，否则 register 里调 authProvider/adminPanel 会炸。
+function validate(row) { return compile(row, { filters: {}, actions: {}, routes: [], authProviders: {}, panels: [] }); }
 
 // 重新加载全部启用插件（安装 / 启停 / 改配置后调用；也在模块首次 require 时调用）
 function reload() {
-  const next = { filters: {}, actions: {}, routes: [], loaded: [] };
+  const next = { filters: {}, actions: {}, routes: [], loaded: [], authProviders: {}, panels: [] };
   if (killed()) {
     console.log('[plugins] PLUGINS_ENABLED=off，已跳过全部插件');
   } else {
@@ -199,10 +211,46 @@ function remove(id) {
   return true;
 }
 
-// 模块首次 require 时即加载启用插件（provider.js / api.js require 本模块 → 此时已加载）
+// ── 插件注册的登录提供方 / 管理面板（oauth.js / api.js 查询用）──
+function authProvider(key) { return reg.authProviders[key]; }
+function authProviderList() { return Object.keys(reg.authProviders).map(k => ({ key: k, label: reg.authProviders[k].label || k, pluginId: reg.authProviders[k].pluginId })); }
+function panelList() { return reg.panels.map(p => ({ id: p.id, pluginId: p.pluginId, title: p.title, icon: p.icon })); }
+function renderPanel(id, ctx) {
+  const p = reg.panels.find(x => x.id === id); if (!p) return null;
+  try { return String(p.render(ctx || {})); }
+  catch (e) { return '<div style="color:#d33;padding:12px;">面板渲染出错：' + String((e && e.message) || e) + '</div>'; }
+}
+
+// ── 内置插件市场（一键安装的示例插件；每个也演示一类钩子）──
+const CATALOG = [
+  { key: 'claims-extra', name: 'OIDC 声明增补', version: '1.0.0',
+    desc: '给每个 OIDC 登录（id_token / userinfo）合并一组固定声明——部门、组织、自定义字段等，内容来自配置。',
+    config: { claims: { dept: '研发', org: '示例公司' } },
+    source: "module.exports = {\n  name: 'OIDC 声明增补', version: '1.0.0',\n  register(sso) {\n    sso.filter('oidc.claims', (claims) => {\n      Object.assign(claims, (sso.config && sso.config.claims) || {});\n      return claims;\n    });\n  }\n};" },
+  { key: 'login-webhook', name: '登录 Webhook', version: '1.0.0',
+    desc: '用户密码 / 验证码登录成功后，异步 POST 一条 JSON 到你配置的 URL（对接飞书机器人 / 自建系统等）。',
+    config: { url: '' },
+    source: "module.exports = {\n  name: '登录 Webhook', version: '1.0.0',\n  register(sso) {\n    sso.action('login.success', (ctx) => {\n      const url = sso.config && sso.config.url; if (!url) return;\n      const body = JSON.stringify({ uid: ctx.user.id, name: ctx.user.name, method: ctx.method, ip: ctx.ip, at: new Date().toISOString() });\n      try { fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {}); } catch (_) {}\n    });\n  }\n};" },
+  { key: 'landing-page', name: '自定义落地页', version: '1.0.0',
+    desc: '在 /ext/<本插件id>/home 提供一个自定义 HTML 页面，可作登录后落地页 / 跳转页。标题与正文来自配置。',
+    config: { title: '欢迎使用', body: '<p>这是由插件提供的自定义页面。</p>' },
+    source: "module.exports = {\n  name: '自定义落地页', version: '1.0.0',\n  register(sso) {\n    sso.route('get', '/home', (req, res) => {\n      const t = (sso.config && sso.config.title) || '欢迎';\n      const b = (sso.config && sso.config.body) || '';\n      res.type('html').send('<!doctype html><meta charset=utf-8><title>' + t + '</title><body style=\"font-family:system-ui;max-width:640px;margin:60px auto;padding:0 16px\"><h1>' + t + '</h1>' + b + '</body>');\n    });\n  }\n};" },
+  { key: 'generic-oidc', name: '通用 OIDC 登录提供方', version: '1.0.0',
+    desc: '按配置接入任意标准 OIDC / OAuth2 上游 IdP（authorize / token / userinfo）。配好后登录页会出现一个登录按钮，用户即可用该 IdP 登录本系统。',
+    config: { key: 'myidp', label: '我的 IdP', authorize_url: '', token_url: '', userinfo_url: '', client_id: '', client_secret: '', scope: 'openid email profile' },
+    source: "module.exports = {\n  name: '通用 OIDC 登录提供方', version: '1.0.0',\n  register(sso) {\n    const c = sso.config || {};\n    if (!c.authorize_url || !c.token_url || !c.client_id) { sso.log('未配置完整(authorize_url/token_url/client_id)，跳过注册'); return; }\n    sso.authProvider(c.key || 'oidc', {\n      label: c.label || '登录',\n      authorizeUrl: c.authorize_url, tokenUrl: c.token_url, userinfoUrl: c.userinfo_url,\n      clientId: c.client_id, clientSecret: c.client_secret, scope: c.scope || 'openid email profile',\n      mapUser(raw) {\n        return {\n          open_id: String(raw.sub || raw.id || raw.user_id || ''),\n          email: raw.email || null,\n          name: raw.name || raw.nickname || raw.preferred_username || raw.email || null,\n          avatar: raw.picture || raw.avatar || null,\n        };\n      },\n    });\n  }\n};" },
+  { key: 'admin-panel-demo', name: '示例管理面板', version: '1.0.0',
+    desc: '在管理端注入一个自定义面板（左侧菜单会多一项），面板 HTML 由插件在服务端生成——演示如何用插件扩展后台界面。',
+    config: {},
+    source: "module.exports = {\n  name: '示例管理面板', version: '1.0.0',\n  register(sso) {\n    sso.adminPanel({ title: '示例面板', icon: 'bolt', render(ctx) {\n      let n = 0; try { n = sso.db.prepare('SELECT COUNT(*) c FROM users').get().c; } catch (_) {}\n      return '<h3 style=\"margin-top:0\">示例插件面板</h3><p>当前用户数：<b>' + n + '</b></p>'\n        + '<p style=\"color:#666\">这个面板的 HTML 由插件在服务端 render() 生成；可在 /ext/' + sso.id + '/* 配套接口做交互。</p>';\n    } });\n  }\n};" },
+];
+function catalog() { return CATALOG.map(c => ({ key: c.key, name: c.name, version: c.version, desc: c.desc, config: c.config || {}, source: c.source })); }
+
+// 模块首次 require 时即加载启用插件（provider.js / api.js / oauth.js require 本模块 → 此时已加载）
 reload();
 
 module.exports = {
   HOOKS, envEnabled, reload, runFilter, runAction, routeMiddleware,
   list, getView, install, update, setEnabled, remove,
+  authProvider, authProviderList, panelList, renderPanel, catalog,
 };

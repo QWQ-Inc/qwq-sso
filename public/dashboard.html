@@ -1075,6 +1075,14 @@ function _devApi(method, path, body) {
     window._devPlugins = window._devPlugins || [{ id:'demo01', name:'示例插件', version:'1.0.0', enabled:true, active:true, error:'', config:{dept:'研发'}, created_at:new Date().toISOString(), updated_at:new Date().toISOString(), source:"module.exports={ name:'示例插件', version:'1.0.0', register(sso){\n  sso.filter('oidc.claims',(c)=>{ c.dept=sso.config.dept; return c; });\n} };" }];
     const HOOKS = { filters:[{name:'oidc.claims',sig:'(claims,{user,scope})=>claims',desc:'改写 OIDC 声明'},{name:'login.token',sig:'(payload,{user,method})=>payload',desc:'改写登录令牌负载'}], actions:[{name:'login.success',sig:'({user,method,ip,req})=>void',desc:'登录成功副作用'}], routes:'插件可注册 /ext/<插件id>/* 的自定义页面 / 接口' };
     const idm = path.match(/^\/admin\/plugins\/([^\/]+)/);
+    if (path === '/admin/plugins/catalog' && method === 'GET') return ok({ success:true, catalog:[
+      { key:'claims-extra', name:'OIDC 声明增补', version:'1.0.0', desc:'给每个 OIDC 登录合并一组固定声明。', config:{claims:{dept:'研发'}}, source:"module.exports={name:'OIDC 声明增补',version:'1.0.0',register(sso){ sso.filter('oidc.claims',c=>{Object.assign(c,(sso.config&&sso.config.claims)||{});return c;}); }};" },
+      { key:'generic-oidc', name:'通用 OIDC 登录提供方', version:'1.0.0', desc:'按配置接入任意上游 IdP，登录页出现按钮。', config:{key:'myidp',label:'我的 IdP',authorize_url:'',token_url:'',client_id:''}, source:"module.exports={name:'通用 OIDC 登录提供方',register(sso){}};" },
+      { key:'admin-panel-demo', name:'示例管理面板', version:'1.0.0', desc:'在管理端注入一个自定义面板。', config:{}, source:"module.exports={name:'示例管理面板',register(sso){ sso.adminPanel({title:'示例面板',render(){return '<h3>示例</h3>';}}); }};" },
+    ] });
+    if (path === '/admin/plugins/panels' && method === 'GET') return ok({ success:true, panels:[{ id:'demo01', pluginId:'demo01', title:'示例面板', icon:'bolt' }] });
+    if (path === '/admin/plugins/import' && method === 'POST') return ok({ success:true, source:"module.exports={ name:'来自URL', register(sso){} };" });
+    if (idm && path.endsWith('/panel') && method==='GET') return ok({ success:true, html:'<h3>示例插件面板</h3><p>当前用户数：<b>42</b></p>' });
     if (path === '/admin/plugins' && method === 'GET') return ok({ success:true, plugins: window._devPlugins.map(p=>({ ...p, source:undefined })), env_enabled:true, hooks:HOOKS });
     if (path === '/admin/plugins' && method === 'POST') { const p={ id:'p'+Date.now().toString(36), name:'新插件', version:'0.1.0', enabled:body.enabled!==false, active:body.enabled!==false, error:'', config:body.config||{}, source:body.source, created_at:new Date().toISOString(), updated_at:new Date().toISOString() }; window._devPlugins.push(p); return ok({ success:true, plugin:p }); }
     if (idm && path.endsWith('/toggle') && method==='POST'){ const p=window._devPlugins.find(x=>x.id===idm[1]); if(p){ p.enabled=!!body.enabled; p.active=p.enabled; } return ok({ success:true, plugin:p }); }
@@ -1498,6 +1506,7 @@ async function loadMe() {
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 2 4 11h5l-1 7 7-9h-5z"/></svg>
         插件
       </button>
+      <div id="nav-plugin-panels"></div>
     </div>
 
     </div><!-- /nav-scroll -->
@@ -3115,7 +3124,10 @@ async function loadMe() {
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <h3><span data-ic="bolt"></span> 插件</h3>
-            <button class="btn primary" onclick="openPluginInstall()">+ 安装插件</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn" onclick="importPluginUrl()">从 URL 导入</button>
+              <button class="btn primary" onclick="openPluginInstall()">+ 安装插件</button>
+            </div>
           </div>
           <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
             导入一段插件代码即可扩展 / 修改系统行为——改写 OIDC 声明、登录副作用、注册自定义页面 / 接口（<code>/ext/&lt;插件id&gt;/*</code>，比如自定义跳转页）等。热加载，无需改源码、无需重启。
@@ -3127,6 +3139,17 @@ async function loadMe() {
             </details>
           </div>
         </div>
+        <div class="card">
+          <div class="card-header"><h3>插件市场（内置示例）</h3></div>
+          <div class="card-body" style="font-size:13px;color:var(--txd);">
+            一键安装内置示例插件（每个演示一类能力：改 OIDC 声明 / 登录 Webhook / 自定义落地页 / 通用 OIDC 登录提供方 / 管理面板）。装好后到上方列表启停 / 改配置。
+            <div id="plugins-catalog" style="margin-top:12px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
+          </div>
+        </div>
+      </div>
+      <!-- 插件面板（插件注入的管理界面）-->
+      <div class="page" id="page-plugin-panel">
+        <div class="card"><div class="card-body" id="plugin-panel-body" style="font-size:13px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div></div>
       </div>
       <!-- 插件 安装 / 编辑 弹窗 -->
       <div class="modal-mask" id="plugin-modal">
@@ -3735,7 +3758,7 @@ let checkedIn = false;
 let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
-const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups', 'adm-plugins'];
+const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups', 'adm-plugins', 'plugin-panel'];
 // 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
 const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
 // 组织管理员（v3.5.76）可进的管理页：组织维度的菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
@@ -3978,6 +4001,8 @@ function updateRestrictedNavItems() {
       if (!ORGADMIN_PAGES.includes(page)) b.style.display = 'none';
     });
   }
+  // 插件注入的管理面板（v3.5.136）：超管才加载，往导航里注入面板菜单项
+  if (typeof loadPluginPanelsNav === 'function') loadPluginPanelsNav();
 }
 
 function goto(page) {
@@ -4042,7 +4067,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','devices':'我的设备','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新','adm-plugins':'插件'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新','adm-plugins':'插件','plugin-panel':'插件面板'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -4084,6 +4109,7 @@ function goto(page) {
   if(page === 'adm-verify') loadVerifyAdmin();
   if(page === 'adm-about') loadVersionInfo();
   if(page === 'adm-plugins') loadPlugins();
+  if(page === 'plugin-panel') renderPluginPanel();
 
   // 记住当前菜单，刷新后由 bootToLastPage 恢复
   try { localStorage.setItem('sso_last_page', page); } catch (_) {}
@@ -10450,6 +10476,68 @@ async function loadPlugins() {
   const off = document.getElementById('plugins-envoff'); if (off) off.style.display = data.env_enabled === false ? '' : 'none';
   renderPlugins();
   renderPluginHooks(data.hooks);
+  loadPluginPanelsNav();
+  const cat = await api('GET', '/admin/plugins/catalog');
+  if (cat.ok) { _pluginCatalog = cat.data.catalog || []; renderCatalog(); }
+}
+let _pluginCatalog = [];
+function renderCatalog() {
+  const box = document.getElementById('plugins-catalog'); if (!box) return;
+  if (!_pluginCatalog.length) { box.innerHTML = emptyState('暂无内置插件', 'bolt'); return; }
+  box.innerHTML = _pluginCatalog.map((c, i) => `<div style="border:1px solid var(--bd);border-radius:4px;padding:10px 12px;margin-bottom:8px;background:var(--sf);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:220px;"><b>${esc(c.name)}</b> <span style="color:var(--txd);font-size:12px;">v${esc(c.version)}</span><div style="font-size:12px;color:var(--txd);margin-top:3px;">${esc(c.desc)}</div></div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="reviewCatalog(${i})">查看 / 改后装</button>
+      <button class="btn primary" style="font-size:11px;padding:3px 10px;" onclick="installCatalog(${i})">一键安装</button>
+    </div>
+  </div>`).join('');
+}
+async function installCatalog(i) {
+  const c = _pluginCatalog[i]; if (!c) return;
+  const { ok, data } = await api('POST', '/admin/plugins', { source: c.source, config: c.config || {}, enabled: true });
+  if (!ok) return showToast((data && data.error) || '安装失败', 'err');
+  showToast('已安装：' + c.name, 'ok');
+  loadPlugins();
+}
+function reviewCatalog(i) {
+  const c = _pluginCatalog[i]; if (!c) return;
+  openPluginInstall();
+  document.getElementById('pl-title').textContent = '安装插件 · ' + c.name;
+  document.getElementById('pl-source').value = c.source;
+  document.getElementById('pl-config').value = JSON.stringify(c.config || {}, null, 2);
+}
+async function importPluginUrl() {
+  const url = await uiPrompt('从 URL 导入插件源码（https://…）。导入后会在安装弹窗里显示源码供你审阅、改配置，确认无误再安装：');
+  if (!url) return;
+  const { ok, data } = await api('POST', '/admin/plugins/import', { url: url.trim() });
+  if (!ok) return showToast((data && data.error) || '导入失败', 'err');
+  openPluginInstall();
+  document.getElementById('pl-title').textContent = '安装插件（来自 URL）';
+  document.getElementById('pl-source').value = data.source || '';
+}
+// ── 插件注入的管理面板（动态菜单 + 页面）──
+let _pluginPanels = [], _curPanel = null;
+async function loadPluginPanelsNav() {
+  const wrap = document.getElementById('nav-plugin-panels'); if (!wrap) return;
+  if (adminRole !== 'superadmin') { wrap.innerHTML = ''; return; }
+  const { ok, data } = await api('GET', '/admin/plugins/panels');
+  if (!ok) return;
+  _pluginPanels = data.panels || [];
+  wrap.innerHTML = _pluginPanels.map(p => `<button class="nav-item" onclick="openPluginPanel('${p.id}','${esc(p.title).replace(/'/g,'')}')">
+    <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="14" height="14" rx="1"/><path d="M3 8h14"/></svg>
+    ${esc(p.title)}</button>`).join('');
+}
+function openPluginPanel(id, title) {
+  _curPanel = { id, title };
+  goto('plugin-panel');
+}
+async function renderPluginPanel() {
+  const body = document.getElementById('plugin-panel-body'); if (!body) return;
+  if (!_curPanel) { body.innerHTML = emptyState('未选择面板'); return; }
+  const titleEl = document.getElementById('page-title'); if (titleEl) titleEl.textContent = _curPanel.title || '插件面板';
+  body.innerHTML = '<span class="ld"><span class="ld-spin"></span>加载中</span>';
+  const { ok, data } = await api('GET', '/admin/plugins/' + _curPanel.id + '/panel');
+  body.innerHTML = ok ? (data.html || '') : '<div style="color:var(--err);">面板加载失败</div>';
 }
 function renderPlugins() {
   const box = document.getElementById('plugins-box'); if (!box) return;
