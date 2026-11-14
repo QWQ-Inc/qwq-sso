@@ -350,7 +350,11 @@ function finishLogin(res, user, req, method, extra = {}) {
     return res.json({ success: true, twofa_required: true, twofa_token, app_approval });
   }
   logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method, ip: req.ip, ua });
-  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
+  // 插件钩子（v3.5.135）：登录成功副作用 + 改写 SSO 令牌负载
+  try { require('./plugins').runAction('login.success', { user, method, ip: req.ip, req }); } catch (_) {}
+  let _payload = { uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) };
+  try { const p = require('./plugins').runFilter('login.token', _payload, { user, method }); if (p && typeof p === 'object') _payload = p; } catch (_) {}
+  const token = signToken(_payload, { expiresIn: appExpiresIn(req) });
   return res.json({ success: true, token, user: safeUser(user), mustSetup2fa: mustSetup2fa(user), org, org_scoped: orgScoped });
 }
 
@@ -1339,6 +1343,43 @@ try {
     defaults.forEach(d => ins.run(uuidv4(), ...d));
   }
 } catch(_) {}
+
+// ── 插件系统（v3.5.135，仅超管 requireAdmin(1)）──
+const plugins = require('./plugins');
+router.get('/admin/plugins', requireAdmin(1), (req, res) => {
+  res.json({ success: true, plugins: plugins.list(), env_enabled: plugins.envEnabled(), hooks: plugins.HOOKS });
+});
+router.get('/admin/plugins/:id', requireAdmin(1), (req, res) => {
+  const p = plugins.getView(req.params.id);
+  if (!p) return res.status(404).json({ error: '插件不存在' });
+  res.json({ success: true, plugin: p });
+});
+router.post('/admin/plugins', requireAdmin(1), (req, res) => {
+  try {
+    const p = plugins.install({ source: req.body.source, enabled: req.body.enabled !== false, config: req.body.config });
+    audit('plugin.installed', { actor: actorOf(req), detail: { id: p.id, name: p.name, enabled: p.enabled } });
+    res.json({ success: true, plugin: p });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.patch('/admin/plugins/:id', requireAdmin(1), (req, res) => {
+  try {
+    const p = plugins.update(req.params.id, { source: req.body.source, config: req.body.config });
+    audit('plugin.updated', { actor: actorOf(req), detail: { id: p.id, name: p.name } });
+    res.json({ success: true, plugin: p });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.post('/admin/plugins/:id/toggle', requireAdmin(1), (req, res) => {
+  try {
+    const p = plugins.setEnabled(req.params.id, !!req.body.enabled);
+    audit(p.enabled ? 'plugin.enabled' : 'plugin.disabled', { actor: actorOf(req), detail: { id: p.id, name: p.name } });
+    res.json({ success: true, plugin: p });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.delete('/admin/plugins/:id', requireAdmin(1), (req, res) => {
+  const ok = plugins.remove(req.params.id);
+  if (ok) audit('plugin.removed', { actor: actorOf(req), detail: { id: req.params.id } });
+  res.json({ success: ok });
+});
 
 router.get('/admin/levels', requireAdmin(1), (req, res) => {
   const rows = db.prepare('SELECT * FROM user_levels ORDER BY grp, num').all();

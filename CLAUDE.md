@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.134**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.135**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,19 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.135 插件系统 v1：管理端导入模块、注册钩子、扩展/修改已有行为（用户反馈）
+
+三级版本。用户：「上线插件板块给管理端，按指定插件逻辑导入模块直接就能用，并可对已有功能生效修改（跳转页、不同 OIDC 服务商…）。自由发挥」。落地为 **WordPress 式钩子框架**——装一段插件代码即可热加载钩子，扩展 / 改写行为。
+- ⚠️ **信任模型（WordPress 式，改之前先懂）**：插件 = 超管亲自编写 / 审阅的 Node 代码，加载后在**主进程内以完整服务端权限运行**（可 require 任意模块、读写库）。与「超管本就能改 JWT_SECRET / 一键 git pull / 导出全库密钥」同一信任级——不扩大超管自身权限。没做 vm 沙箱（Node vm 不是真边界，不假装）。护栏：① 仅超管 requireAdmin(1) 可装/启停 ② 每插件 enable 开关 ③ register 与每个钩子逐个 try/catch——坏插件自动跳过+管理端显示错误、不崩主进程 ④ 杀手锏 `PLUGINS_ENABLED=off` 环境变量 + 重启 = 全禁用（SSH 恢复，同访问前缀门思路）。
+- **新文件 `server/plugins.js`**（自建表，像 oidc-keys.js 用 `CREATE TABLE IF NOT EXISTS`，不碰 db.js 迁移块）：表 `plugins(id,name,version,source,enabled,config,error,...)`。插件存库 → 落盘 `<DATA_DIR>/plugins/<id>.js` → `require`（reload 时 `delete require.cache` 再 require，热加载）。`compile(row,target)` 执行 `register(sso)` 注册进 target 注册表；`validate` 用 throwaway 注册表只校验+取 meta（**安装/改源码时 register 抛错=拒绝安装，fail-fast**）；`reload()` 构建新注册表再整体替换（避免半更新态；已装插件 reload 期 register 抛错→caught、标 error、active=false、其它插件照常）。`runFilter(hook,value,ctx)`（串联，每 fn 返回新值，错跳过）/`runAction(hook,ctx)`（副作用，错跳过）。`routeMiddleware()`（只接管 `/ext/*`，命中插件注册的 handler、Promise 包裹 catch；动态读 reg.routes，reload 后即时生效）。CRUD：install/update/setEnabled/remove 都在内部收口调 reload。模块首次 require 即 `reload()`。
+- **`sso` 对象**（传给 register）：`filter(hook,fn)`/`action(hook,fn)`/`route(method,path,fn)`（→ `/ext/<id>/path`）/`config`（本插件配置，热更新）/`db`/`audit(type,detail)`（写 `plugin.<type>` 存证，懒 require audit 避免循环依赖）/`log`/`env`。
+- **已接钩子点（v1）**：① filter `oidc.claims`（provider.js claimsFor 末尾 `runFilter`，改写 id_token/userinfo 声明）② filter `login.token` + action `login.success`（api.js finishLogin：改写 SSO 令牌负载 + 登录副作用；仅密码/验证码登录，第三方 OAuth 走 oauth.js 的 loginSuccess 暂不接）③ 插件路由 `/ext/*`（index.js 在 provider/static 之前 `app.use(plugins.routeMiddleware())`——自定义跳转页/回调/webhook）。⚠️ 门禁开启时 `/ext/*` 不在 gate.EXEMPT，需带票；对外公开的插件路由要么关门禁要么把 `/ext/` 加白名单。
+- **接口（api.js，requireAdmin(1) 超管）**：`GET /admin/plugins`（列表+env_enabled+hooks 文档）、`GET /admin/plugins/:id`（含 source）、`POST`（装）、`PATCH /:id`（改源码/配置）、`POST /:id/toggle`、`DELETE /:id`。审计 `plugin.installed/updated/enabled/disabled/removed`。init.js ENV_KEYS 加 `PLUGINS_ENABLED`。
+- **前端（dashboard.html）**：`adm-plugins` 页（加入 SUPERADMIN_ONLY）——插件列表（状态徽章 运行中/已启用·出错/已停用 + 启停/编辑/删除 + 错误显示 + `/ext/<id>/` 前缀提示）、安装/编辑弹窗（源码 textarea + 示例模板按钮 + 配置 JSON + 启用勾选）、可用钩子折叠速查。`loadPlugins/renderPlugins/renderPluginHooks/openPluginInstall/editPlugin/pluginTemplate/savePlugin/togglePlugin/delPlugin` + dev mock（`window._devPlugins`）。
+- **新文档 `PLUGINS.md`**：信任模型、sso API、钩子表、示例、热加载、排错。
+- ⚠️ 测试：`plugin-test.cjs`（node:sqlite 当 better-sqlite3 注入 `./db`，require 真 plugins.js）20 项全过：安装取 meta、filter 带 config+ctx 生效、未注册 hook 原样返回、action 触发、`/ext/<id>/x` 路由命中 / 未注册 /ext next / 非 /ext next、改配置即时生效、停用后不生效、语法错/缺 register/空源码安装拒绝、一个 filter 抛错被跳过其它仍生效、安装期 register 抛错拒绝安装、已装插件 reload 期 register 抛错 active=false+记 error、删除、PLUGINS_ENABLED=off 全禁用+清空恢复。server 全量 `node --check` + dashboard 内联 JS 解析通过。dev 浏览器实测插件页：列表/钩子速查渲染、安装弹窗+模板+保存入列、配置非法 JSON 拦截、启停。
+- ⚠️ 真实 HTTP 链路（express + better-sqlite3 落盘 require）本机无真依赖未端到端；靠引擎 20 项单测（真 plugins.js）+ 钩子点为薄 `runFilter/runAction` 调用覆盖。**下一步可接的钩子**：第三方 OAuth 登录（oauth.js loginSuccess 的 login.success/claims）、注册新上游 OIDC/OAuth 提供方（需 authorize+callback 脚手架）、注入管理端 UI。
 
 ## v3.5.134 访问前缀门：整个人机界面藏在保密路径后 + 可关端口（仅本机）（用户反馈）
 

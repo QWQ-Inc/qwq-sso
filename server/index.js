@@ -150,7 +150,7 @@ function buildFooterHtml() {
     : '';
 
   // 版本信息点击跳转 GitHub（不可修改）
-  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.134</a>`;
+  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.135</a>`;
 
   return `<footer style="text-align:center;padding:20px 20px 8px;margin-top:24px;font-size:11px;color:rgba(0,0,0,.38);border-top:1px solid rgba(0,0,0,.07);line-height:1.9;user-select:none;">
   <div style="font-weight:500;">${copyright}</div>${infoLine}
@@ -181,6 +181,8 @@ app.use('/api',   apiRoutes);
 app.use('/api/passkey', require('./passkey'));   // Passkey / WebAuthn
 // 域名验证文件（v3.5.40）：管理员上传的 /WW_verify_xxx.txt 等，放在根路径下对外提供（到期自动失效）
 app.use(apiRoutes.serveVerifyFile);
+// 插件自定义路由（v3.5.135）：/ext/<插件id>/* 由插件注册的 handler 处理；非 /ext 放行。必须在 static 之前。
+app.use(require('./plugins').routeMiddleware());
 // OIDC Provider：/.well-known/openid-configuration 和 /oauth/* 挂在根路径（必须在 static 之前）
 app.use('/',      providerRoutes);
 app.use('/',      express.static(path.join(__dirname, '../public')));

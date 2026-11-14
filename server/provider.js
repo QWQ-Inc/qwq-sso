@@ -107,7 +107,8 @@ function claimsFor(user, scopeArr) {
     c.groups = g ? [g.name] : [];      // 兼容多数 OIDC 客户端约定的 groups 数组
     c.tags   = ts.map(t => t.name);
   }
-  return c;
+  // 插件钩子（v3.5.135）：让插件改写 claims（加部门 / 自定义声明 / 按应用定制等）
+  try { return require('./plugins').runFilter('oidc.claims', c, { user, scope: scopeArr }); } catch (_) { return c; }
 }
 
 /** 已授权直通中转页的倒计时秒数：env OIDC_LAUNCH_COUNTDOWN，默认 3，夹在 0~30（0=不倒计时直接跳） */

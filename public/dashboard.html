@@ -1071,6 +1071,17 @@ function _devApi(method, path, body) {
   if (/^\/user\/fed-apps\/[^/]+\/launch$/.test(path)) return ok({ success:true, url:'https://sso.staff.qwq.us/fed/launch?demo=1' });
 
   // 版本更新（演示模式）
+  if (path.indexOf('/admin/plugins') === 0) {
+    window._devPlugins = window._devPlugins || [{ id:'demo01', name:'示例插件', version:'1.0.0', enabled:true, active:true, error:'', config:{dept:'研发'}, created_at:new Date().toISOString(), updated_at:new Date().toISOString(), source:"module.exports={ name:'示例插件', version:'1.0.0', register(sso){\n  sso.filter('oidc.claims',(c)=>{ c.dept=sso.config.dept; return c; });\n} };" }];
+    const HOOKS = { filters:[{name:'oidc.claims',sig:'(claims,{user,scope})=>claims',desc:'改写 OIDC 声明'},{name:'login.token',sig:'(payload,{user,method})=>payload',desc:'改写登录令牌负载'}], actions:[{name:'login.success',sig:'({user,method,ip,req})=>void',desc:'登录成功副作用'}], routes:'插件可注册 /ext/<插件id>/* 的自定义页面 / 接口' };
+    const idm = path.match(/^\/admin\/plugins\/([^\/]+)/);
+    if (path === '/admin/plugins' && method === 'GET') return ok({ success:true, plugins: window._devPlugins.map(p=>({ ...p, source:undefined })), env_enabled:true, hooks:HOOKS });
+    if (path === '/admin/plugins' && method === 'POST') { const p={ id:'p'+Date.now().toString(36), name:'新插件', version:'0.1.0', enabled:body.enabled!==false, active:body.enabled!==false, error:'', config:body.config||{}, source:body.source, created_at:new Date().toISOString(), updated_at:new Date().toISOString() }; window._devPlugins.push(p); return ok({ success:true, plugin:p }); }
+    if (idm && path.endsWith('/toggle') && method==='POST'){ const p=window._devPlugins.find(x=>x.id===idm[1]); if(p){ p.enabled=!!body.enabled; p.active=p.enabled; } return ok({ success:true, plugin:p }); }
+    if (idm && method==='GET'){ const p=window._devPlugins.find(x=>x.id===idm[1]); return p?ok({ success:true, plugin:p }):err('不存在',404); }
+    if (idm && method==='PATCH'){ const p=window._devPlugins.find(x=>x.id===idm[1]); if(p){ if(body.source!=null)p.source=body.source; if(body.config!==undefined)p.config=body.config; } return ok({ success:true, plugin:p }); }
+    if (idm && method==='DELETE'){ window._devPlugins=window._devPlugins.filter(x=>x.id!==idm[1]); return ok({ success:true }); }
+  }
   if (path.indexOf('/admin/version') === 0 && method === 'GET') return ok({ success:true, current:'3.5.6', latest:'v3.5.7', hasUpdate:true, url:'https://github.com/QWQ-Inc/qwq-sso', checked_at:new Date().toISOString(), selfhost_update:true });
   if (path === '/admin/version/apply' && method === 'POST') return ok({ success:true, ok:true, restart:false, note:'演示：更新成功', steps:[{cmd:'git pull --ff-only',code:0,out:'Already up to date.'}] });
 
@@ -1482,6 +1493,10 @@ async function loadMe() {
       <button class="nav-item" onclick="goto('adm-about')" id="ni-adm-about">
         <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="8"/><path d="M10 9v5M10 6h.01"/></svg>
         关于 / 更新 <span id="ni-about-badge" style="display:none;margin-left:6px;width:7px;height:7px;border-radius:50%;background:var(--err);"></span>
+      </button>
+      <button class="nav-item" onclick="goto('adm-plugins')" id="ni-adm-plugins">
+        <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 2 4 11h5l-1 7 7-9h-5z"/></svg>
+        插件
       </button>
     </div>
 
@@ -3095,6 +3110,50 @@ async function loadMe() {
         </div>
       </div>
 
+      <!-- ▸ 管理端：插件 -->
+      <div class="page" id="page-adm-plugins">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3><span data-ic="bolt"></span> 插件</h3>
+            <button class="btn primary" onclick="openPluginInstall()">+ 安装插件</button>
+          </div>
+          <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
+            导入一段插件代码即可扩展 / 修改系统行为——改写 OIDC 声明、登录副作用、注册自定义页面 / 接口（<code>/ext/&lt;插件id&gt;/*</code>，比如自定义跳转页）等。热加载，无需改源码、无需重启。
+            <br>⚠️ <b>插件以完整服务端权限运行</b>（等同你亲自写的后端代码），<b>只安装你自己编写 / 审阅过的插件</b>。坏插件会被自动跳过并显示错误；万一把登录弄挂了，设环境变量 <code>PLUGINS_ENABLED=off</code> 重启即可全部禁用。
+            <div id="plugins-envoff" style="display:none;margin-top:8px;color:var(--err);font-weight:600;">⚠️ 当前 PLUGINS_ENABLED=off：所有插件已被环境变量禁用（不生效）。</div>
+            <div id="plugins-box" style="margin-top:14px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
+            <details style="margin-top:14px;"><summary style="cursor:pointer;color:var(--txm);">可用钩子 / 编写说明</summary>
+              <div id="plugins-hooks" style="margin-top:8px;font-size:12px;"></div>
+            </details>
+          </div>
+        </div>
+      </div>
+      <!-- 插件 安装 / 编辑 弹窗 -->
+      <div class="modal-mask" id="plugin-modal">
+        <div class="modal" style="width:min(96vw,720px);max-width:96vw;box-sizing:border-box;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3 id="pl-title">安装插件</h3>
+            <button class="btn" style="padding:2px 10px;" onclick="document.getElementById('plugin-modal').classList.remove('show')">×</button>
+          </div>
+          <div class="card-body" style="font-size:13px;">
+            <input type="hidden" id="pl-id">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <label style="font-size:11px;color:var(--txm);">插件源码（CommonJS，导出 <code>register(sso)</code>）</label>
+              <button class="btn" style="padding:2px 10px;font-size:11px;" onclick="pluginTemplate()">填入示例模板</button>
+            </div>
+            <textarea id="pl-source" spellcheck="false" style="width:100%;box-sizing:border-box;height:260px;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--bd);border-radius:3px;margin-top:3px;"></textarea>
+            <label style="font-size:11px;color:var(--txm);display:block;margin-top:12px;">配置（JSON，插件内用 <code>sso.config</code> 读取；可留空 <code>{}</code>）</label>
+            <textarea id="pl-config" spellcheck="false" style="width:100%;box-sizing:border-box;height:66px;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--bd);border-radius:3px;margin-top:3px;">{}</textarea>
+            <label id="pl-enable-wrap" style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;cursor:pointer;"><input type="checkbox" id="pl-enabled" checked> 安装后立即启用</label>
+            <div id="pl-err" style="margin-top:8px;color:var(--err);font-size:12px;white-space:pre-wrap;"></div>
+            <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+              <button class="btn" onclick="document.getElementById('plugin-modal').classList.remove('show')">取消</button>
+              <button class="btn primary" onclick="savePlugin()">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ▸ 管理端：身份核验 -->
       <div class="page" id="page-adm-verify">
         <div class="card">
@@ -3676,7 +3735,7 @@ let checkedIn = false;
 let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
-const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups'];
+const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups', 'adm-plugins'];
 // 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
 const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
 // 组织管理员（v3.5.76）可进的管理页：组织维度的菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
@@ -3983,7 +4042,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','devices':'我的设备','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新','adm-plugins':'插件'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -4024,6 +4083,7 @@ function goto(page) {
   if(page === 'adm-access') loadAccessAdmin();
   if(page === 'adm-verify') loadVerifyAdmin();
   if(page === 'adm-about') loadVersionInfo();
+  if(page === 'adm-plugins') loadPlugins();
 
   // 记住当前菜单，刷新后由 bootToLastPage 恢复
   try { localStorage.setItem('sso_last_page', page); } catch (_) {}
@@ -10379,6 +10439,123 @@ async function toggleGatePort() {
   const { ok, data } = await api('PUT', '/admin/access-gate/port', { closed });
   if (!ok) { cb.checked = !closed; return showToast(data.error || '操作失败', 'err'); }
   if (_gateState) _gateState.port_closed = data.port_closed; showToast(data.message || '已保存', 'ok');
+}
+// ── 插件系统（v3.5.135）──
+let _plugins = [];
+async function loadPlugins() {
+  const box = document.getElementById('plugins-box'); if (!box) return;
+  const { ok, data } = await api('GET', '/admin/plugins');
+  if (!ok) { box.textContent = '加载失败'; return; }
+  _plugins = data.plugins || [];
+  const off = document.getElementById('plugins-envoff'); if (off) off.style.display = data.env_enabled === false ? '' : 'none';
+  renderPlugins();
+  renderPluginHooks(data.hooks);
+}
+function renderPlugins() {
+  const box = document.getElementById('plugins-box'); if (!box) return;
+  if (!_plugins.length) { box.innerHTML = emptyState('还没有安装任何插件', 'bolt'); return; }
+  box.innerHTML = _plugins.map(p => {
+    const badge = p.enabled
+      ? (p.active ? '<span class="badge" style="background:#e6f4ea;color:#1a7f37;">运行中</span>'
+                  : '<span class="badge" style="background:#fdeaea;color:var(--err);">已启用·出错</span>')
+      : '<span class="badge" style="background:var(--sf2);color:var(--txd);">已停用</span>';
+    return `<div style="border:1px solid var(--bd);border-radius:4px;padding:10px 12px;margin-bottom:8px;background:var(--sf);">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div><b style="font-size:14px;">${esc(p.name||p.id)}</b> <span style="color:var(--txd);font-size:12px;">v${esc(p.version||'—')}</span> ${badge}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="togglePlugin('${p.id}',${p.enabled?'false':'true'})">${p.enabled?'停用':'启用'}</button>
+          <button class="btn" style="font-size:11px;padding:3px 10px;" onclick="editPlugin('${p.id}')">编辑</button>
+          <button class="btn" style="font-size:11px;padding:3px 10px;color:var(--err);" onclick="delPlugin('${p.id}','${esc((p.name||p.id)).replace(/'/g,'')}')">删除</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--txd);margin-top:4px;">ID <code>${esc(p.id)}</code> · 自定义路由前缀 <code>/ext/${esc(p.id)}/</code></div>
+      ${p.error ? `<div style="margin-top:6px;color:var(--err);font-size:12px;white-space:pre-wrap;">⚠️ ${esc(p.error)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+function renderPluginHooks(h) {
+  const el = document.getElementById('plugins-hooks'); if (!el || !h) return;
+  const rows = (arr, kind) => (arr||[]).map(x => `<div style="margin:3px 0;"><code>${esc(x.name)}</code> <span style="color:var(--txd);">${kind}</span> — ${esc(x.desc)}<br><span style="color:var(--txm);">${esc(x.sig)}</span></div>`).join('');
+  el.innerHTML = `<div style="line-height:1.8;">
+    <b>过滤器（filter，改写并返回值）</b>${rows(h.filters,'filter')}
+    <b style="display:block;margin-top:6px;">动作（action，副作用）</b>${rows(h.actions,'action')}
+    <b style="display:block;margin-top:6px;">自定义路由</b><div>${esc(h.routes||'')}</div>
+    <div style="margin-top:8px;color:var(--txm);">register(sso) 里用 <code>sso.filter(hook, fn)</code> / <code>sso.action(hook, fn)</code> / <code>sso.route(method, path, fn)</code>；还可用 <code>sso.config</code>（本插件配置）、<code>sso.db</code>、<code>sso.audit(type, detail)</code>、<code>sso.log(...)</code>、<code>sso.env(key)</code>。</div>
+  </div>`;
+}
+const PLUGIN_TEMPLATE = [
+  "module.exports = {",
+  "  name: '示例插件',",
+  "  version: '1.0.0',",
+  "  register(sso) {",
+  "    // 1) 改写 OIDC 声明：给 id_token / userinfo 加一个部门字段",
+  "    sso.filter('oidc.claims', (claims, ctx) => {",
+  "      claims.dept = sso.config.dept || 'default';",
+  "      return claims;",
+  "    });",
+  "    // 2) 登录成功副作用：写一条审计",
+  "    sso.action('login.success', (ctx) => {",
+  "      sso.audit('login_seen', { uid: ctx.user.id, method: ctx.method });",
+  "    });",
+  "    // 3) 自定义跳转页：GET /ext/<本插件id>/welcome",
+  "    sso.route('get', '/welcome', (req, res) => {",
+  "      res.type('html').send('<h1>Hello from plugin</h1>');",
+  "    });",
+  "  }",
+  "};"
+].join('\n');
+function pluginTemplate() { document.getElementById('pl-source').value = PLUGIN_TEMPLATE; }
+function openPluginInstall() {
+  document.getElementById('pl-title').textContent = '安装插件';
+  document.getElementById('pl-id').value = '';
+  document.getElementById('pl-source').value = '';
+  document.getElementById('pl-config').value = '{}';
+  document.getElementById('pl-enable-wrap').style.display = '';
+  document.getElementById('pl-enabled').checked = true;
+  document.getElementById('pl-err').textContent = '';
+  document.getElementById('plugin-modal').classList.add('show');
+}
+async function editPlugin(id) {
+  const { ok, data } = await api('GET', '/admin/plugins/' + id);
+  if (!ok) return showToast(data.error || '加载失败', 'err');
+  const p = data.plugin;
+  document.getElementById('pl-title').textContent = '编辑插件 · ' + (p.name || id);
+  document.getElementById('pl-id').value = p.id;
+  document.getElementById('pl-source').value = p.source || '';
+  document.getElementById('pl-config').value = JSON.stringify(p.config || {}, null, 2);
+  document.getElementById('pl-enable-wrap').style.display = 'none';   // 启停改用列表里的按钮
+  document.getElementById('pl-err').textContent = '';
+  document.getElementById('plugin-modal').classList.add('show');
+}
+async function savePlugin() {
+  const id = document.getElementById('pl-id').value;
+  const source = document.getElementById('pl-source').value;
+  const errEl = document.getElementById('pl-err'); errEl.textContent = '';
+  let config;
+  try { config = JSON.parse(document.getElementById('pl-config').value || '{}'); }
+  catch (e) { errEl.textContent = '配置不是合法 JSON：' + e.message; return; }
+  if (!source.trim()) { errEl.textContent = '插件源码不能为空'; return; }
+  let res;
+  if (id) res = await api('PATCH', '/admin/plugins/' + id, { source, config });
+  else    res = await api('POST', '/admin/plugins', { source, config, enabled: document.getElementById('pl-enabled').checked });
+  if (!res.ok) { errEl.textContent = (res.data && res.data.error) || '保存失败'; return; }
+  document.getElementById('plugin-modal').classList.remove('show');
+  showToast('已保存', 'ok');
+  loadPlugins();
+}
+async function togglePlugin(id, on) {
+  const { ok, data } = await api('POST', '/admin/plugins/' + id + '/toggle', { enabled: on });
+  if (!ok) return showToast((data && data.error) || '操作失败', 'err');
+  if (data.plugin && data.plugin.enabled && !data.plugin.active && data.plugin.error)
+    showToast('已启用但加载出错：' + data.plugin.error, 'err');
+  loadPlugins();
+}
+async function delPlugin(id, name) {
+  if (!await uiConfirm('确定删除插件「' + name + '」？其注册的钩子 / 路由将立即失效。')) return;
+  const { ok } = await api('DELETE', '/admin/plugins/' + id);
+  if (!ok) return showToast('删除失败', 'err');
+  showToast('已删除', 'ok');
+  loadPlugins();
 }
 async function applyUpdate() {
   if (!await uiConfirm('确定一键拉取更新？将先备份数据库，再执行 git pull + npm ci。更新期间请勿操作。')) return;
