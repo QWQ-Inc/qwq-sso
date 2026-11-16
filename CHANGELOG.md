@@ -4,6 +4,10 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.137 — 控制台界面风格切换：新增「清新」风格（StackEnigma / Zeabur 设计系统，Apache-2.0）
+
+给控制台（`dashboard.html`）加可切换的界面风格。风格 1「经典」= 现有方正风（默认）；风格 2「清新」= 基于 Zeabur 开源设计系统的 StackEnigma 外观（草绿主色、Geist 字体、12px 圆角卡片、上下渐变按钮、侧栏当前项抬起白胶囊、柔和阴影）。实现为 `html[data-skin="se"]` 作用域换肤：dashboard 已高度 token 化，主体靠在该选择器下重映射 `--sf/--bd/--ac/--r-*/--sh-*` 等 token，再给按钮渐变、侧栏胶囊、字体做签名级 class 覆盖——完全不影响风格 1。切换器在账号菜单里（经典 | 清新），写 `localStorage.sso_skin`，首帧前应用、刷新不闪。另按反馈调整：圆角收紧一档（卡片 10 / 控件 5 / 徽章 4，不再整圆）、页内按钮放大到 34px、section tabs（`.tabs`）由下划线式改为分段条（灰底轨道 + 当前项抬起白胶囊）。清新风格另带**深色模式**（StackEnigma 深蓝底 + 蓝主色），切换器加「配色：浅色/深色/跟随系统」一行（仅清新风格显示）；`data-theme` 只在清新风格下写、经典风格始终浅色不受影响。本版仅控制台；登录页等后续再做。署名见 `THIRD-PARTY-NOTICES.md`。
+
 ## v3.5.136 — 插件系统 v2：第三方登录钩子 + 插件注册上游 OIDC 提供方 + 注入管理面板 + 插件市场
 
 - **第三方 OAuth 登录钩子**：微信/飞书等第三方登录成功也触发 `login.success` / `login.token`（2FA 用户的最终签发点暂未接）。

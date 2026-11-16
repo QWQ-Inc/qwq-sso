@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.136**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.137**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,22 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.137 控制台界面风格切换：新增「清新」风格（StackEnigma / Zeabur 设计系统）（用户反馈）
+
+三级版本（纯前端，仅 `public/dashboard.html`）。用户给了 `qwq-design-se/design-kit.zip`（基于 **Zeabur 开源设计系统**，Apache-2.0，署名见 `design-kit/NOTICE` 与仓库根 `THIRD-PARTY-NOTICES.md`）：「做风格切换，目前第二种页面风格先做这种」。于是给控制台加**可切换的界面风格**：风格 1 =「经典」（现有方正硬朗风，默认），风格 2 =「清新」（StackEnigma：草绿主色 `#5EA33A`、Geist 字体、12px 圆角卡片、Zeabur 式上下渐变按钮、侧栏当前项抬起白胶囊、柔和阴影、灰底 chrome）。
+
+### 机制（低风险：作用域换肤，不碰风格 1）
+- **`html[data-skin="se"]` 作用域**：dashboard 已高度 token 化（输入/弹窗/表格/徽章/复选框/滚动条/选中色/焦点环都读 `--sf/--bd/--ac/--tx/--r-*/--sh-*/--ring`），所以风格 2 主体 = 在该选择器下**重映射这套 token**（草绿 / 中性灰阶 / 6·8·12·999 圆角 / 柔阴影 / 绿焦点环 / Geist 字体），整站即时换肤。
+- **签名级 class 覆盖**（token 盖不到的硬编码处，全部 scoped 在 `html[data-skin="se"]` 下）：`.card`/`.stat-card` 硬编码 3px → `--r-lg`；`.btn`/`.btn.primary` 扁平填色 → 上下渐变 + 内描边高光 + 细外框（含 hover）；`.nav-item.active` 左侧绿竖条 → 抬起白胶囊；`.nav`/`.topbar` → 页面灰 chrome；`.badge` 柔色底 4px；`select:focus` chevron 用草绿。
+- **按用户反馈调整（同版内）**：① 圆角「太圆滑」→ 刻度收紧一档（卡片 12→10 / 面板 8→7 / 控件 6→5 / 徽章 4，`--r-pill` 由 999 改 5 不再整圆），阴影略收；② 页内按钮「太小」→ `.btn` 在该皮肤下放大到 34px 高 + `padding 0 16px` + 13px 字（`.icon-btn` 保留紧凑内联 padding）；③ **Section tabs 没跟上** → dashboard 的 `.tabs` 原是下划线式（`border-bottom:2px` + `.tab.active` 绿下划线），在该皮肤下重做为 StackEnigma 分段条：灰底轨道（`inline-flex` + `--sf2` 底 + 细框 + 2px 内边距）+ 当前项抬起白胶囊（`.tab.active` 白底 + 细框 + 轻阴影，清掉下划线/负 margin）。
+- **深色模式（同版内，用户要求）**：给清新风格加 StackEnigma 深色配色（深蓝底 `#090D16` / 蓝主色 `#4F8FF7` / 柔白字），全在 `html[data-skin="se"][data-theme="dark"]` 下——token 重映射 + 按钮/侧栏胶囊/badge/chrome/select chevron 的硬编码亮色处补深色值（分段 tab 用 token 自动适配）。**关键做法**：`data-theme` 只在清新风格下由头部脚本 / `setTheme()` 显式写成 `light|dark`（跟随系统时按 `matchMedia('(prefers-color-scheme: dark)')` 在加载时解析），所以 CSS 只需认 `[data-theme="dark"]` 一个选择器、无需 `@media` 重复整块；**经典风格永远不写 data-theme，故始终浅色、丝毫不受影响**。切换器加第二行「配色：浅色 / 深色 / 跟随」（`#theme-row`，仅清新风格显示；`syncSkinUI` 控制显隐与选中态）。localStorage 键：`sso_skin`（''|se）+ `sso_theme`（''=跟随 | light | dark）。
+- ⚠️ 「跟随系统」只在页面加载时解析一次（和 demo 一致）；页面开着时切换系统深浅不实时跟（刷新即跟上），不做 matchMedia 监听。
+- **首帧前应用**：`<head>` 顶部（`<title>` 后、`<style>` 前）加 `try{var _sk=localStorage.getItem('sso_skin');if(_sk)document.documentElement.setAttribute('data-skin',_sk)}catch(e){}`，刷新不闪。
+- **字体**：`<head>` 加 Geist / Geist Mono 的 Google Fonts `<link>`，命中不到回落系统字（PingFang/YaHei）；风格 1 不引用该字族，故不会真正下载字重文件。
+- **切换器**：用户菜单（`#user-menu`，账号下拉）里加「界面风格 · 经典 | 清新」分段控件（`.skin-switch`/`.skin-btn`），`setSkin(s)` 写 `localStorage.sso_skin` + 置/removeAttr `data-skin` + `syncSkinUI()` 刷新选中态；页面末尾 `syncSkinUI()` 同步初始态。
+- ⚠️ **范围**：本版只做**控制台 dashboard**（切换是登录后的个人偏好，切换器也在此）。`login.html` 等其它页有各自 token 体系（双明暗主题），未纳入——后续可让 login 读同一 `sso_skin` 再做一版映射。
+- ⚠️ 测试：dev 浏览器实测（静态服务 public/ + 注入 `_dev_session`）两种风格切换双向正常、持久化（刷新后直接呈现风格 2 无闪）、首页（签到/统计卡/表格/徽章/按钮/侧栏）与应用管理页（分段 tab/搜索框/下拉/应用卡/文件夹 chip/授权徽章）在风格 2 下全部协调；切回「经典」像素级恢复原样；控制台无 JS 报错。
 
 ## v3.5.136 插件系统 v2：第三方 OAuth 登录钩子 + 插件注册上游 OIDC 提供方 + 注入管理面板 + 插件市场（用户反馈）
 

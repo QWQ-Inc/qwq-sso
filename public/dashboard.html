@@ -4,6 +4,13 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>统一账号服务</title>
+<!-- 风格切换：首帧前读取界面风格（data-skin）+ 清新风格的配色（data-theme），避免闪烁。
+     data-theme 只在清新风格下写成 light|dark（跟随系统时按 matchMedia 解析）；经典风格不写，故始终浅色。 -->
+<script>try{var _sk=localStorage.getItem('sso_skin');if(_sk){document.documentElement.setAttribute('data-skin',_sk);if(_sk==='se'){var _th=localStorage.getItem('sso_theme')||'';var _d=_th==='dark'||(_th!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',_d?'dark':'light');}}}catch(e){}</script>
+<!-- 风格 2「清新」用的字体（Geist），未命中则回落系统字体；风格 1 不引用该字族，故不会真正下载字重文件 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -532,6 +539,161 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{box-shadow:va
 input[type=checkbox]:disabled,input[type=radio]:disabled{opacity:.5;cursor:default;}
 /* 恢复 .toggle 开关里被隐藏的 input（自定义样式不能套在它身上，否则开关变成一个方块） */
 .toggle input[type=checkbox]{-webkit-appearance:none;appearance:none;opacity:0!important;width:0!important;height:0!important;border:0!important;background:none!important;margin:0!important;}
+
+/* ══════════ 风格切换控件（用户菜单里，两种风格下都显示） ══════════ */
+.skin-switch{display:flex;border:1px solid var(--bd);border-radius:var(--r-sm);overflow:hidden;}
+.skin-btn{flex:1;padding:6px 4px;font-size:11px;font-weight:600;text-align:center;background:none;border:none;color:var(--txm);cursor:pointer;font-family:inherit;transition:background .15s,color .15s;}
+.skin-btn:hover{background:var(--sf2);color:var(--tx);}
+.skin-btn.active{background:var(--ac2);color:#fff;}
+
+/* ══════════ 风格 2 ·「清新」══════════
+   视觉基于 Zeabur 开源设计系统（github.com/zeabur-oss/design-system，Apache-2.0；
+   见 qwq-design-se/design-kit/NOTICE）：中性灰阶、草绿主色、Geist 字体、12px 圆角卡片、
+   渐变按钮、柔和阴影。全部作用域在 html[data-skin="se"] 下，不影响默认「方正」风格（风格 1）。
+   dashboard 已高度 token 化（输入/弹窗/表格/徽章/复选框/滚动条/选中色/焦点环都读这套变量），
+   所以主要靠 token 重映射整体换肤；下面另给按钮渐变、侧栏当前项胶囊、字体做签名级覆盖。 */
+html[data-skin="se"]{
+  --bg:#F7F7F7;
+  --sf:#FFFFFF;
+  --sf2:#F6F5F8;
+  --sf3:#F0EFF2;
+  --sf4:#FAFAFB;
+  --bd:#ECEBEE;
+  --bd2:#D0CED4;
+  --ac:#5EA33A;          /* 草绿主色 */
+  --ac2:#6CB446;
+  --ac3:#EEF6E7;
+  --tx:#18181B;
+  --txm:#65616B;
+  --txd:#98959D;
+  --ok:#0B7A46;
+  --err:#C2302D;
+  --warn:#8A5A00;
+  /* 圆角比初版收紧一档（用户反馈「太圆滑」）：卡片 10 / 面板 7 / 控件 5，胶囊也只到 5（不再整圆） */
+  --r-sm:5px; --r-md:7px; --r-lg:10px; --r-pill:5px;
+  --sh-1:none;
+  --sh-2:0 8px 14px -4px rgba(0,0,0,.08),0 3px 6px -3px rgba(0,0,0,.07);
+  --sh-3:0 18px 24px -6px rgba(0,0,0,.10),0 6px 10px -6px rgba(0,0,0,.10);
+  --ring:0 0 0 3px rgba(94,163,58,.20);
+}
+html[data-skin="se"] body{
+  font-family:"Geist","Geist Variable",-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei','Noto Sans CJK SC',sans-serif;}
+/* 侧栏 / 顶栏用页面灰作底色（卡片白底浮起），贴近 StackEnigma 的 chrome 配色 */
+html[data-skin="se"] .nav{background:var(--bg);}
+html[data-skin="se"] .topbar{background:var(--bg);}
+/* 卡片 / 统计卡：12px 大圆角（这两处硬编码了 3px，需 class 级覆盖） */
+html[data-skin="se"] .card,
+html[data-skin="se"] .stat-card{border-radius:var(--r-lg);}
+/* 按钮：Zeabur 式上下渐变 + 内描边高光 + 细外框（风格 1 是扁平填色） */
+html[data-skin="se"] .btn{
+  border-color:#fff;background:transparent;
+  background-image:linear-gradient(to bottom,#fff,#f5f5f5);
+  box-shadow:0 0 0 1px rgba(0,0,0,.08);color:var(--tx);}
+html[data-skin="se"] .btn:hover{
+  background:transparent;border-color:#fff;
+  background-image:linear-gradient(to bottom,#f5f5f5,#ebebec);}
+html[data-skin="se"] .btn.primary{
+  border-color:rgba(255,255,255,.3);color:#fff;background:transparent;
+  background-image:linear-gradient(to bottom,#6cb446,#5a9e36);
+  box-shadow:0 0 0 1px rgba(0,0,0,.13);}
+html[data-skin="se"] .btn.primary:hover{
+  border-color:rgba(255,255,255,.3);background:transparent;
+  background-image:linear-gradient(to bottom,#61a83c,#4f8d30);}
+/* 侧栏当前项：抬起的白胶囊（风格 1 是左侧绿竖条） */
+html[data-skin="se"] .nav-item.active{
+  background:linear-gradient(to bottom,#fefefe,#f8f8f8);
+  border-left:none;margin-left:8px;padding-left:14px;
+  box-shadow:0 1px 2px rgba(0,0,0,.05),0 0 0 1px rgba(0,0,0,.05);color:#161616;}
+html[data-skin="se"] .nav-item.active .ni{opacity:1;}
+/* 徽章：StackEnigma 的方正柔色底（4px 更贴近 demo 的方正感） */
+html[data-skin="se"] .badge{border-radius:4px;}
+html[data-skin="se"] .badge.ok{background:var(--ac3);color:var(--ok);}
+html[data-skin="se"] .badge.warn{background:#FDF4DC;color:var(--warn);}
+html[data-skin="se"] .badge.err{background:#FEECE7;color:#AF2F09;}
+html[data-skin="se"] .badge.grey{background:#EFEFEF;color:var(--txm);}
+/* 原生 select 聚焦态 chevron 用草绿（风格 1 是硬编码橄榄绿） */
+html[data-skin="se"] select:focus{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8l4-3.5' fill='none' stroke='%235EA33A' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;}
+/* 页内按钮放大到 StackEnigma 控件尺寸（用户反馈「按钮太小」）：34px 高、更大内边距、13px 字。
+   带内联 padding 的图标按钮（.icon-btn）保留自己的紧凑尺寸，只跟随高度。 */
+html[data-skin="se"] .btn{min-height:34px;padding:0 16px;font-size:13px;}
+html[data-skin="se"] .btn.icon-btn{padding:4px 8px;min-width:32px;}
+/* 分段 tab（section tabs）：dashboard 原是下划线式，这里换成 StackEnigma 的分段条——
+   灰底轨道 + 当前项抬起白胶囊（对应 demo 的 Section tabs）。 */
+html[data-skin="se"] .tabs{
+  display:inline-flex;align-items:center;gap:2px;max-width:100%;overflow-x:auto;
+  border:1px solid var(--bd);border-bottom:1px solid var(--bd);border-radius:var(--r-sm);
+  background:var(--sf2);padding:2px;}
+html[data-skin="se"] .tabs::-webkit-scrollbar{display:none;}
+html[data-skin="se"] .tab{
+  padding:6px 14px;margin-bottom:0;border:1px solid transparent;border-bottom:1px solid transparent;
+  border-radius:4px;color:var(--txm);font-weight:500;white-space:nowrap;}
+html[data-skin="se"] .tab:hover{color:var(--tx);}
+html[data-skin="se"] .tab.active{
+  color:var(--tx);background:var(--sf);border-color:var(--bd);border-bottom-color:var(--bd);
+  box-shadow:0 1px 2px rgba(0,0,0,.06);}
+
+/* ══════════ 风格 2 ·「清新」深色（StackEnigma dark：深蓝底 + 蓝主色）══════════
+   仅在 html[data-skin="se"][data-theme="dark"] 下生效。data-theme 由头部脚本 / setTheme 显式写成
+   light|dark（跟随系统时加载时按 matchMedia 解析），所以 CSS 只认 dark；经典风格永远不带 data-theme。
+   token 自动换肤，另给按钮/侧栏胶囊/徽章/chrome 等硬编码亮色处补深色值（分段 tab 用的是 token，自动适配）。 */
+html[data-skin="se"][data-theme="dark"]{
+  --bg:#090D16;
+  --sf:#131B2A;
+  --sf2:#1A2436;
+  --sf3:#202B3F;
+  --sf4:#182132;
+  --bd:#232E42;
+  --bd2:#3A4963;
+  --ac:#4F8FF7;          /* 深色主色：蓝（草绿留给浅色与 logo） */
+  --ac2:#5F9CF8;
+  --ac3:rgba(79,143,247,.16);
+  --tx:#E2E8F0;
+  --txm:#98A4B8;
+  --txd:#68768D;
+  --ok:#6FE0AA;
+  --err:#FAA994;
+  --warn:#F5D27A;
+  --sh-1:none;
+  --sh-2:0 8px 14px -4px rgba(0,0,0,.45),0 3px 6px -3px rgba(0,0,0,.45);
+  --sh-3:0 18px 24px -6px rgba(0,0,0,.55),0 6px 10px -6px rgba(0,0,0,.55);
+  --ring:0 0 0 3px rgba(79,143,247,.35);
+  color-scheme:dark;
+}
+/* 侧栏 / 顶栏深色 chrome（侧栏比页面略亮，卡片再亮一档浮起） */
+html[data-skin="se"][data-theme="dark"] .nav{background:#0E1420;}
+html[data-skin="se"][data-theme="dark"] .topbar{background:var(--bg);}
+/* 按钮深色渐变 */
+html[data-skin="se"][data-theme="dark"] .btn{
+  border-color:rgba(255,255,255,.06);color:var(--tx);background:transparent;
+  background-image:linear-gradient(to bottom,#1F2A3E,#182233);
+  box-shadow:0 0 0 1px rgba(0,0,0,.5);}
+html[data-skin="se"][data-theme="dark"] .btn:hover{
+  background:transparent;border-color:rgba(255,255,255,.06);
+  background-image:linear-gradient(to bottom,#26334B,#1E293D);}
+html[data-skin="se"][data-theme="dark"] .btn.primary{
+  border-color:rgba(255,255,255,.3);color:#fff;background:transparent;
+  background-image:linear-gradient(to bottom,#5f9cf8,#4282f0);
+  box-shadow:0 0 0 1px rgba(0,0,0,.13);}
+html[data-skin="se"][data-theme="dark"] .btn.primary:hover{
+  border-color:rgba(255,255,255,.3);background:transparent;
+  background-image:linear-gradient(to bottom,#70a9f9,#4f8ff5);}
+/* 侧栏当前项：深色抬起胶囊 */
+html[data-skin="se"][data-theme="dark"] .nav-item.active{
+  background:linear-gradient(to bottom,#243148,#1C273A);
+  box-shadow:0 1px 2px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.06);color:#ECF1F8;}
+/* 徽章深色柔底 */
+html[data-skin="se"][data-theme="dark"] .badge.ok{background:rgba(63,185,80,.15);color:#6fe0aa;}
+html[data-skin="se"][data-theme="dark"] .badge.warn{background:rgba(245,210,122,.12);color:#f5d27a;}
+html[data-skin="se"][data-theme="dark"] .badge.err{background:rgba(244,119,89,.14);color:#faa994;}
+html[data-skin="se"][data-theme="dark"] .badge.grey{background:#202B3F;color:var(--txm);}
+/* 更深的弹窗遮罩 */
+html[data-skin="se"][data-theme="dark"] .modal-mask{background:rgba(2,6,14,.6);}
+/* select chevron 深色：默认浅灰、聚焦蓝（base 规则带 !important，这里更高特异性 + !important 覆盖） */
+html[data-skin="se"][data-theme="dark"] select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8l4-3.5' fill='none' stroke='%2398A4B8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;}
+html[data-skin="se"][data-theme="dark"] select:focus{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5 6 8l4-3.5' fill='none' stroke='%234F8FF7' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;}
 </style>
 <script>
 // ════════════════════════════════════════
@@ -1523,6 +1685,21 @@ async function loadMe() {
       <!-- 用户菜单 -->
       <div id="user-menu" style="display:none;border-top:1px solid var(--bd);padding:6px 8px;">
         <div id="pub-switch-wrap" style="display:none;"></div>
+        <div style="padding:2px 2px 8px;">
+          <div style="font-size:10px;font-weight:700;color:var(--txd);letter-spacing:.6px;text-transform:uppercase;padding:2px 4px 6px;">界面风格</div>
+          <div class="skin-switch">
+            <button type="button" class="skin-btn" data-skin="" onclick="setSkin('')">经典</button>
+            <button type="button" class="skin-btn" data-skin="se" onclick="setSkin('se')">清新</button>
+          </div>
+        </div>
+        <div id="theme-row" style="padding:0 2px 8px;display:none;">
+          <div style="font-size:10px;font-weight:700;color:var(--txd);letter-spacing:.6px;text-transform:uppercase;padding:2px 4px 6px;">配色</div>
+          <div class="skin-switch">
+            <button type="button" class="skin-btn" data-theme-val="light" onclick="setTheme('light')">浅色</button>
+            <button type="button" class="skin-btn" data-theme-val="dark" onclick="setTheme('dark')">深色</button>
+            <button type="button" class="skin-btn" data-theme-val="" onclick="setTheme('')">跟随</button>
+          </div>
+        </div>
         <button onclick="logout()" style="width:100%;display:flex;align-items:center;gap:8px;padding:7px 10px;background:none;border:none;border-radius:2px;color:var(--err);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;text-align:left;" onmouseenter="this.style.background='rgba(204,34,34,.07)'" onmouseleave="this.style.background='none'">
           <span>⏻</span> 退出登录
         </button>
@@ -14658,6 +14835,43 @@ function downloadCSV(filename, content) {
 document.querySelectorAll('.modal-mask').forEach(m => {
   m.addEventListener('click', e => { if(e.target===m) m.classList.remove('show'); });
 });
+</script>
+<script>
+// ── 界面风格切换（风格 1「经典/方正」· 风格 2「清新/StackEnigma」）+ 清新风格的配色（浅/深/跟随）──
+function _resolveDark(){
+  var th=''; try{ th = localStorage.getItem('sso_theme') || ''; }catch(e){}
+  if(th==='dark') return true;
+  if(th==='light') return false;
+  return !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function applySkinTheme(){
+  var sk = document.documentElement.getAttribute('data-skin') || '';
+  if(sk==='se') document.documentElement.setAttribute('data-theme', _resolveDark()?'dark':'light');
+  else document.documentElement.removeAttribute('data-theme');   // 经典风格不带配色属性，始终浅色
+}
+function setSkin(s){
+  try{ if(s) localStorage.setItem('sso_skin', s); else localStorage.removeItem('sso_skin'); }catch(e){}
+  if(s) document.documentElement.setAttribute('data-skin', s);
+  else document.documentElement.removeAttribute('data-skin');
+  applySkinTheme(); syncSkinUI();
+}
+function setTheme(t){
+  try{ if(t) localStorage.setItem('sso_theme', t); else localStorage.removeItem('sso_theme'); }catch(e){}
+  applySkinTheme(); syncSkinUI();
+}
+function syncSkinUI(){
+  var sk = document.documentElement.getAttribute('data-skin') || '';
+  document.querySelectorAll('.skin-btn[data-skin]').forEach(function(b){
+    b.classList.toggle('active', (b.getAttribute('data-skin')||'') === sk);
+  });
+  var row = document.getElementById('theme-row');
+  if(row) row.style.display = sk==='se' ? '' : 'none';   // 配色行只在清新风格下显示
+  var th=''; try{ th = localStorage.getItem('sso_theme') || ''; }catch(e){}
+  document.querySelectorAll('.skin-btn[data-theme-val]').forEach(function(b){
+    b.classList.toggle('active', (b.getAttribute('data-theme-val')||'') === th);
+  });
+}
+syncSkinUI();
 </script>
 </body>
 </html>
