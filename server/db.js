@@ -14,6 +14,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // v3.5.101：待恢复文件（管理端「导入全站数据」写下的 <库>.pending-restore）——在打开数据库之前，
 // 用它替换现有库文件。交换发生在库尚未被 better-sqlite3 打开时，跨平台安全（Windows 下也不受文件占用影响）。
+let _restoreApplied = false;   // 本次启动是否真的换了库（供 reseedEnvAfterRestore 判断）
 (function applyPendingRestore() {
   try {
     const pending = DB_FILE + '.pending-restore';
@@ -24,6 +25,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     // 清掉旧的 WAL / SHM，避免把旧日志套到新库上
     for (const ext of ['-wal', '-shm']) { try { if (fs.existsSync(DB_FILE + ext)) fs.unlinkSync(DB_FILE + ext); } catch (_) {} }
     fs.renameSync(pending, DB_FILE);
+    _restoreApplied = true;
     console.log('[RESTORE] 已用待恢复文件替换数据库，现库已备份为 pre-restore-' + stamp);
   } catch (e) {
     console.error('[RESTORE] 待恢复文件应用失败：', e.message);
@@ -242,6 +244,14 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_id TEXT NOT NULL UNIQUE,
   public_key TEXT NOT NULL, counter INTEGER NOT NULL DEFAULT 0, transports TEXT,
   name TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), last_used_at TEXT
+)`); } catch(_) {}
+// Passkey 的一次性 challenge（v3.5.139）：以前存在 express-session 里，恢复/重启/换 SESSION_SECRET/多实例时会丢，
+// 导致「Unexpected authentication response challenge」。改存库（和 oauth_states / otp_store 同款短时令牌），彻底无状态依赖。
+try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  challenge  TEXT PRIMARY KEY,                      -- base64url challenge（options 下发的那串）
+  kind       TEXT NOT NULL,                         -- 'reg'（绑定，须带 user_id）| 'auth'（登录）
+  user_id    TEXT,                                  -- 绑定时所属用户；登录为 NULL
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
 // 公告系统
 try { db.exec(`CREATE TABLE IF NOT EXISTS announcements (
@@ -1343,6 +1353,14 @@ const webauthnStmts = {
   countByUser: db.prepare('SELECT COUNT(*) AS n FROM webauthn_credentials WHERE user_id=?'),
 };
 
+// Passkey 一次性 challenge（v3.5.139）
+const webauthnChallengeStmts = {
+  insert: db.prepare("INSERT OR REPLACE INTO webauthn_challenges (challenge,kind,user_id,created_at) VALUES (?,?,?,datetime('now'))"),
+  get:    db.prepare('SELECT * FROM webauthn_challenges WHERE challenge=? AND kind=?'),
+  del:    db.prepare('DELETE FROM webauthn_challenges WHERE challenge=?'),
+  purge:  db.prepare("DELETE FROM webauthn_challenges WHERE created_at < datetime('now','-10 minutes')"),
+};
+
 // ──────────────────────────────────────────
 // 公告
 // ──────────────────────────────────────────
@@ -1828,6 +1846,38 @@ const envStmts = {
   set:    db.prepare('INSERT OR REPLACE INTO env_config (key_name,value,updated_at) VALUES (?,?,datetime(\'now\'))'),
 };
 
+// v3.5.139：恢复（导入全站数据）后，把【导入库】的 env_config 重新注入 process.env。
+// 为什么必须在这里再注入一次：index.js 的 loadEnvFromDb 在本文件 applyPendingRestore 换库【之前】就跑完了，
+// 它读到的是旧库 / 全新库的 env_config —— 导入库里的企业微信企业 ID、消息分发密钥、各三方 / 实名密钥
+// 根本没进 process.env，于是「导入后企业微信登录说企业 ID 丢了、发短信走回只打印不发」的分支，要再重启一次才好。
+// 规则（与 loadEnvFromDb「平台变量优先」一致）：
+//   · 只在本次真的换过库时执行；
+//   · 导入值覆盖「上一份库带进 process.env 的值」，但【绝不覆盖真·平台 / 容器环境变量】(__ssoPlatformEnvKeys)；
+//   · 上一份库带进来、而导入库里没有的键，则从 process.env 删掉（恢复 = 以这份备份为准）。
+// 7 个「恢复后配置复核」白名单键由紧随其后的 applyPostRestoreEnv 做最终覆盖，故那里优先级更高。
+(function reseedEnvAfterRestore() {
+  if (!_restoreApplied) return;
+  const platform = global.__ssoPlatformEnvKeys || new Set();   // 真·平台 / 容器 env（loadEnvFromDb 之前就有的）
+  const seeded   = global.__ssoDbSeededKeys   || new Set();     // loadEnvFromDb 从旧库补进 process.env 的键
+  let applied = 0;
+  try {
+    const imported = new Set();
+    for (const { key_name, value } of envStmts.getAll.all()) {   // 导入库（已换好、已打开）的全部 env_config
+      imported.add(key_name);
+      if (platform.has(key_name)) continue;                      // 平台 / 容器变量优先，不覆盖
+      const v = value == null ? '' : String(value);
+      if (process.env[key_name] !== v) { process.env[key_name] = v; applied++; }
+    }
+    // 旧库带进来、但导入库里没有的键 → 删掉（它们不是平台变量，是上一份数据带来的）
+    for (const k of seeded) {
+      if (!imported.has(k) && !platform.has(k) && process.env[k] !== undefined) { delete process.env[k]; applied++; }
+    }
+    if (applied) console.log(`[RESTORE] 已从导入库重新注入 ${applied} 项环境变量到本进程（无需再次重启）`);
+  } catch (e) {
+    console.error('[RESTORE] 恢复后环境变量重注入失败：', e.message);
+  }
+})();
+
 // v3.5.132：恢复后配置复核。安装页「从备份恢复」时可顺手改几项配置，backup.stageRestoreEnv 把它们写进
 // <库>.post-restore-env.json（和 pending-restore 一起留在库旁）。换库已在本文件顶部 applyPendingRestore 完成，
 // 这里是开库后、env 可用时把那份一次性覆盖写进恢复后的库，再删标记。
@@ -2152,6 +2202,7 @@ module.exports = {
   printJobs: printJobStmts,
   printRules: printRuleStmts,
   webauthn: webauthnStmts,
+  webauthnChallenges: webauthnChallengeStmts,
   announcements: announcementStmts,
   documents: documentStmts,
   groups: groupStmts,

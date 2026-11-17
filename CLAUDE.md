@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.137**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.139**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,43 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.139 修导入后凭据失效（换库未重注入 env）+ Passkey 失效（challenge 存库）+ 配置体检 + 用户管理/账号详情细化（用户反馈）
+
+三级版本。用户：导入全站数据后，①企业微信登录说「企业 ID 丢了」、发短信「压根没说消息分发传回来怎么样」——凭据丢了还不校验；②Passkey 用不了（Edge 校验失败、Chrome 点不动）。查证后两个都是**真实 bug**（不只是文档限制）+ 补一个体检页。
+
+### 🔑 Passkey 导入后失效：challenge 从 session 改存库（无状态依赖）
+- 报错 `Passkey 校验失败：Unexpected authentication response challenge "A", expected "B"` —— **challenge 不匹配**：浏览器签的是下发时的 A，而服务端在校验时期望的是另一串 B。
+- 根因：`passkey.js` 把一次性 challenge 存在 `req.session.passkeyAuth` / `req.session.passkeyReg`（**express-session = 内存 MemoryStore + `SESSION_SECRET` 签名的 cookie**）。恢复 / 重启会清空 MemoryStore、换 `SESSION_SECRET` 会让旧 cookie 失效、多实例之间 MemoryStore 不共享 —— 任一情况都让「下发 challenge 的那次请求」和「校验的那次请求」读到的 session 对不上（表现为 challenge 失配，而非「会话过期」）。导入恰好三样都沾（换库重启 + `SESSION_SECRET` 可能随备份变 + 可能多副本）。login.html 侧已确认**没有** conditional UI / autofill 的双下发竞态，就是 session 不稳。
+- 修（和 `oauth_states` / `otp_store` 同款，**存库**彻底去 session）：新表 `webauthn_challenges(challenge PK, kind[reg|auth], user_id, created_at)`；`db.js` 导出 `webauthnChallenges`（insert / get(challenge,kind) / del / purge 10 分钟）。`passkey.js`：
+  - `login-options` / `register-options`：`webauthnChallenges.insert.run(options.challenge, 'auth'|'reg', uid?)`，顺手 `purge`；不再写 session。
+  - `login-verify` / `register-verify`：`@simplewebauthn` 的 `expectedChallenge` 用**函数式** —— 判断「浏览器实际签的那串 challenge 是否是我们下发过的」（登录 `kind='auth'`；注册还要 `user_id===req.user.uid`）。校验后**一次性删除**（防重放），注册 challenge 绑定本人。
+  - 顺带：之前 verify 的 catch 分支不删 challenge（失败也不留垃圾由 purge 兜底）；错误文案区分「会话已过期」（challenge 根本不存在）与库校验原因。
+- ⚠️ 收益：**无 session 依赖** → 恢复 / 重启 / 换 `SESSION_SECRET` / 多实例都不丢，challenge 失配不再发生。`webauthn_credentials`（已注册的 Passkey）本就随库导入、不受影响。「Chrome 点不动」多是该设备 / 浏览器上没有这把 Passkey（未同步）→ `navigator.credentials.get` 抛 `NotAllowedError` 被 `doPasskeyLogin` 静默 return，属正常（换有 Passkey 的设备即可），不是本 bug。
+- ⚠️ 测试：node:sqlite 复刻 challenge 表 + expectChallenge 决策 10 项全过（正常命中、一次性消费防重放、**双下发用 A 仍通过[旧 session 方案会期望最后那次 B 而失配]**、未下发伪造拒绝、注册 challenge 绑本人[别人用拒绝且不消费、本人通过后消费]、kind 隔离 auth 不能当 reg）；`node --check` passkey.js · db.js 通过。真实浏览器 WebAuthn 仪式本机无法端到端，靠 challenge 存取单测 + 校验仍走成熟库 `@simplewebauthn`（仅把 challenge 来源从 session 换成库）。
+
+### 🐛 根因：恢复后 process.env 种自【旧库】，不是导入库（换库 vs 读 env 的启动顺序）
+- 启动顺序：`index.js` 顶部 `loadEnvFromDb()`（读 `env_config` → `process.env`）在 `require('./db')`【之前】就跑完；而换库（`db.js` 的 `applyPendingRestore` 把 `<库>.pending-restore` 盖上来）发生在 `require('./db')` 时。所以 `loadEnvFromDb` 读到的是**换库前的旧库 / 全新库**的 `env_config`，**导入库里的企业微信企业 ID、消息分发密钥、各三方 / 实名密钥根本没进 `process.env`**（只有 `applyPostRestoreEnv` 的 7 个白名单键被注入）。症状：
+  - 管理端「系统配置」页**显示凭据都在**（它直接读库 `env.get`）→ 极具迷惑性；
+  - 但运行时读 `process.env`：企业微信 `getCred` 的 `c.WECOM_CORP_ID` 为空 → `wecom_not_configured`（「企业 ID 丢了」）；`message.isConfigured()` 的 `QWQ_MESSAGE_URL/KEY` 为空 → 短信静默走「只打印不下发」。
+  - **要再重启一次**（那时 `loadEnvFromDb` 读的已是换好的导入库）才好。
+- 修：
+  - `index.js`：`loadEnvFromDb` 之前先存两组键到 global —— `__ssoPlatformEnvKeys`（本函数运行前就有的真·平台/容器环境变量）、`__ssoDbSeededKeys`（本函数从库里补进 `process.env` 的键）。
+  - `db.js`：`applyPendingRestore` 真的换了库就置 `_restoreApplied=true`；新增 `reseedEnvAfterRestore()`（在 `envStmts` 之后、`applyPostRestoreEnv` 之前）——只在本次换过库时执行，把**导入库**的 `env_config` 重注入 `process.env`：导入值覆盖「旧库带进来的值」，但**绝不覆盖平台/容器变量**（`__ssoPlatformEnvKeys`，与 `loadEnvFromDb`「平台优先」一致）；旧库带进来、导入库里没有的键则从 `process.env` 删掉（恢复 = 以备份为准）。7 个「恢复后配置复核」白名单由紧随其后的 `applyPostRestoreEnv` 做最终覆盖，优先级更高。
+  - 效果：导入后**单次重启即生效**，企业微信企业 ID、消息分发密钥等立刻回来；JWT/SESSION 也用备份里的（除非平台变量钉死），与 v3.5.102「恢复库自带备份密钥」一致。
+- ⚠️ **仍有一类凭据恢复后真的要重设**：只配在平台/容器面板（Zeabur env）、从没进「系统配置」的键——它们不在库里、不在备份里，这不是 bug（文档 v3.5.102.1 早写明）。本版的配置体检会把这类显示为「未配置」，一眼可见。
+
+### 🩺 新增「配置体检」（数据备份页「配置体检」卡，仅超管）
+- `GET /api/admin/config-health`（`requireAdmin(1)`）：逐项对比「库里 `env_config`」(`env.get`) 与「本进程生效的 `process.env`」，每项给四态——`ok` 生效 / `stale` 库里有·未生效（需重启，正是上面 bug 的症状，修后基本只在极端情况出现，留作安全网）/ `partial` 半配置（丢了字段）/ `empty` 未配置（可选项＝正常未用）。覆盖：核心密钥（JWT/SESSION、BASE_URL）、消息分发（QWQ Message URL+KEY、短信/邮件通道组）、13 个三方登录（取 `OAUTH_META` 的 primary + 任一 secret）、5 家实名认证（阿里云/火山的「专用 AK 或通用 AK」用「任一槽命中即可」）。**只回布尔 + 键名，绝不下发任何密钥明文**。`summary.needs_restart` = 有 stale 项。
+- 前端（`dashboard.html` `page-adm-backups`）：「数据导出 / 导入」卡下方加「配置体检」卡（`loadConfigHealth`/`renderConfigHealth`/`_CH_ST` 四态配色；`goto('adm-backups')` 时随 `loadBackups` 一起加载；dev mock 四态各示例）。顶部横幅按严重度：有 stale→橙「N 项库里有但没生效，重启一次即可」/ 有 partial→红「N 项只配了一半，去系统配置补填」/ 否则→绿「关键凭据均已生效」。⚠️ `$` 在本文件不是全局助手（`loadBackups` 用的是 `document.getElementById`），用它会 `ReferenceError`，本卡已改回 `document.getElementById`。
+- ⚠️ 测试：`reseedEnvAfterRestore` 决策逻辑复刻 12 项全过（全新实例导入注入企业微信/消息分发/BASE_URL、JWT 用备份值、平台变量不被覆盖、旧库独有键被清、导入空值清空）；配置体检 `itemHealth` 四态 6 项全过（都生效 ok、库里有未生效 stale、全空 empty、丢字段 partial、二选一槽命中通用、一槽未生效整体 stale）；`node --check` server/index.js · db.js · api.js 全过；dashboard 内联 `<script>` 4 块解析 0 错误。dev 浏览器实测数据备份页「配置体检」卡：四态配色正确（企业微信 ✗ 半配置「缺：WECOM_CORP_ID」、飞书/消息分发 ⚠ 库里有·未生效、微信/短信通道 ✓ 生效、BASE_URL/支付宝 — 未配置）+ 顶部橙色「有 2 项库里有但没生效」横幅。真实恢复链路（better-sqlite3 换库 + 进程重启）本机无真依赖未端到端，靠启动顺序审查 + 决策单测 + 与既有 `applyPostRestoreEnv`/`loadEnvFromDb` 同构覆盖。
+
+### 🧹 用户管理 / 账号详情细化（太繁杂）
+用户（截图）：「细化用户管理和账号详情，现在太繁杂了。」纯前端（`dashboard.html`），功能不变，保留所有 `id="ud-*"` 钩子与 render 调用。
+- **用户管理页顶部**：统计卡收紧（`#page-adm-users` scoped：`.stat-card` padding 16→11、`.stat-grid` margin 20→12）；「近 7 日新增用户」趋势图从常开大卡改为**默认折叠的 `<details class="card user-trend">`**（summary 右侧「展开 ▸ / 收起 ▾」）——它本就 `loadAdmStats` 填 `.chart-bars`（真实 `s.daily7`），低活跃实例下几乎空，折叠后不再占满首屏。去掉了 HTML 里的假占位 bar（loadAdmStats 会填真数据）。
+- **账号详情面板**（`renderUserDetailFromData`）：① 删掉「基本信息」里与下方「实名认证」区重复的**「真实姓名（以实名认证为准）」行**（实名区已完整展示 + 有清除/发链接操作）；② 把**次要分区**（授权应用 / 分组·标签 / 联系方式 / 外部通讯录账号）从 `<div class="detail-section">` 改为**默认折叠的 `<details class="detail-section ud-fold">`**（`summary>h4`，caret `▸/▾` 由 `.ud-fold>summary h4::after` 控制，复用 6240 行「合并记录」已有的折叠套路），常用分区（基本信息 / 实名认证 / 所属组织 / 登录方式）保持展开。11 段竖墙 → 4 段常开 + 其余按需展开。
+- ⚠️ `ud-gt-${id}` / `ud-contacts-${id}` 等 id 原样保留（`renderUserGtSection` / `renderUserContactsSection` 异步填充，折叠态下元素仍在 DOM，填充照常）。
+- ⚠️ 测试：dashboard 内联 `<script>` 4 块解析 0 错误；dev 浏览器实测——趋势图折叠（展开 ▸）、4 统计卡收紧、详情面板无「真实姓名」重复行、分区顺序 基本信息/实名/组织/登录方式（开）+ 授权应用/分组标签/联系方式（折叠 open=false），点开折叠分区 caret 变 ▾、趋势展开出「收起 ▾」+ `.chart-bars` 就位。
 
 ## v3.5.137 控制台界面风格切换：新增「清新」风格（StackEnigma / Zeabur 设计系统）（用户反馈）
 

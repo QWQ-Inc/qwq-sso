@@ -4825,6 +4825,70 @@ router.post('/admin/backups/:id/restore', requireAdmin(1), async (req, res) => {
   } catch (e) { res.status(e.needPass ? 400 : 500).json({ error: e.message, need_pass: !!e.needPass }); }
 });
 
+// ── 配置体检（v3.5.139，仅超管）──
+// 逐项对比「库里 env_config」与「本进程真正生效的 process.env」，告诉管理员：哪些凭据在生效、
+// 哪些库里有却没生效（需重启）、哪些只配了一半（丢了字段）。主要用于【导入全站数据后】快速核对，
+// 不必逐个功能试了才发现企业微信企业 ID、消息分发密钥没回来。只回布尔与键名，绝不下发任何密钥明文。
+function configHealthReport() {
+  const envHas  = k => { try { const r = env.get.get(k); return !!(r && String(r.value || '').trim()); } catch (_) { return false; } };
+  const liveHas = k => !!(process.env[k] && String(process.env[k]).trim());
+  // 一个「槽」= 字符串，或「任一命中即可」的数组（如 KYC 的专用 AK / 通用 AK 二选一）
+  const slotState = slot => {
+    const alts = Array.isArray(slot) ? slot : [slot];
+    return { live: alts.some(liveHas), db: alts.some(envHas), keys: alts };
+  };
+  const itemHealth = item => {
+    const slots = item.keys.map(slotState);
+    const allLive = slots.every(s => s.live);
+    const anyLive = slots.some(s => s.live);
+    const anyDb   = slots.some(s => s.db);
+    let status;
+    if (allLive) status = 'ok';                                   // 全部生效
+    else if (!anyLive && !anyDb) status = 'empty';                // 一个都没有（可选项＝正常未用）
+    else if (slots.every(s => s.live || s.db)) status = 'stale';  // 每个槽库里都有，但有的没生效 → 需重启
+    else status = 'partial';                                      // 有的槽完全缺 → 半配置 / 丢字段
+    const missing = slots.filter(s => !s.live).map(s => ({ keys: s.keys, in_db: s.db }));
+    return { status, missing };
+  };
+  const oauthItems = Object.entries(OAUTH_META).map(([k, m]) => ({
+    id: 'oauth_' + k, label: m.label, optional: true,
+    keys: (m.secret && m.secret.length) ? [m.primary, m.secret] : [m.primary],   // 主字段 +（任一密钥）
+  }));
+  const spec = [
+    { group: '核心密钥', items: [
+      { id: 'secrets', label: 'JWT / 会话密钥', keys: ['JWT_SECRET', 'SESSION_SECRET'], note: '缺失会导致登录态集体失效（首启会自动生成，导入后应随备份带回）' },
+      { id: 'base_url', label: '站点地址 BASE_URL', optional: true, keys: ['BASE_URL'], note: '留空＝按请求域名自动探测，不算缺失' },
+    ]},
+    { group: '消息分发（短信 / 邮件验证码）', items: [
+      { id: 'msg_hub', label: 'QWQ Message 分发中心', keys: ['QWQ_MESSAGE_URL', 'QWQ_MESSAGE_KEY'], note: '缺任一项→验证码只打印到后台日志、不真实下发' },
+      { id: 'msg_sms', label: '短信通道组', optional: true, keys: ['QWQ_MESSAGE_SMS_GROUP'] },
+      { id: 'msg_email', label: '邮件通道组', optional: true, keys: ['QWQ_MESSAGE_EMAIL_GROUP'] },
+    ]},
+    { group: '三方登录（本站默认凭证）', items: oauthItems },
+    { group: '实名认证（KYC）', items: [
+      { id: 'kyc_didit',  label: 'Didit',           optional: true, keys: ['DIDIT_API_KEY', 'DIDIT_WORKFLOW_ID'] },
+      { id: 'kyc_stripe', label: 'Stripe Identity', optional: true, keys: ['STRIPE_SECRET_KEY'] },
+      { id: 'kyc_aliyun', label: '阿里云',          optional: true, keys: [['ALIYUN_KYC_ACCESS_KEY_ID', 'ALIYUN_ACCESS_KEY_ID'], ['ALIYUN_KYC_ACCESS_KEY_SECRET', 'ALIYUN_ACCESS_KEY_SECRET']] },
+      { id: 'kyc_volc',   label: '火山引擎',        optional: true, keys: [['VOLC_KYC_ACCESS_KEY_ID', 'VOLCENGINE_ACCESS_KEY_ID'], ['VOLC_KYC_ACCESS_KEY_SECRET', 'VOLCENGINE_ACCESS_KEY_SECRET']] },
+      { id: 'kyc_alipay', label: '支付宝',          optional: true, keys: ['ALIPAY_APP_ID', 'ALIPAY_PRIVATE_KEY'] },
+    ]},
+  ];
+  let ok = 0, stale = 0, partial = 0, empty = 0;
+  const groups = spec.map(g => ({
+    group: g.group,
+    items: g.items.map(it => {
+      const h = itemHealth(it);
+      if (h.status === 'ok') ok++; else if (h.status === 'stale') stale++; else if (h.status === 'partial') partial++; else empty++;
+      return { id: it.id, label: it.label, optional: !!it.optional, note: it.note || '', status: h.status, missing: h.missing };
+    }),
+  }));
+  return { summary: { ok, stale, partial, empty, needs_restart: stale > 0 }, groups };
+}
+router.get('/admin/config-health', requireAdmin(1), (req, res) => {
+  try { res.json({ success: true, health: configHealthReport() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 定时：每 10 分钟看哪些目标到点了（interval_hours>0），一份快照发给本次到期的全部目标
 async function runDueBackups() {
   const due = db.prepare(`SELECT * FROM backup_targets WHERE enabled=1 AND interval_hours>0

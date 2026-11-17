@@ -5,6 +5,15 @@ require('dotenv').config();
 
 // ── 第一步：把数据库中保存的环境变量注入 process.env ──
 // 必须在所有其他 require 之前执行，确保 sms/email/oauth 等模块读到正确的值
+//
+// ⚠️ 本函数读的是【当前磁盘上的库文件】。恢复（导入全站数据）时，db.js 的 applyPendingRestore 要等到本函数之后、
+//    require('./db') 时才把导入库换上来 —— 所以这里读到的是【旧库 / 全新库】的 env_config，导入库里的企业微信企业 ID、
+//    消息分发密钥、各三方/实名密钥等根本没进 process.env（以前要再重启一次才生效，表现为「导入后企业 ID 丢了、
+//    发短信走回打印模式」）。为此先记两组键，交给 db.js 换库后重新注入（见 db.js reseedEnvAfterRestore）：
+//      __ssoPlatformEnvKeys —— 本函数运行【前】就存在的真·平台/容器环境变量（Zeabur 面板 / 容器 env，恢复时绝不覆盖）
+//      __ssoDbSeededKeys    —— 本函数从库里补进 process.env 的键（恢复时若导入库里没有，应当清掉）
+global.__ssoPlatformEnvKeys = new Set(Object.keys(process.env));
+global.__ssoDbSeededKeys = new Set();
 (function loadEnvFromDb() {
   try {
     const Database = require('better-sqlite3');
@@ -20,6 +29,7 @@ require('dotenv').config();
         // 只填补空缺，不覆盖已存在的环境变量（Zeabur/系统环境变量优先）
         if (!process.env[key_name]) {
           process.env[key_name] = value;
+          global.__ssoDbSeededKeys.add(key_name);
           count++;
         }
       }
@@ -150,7 +160,7 @@ function buildFooterHtml() {
     : '';
 
   // 版本信息点击跳转 GitHub（不可修改）
-  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.137</a>`;
+  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.139</a>`;
 
   return `<footer style="text-align:center;padding:20px 20px 8px;margin-top:24px;font-size:11px;color:rgba(0,0,0,.38);border-top:1px solid rgba(0,0,0,.07);line-height:1.9;user-select:none;">
   <div style="font-weight:500;">${copyright}</div>${infoLine}

@@ -15,7 +15,7 @@ const {
   generateRegistrationOptions, verifyRegistrationResponse,
   generateAuthenticationOptions, verifyAuthenticationResponse,
 } = require('@simplewebauthn/server');
-const { users, webauthn } = require('./db');
+const { users, webauthn, webauthnChallenges } = require('./db');
 const { signToken, requireAuth, appExpiresIn } = require('./auth');
 
 const router = express.Router();
@@ -78,24 +78,34 @@ router.post('/register-options', requireAuth, blockPublic, async (req, res) => {
     excludeCredentials: existing.map(c => ({ id: c.cred_id, transports: c.transports ? JSON.parse(c.transports) : undefined })),
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
   });
-  req.session.passkeyReg = { challenge: options.challenge, uid: user.id };
+  try { webauthnChallenges.purge.run(); } catch (_) {}
+  webauthnChallenges.insert.run(options.challenge, 'reg', user.id);   // 存库，不再依赖 session
   res.json(options);
 });
 
 router.post('/register-verify', requireAuth, blockPublic, async (req, res) => {
-  const sess = req.session.passkeyReg;
-  if (!sess || sess.uid !== req.user.uid) return res.status(400).json({ error: '注册会话已过期，请重试' });
   const { rpID, origin } = rpConfig(req);
+  // 浏览器签的那串 challenge 必须是「本用户」刚在 /register-options 领到的（存库，无 session 依赖）
+  let usedChallenge = null;
+  const expectChallenge = ch => {
+    const row = webauthnChallenges.get.get(ch, 'reg');
+    if (row && row.user_id === req.user.uid) { usedChallenge = ch; return true; }
+    return false;
+  };
   let verification;
   try {
     verification = await verifyRegistrationResponse({
       response: req.body.credential,
-      expectedChallenge: sess.challenge,
+      expectedChallenge: expectChallenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
     });
-  } catch (e) { return res.status(400).json({ error: 'Passkey 校验失败：' + e.message }); }
-  delete req.session.passkeyReg;
+  } catch (e) {
+    if (usedChallenge) try { webauthnChallenges.del.run(usedChallenge); } catch (_) {}
+    const msg = usedChallenge ? e.message : '注册会话已过期，请重试';
+    return res.status(400).json({ error: 'Passkey 校验失败：' + msg });
+  }
+  if (usedChallenge) try { webauthnChallenges.del.run(usedChallenge); } catch (_) {}   // 一次性消费
   if (!verification.verified || !verification.registrationInfo) return res.status(400).json({ error: 'Passkey 校验未通过' });
 
   const cred = verification.registrationInfo.credential;
@@ -113,13 +123,12 @@ router.post('/register-verify', requireAuth, blockPublic, async (req, res) => {
 router.post('/login-options', async (req, res) => {
   const { rpID } = rpConfig(req);
   const options = await generateAuthenticationOptions({ rpID, userVerification: 'preferred' });
-  req.session.passkeyAuth = { challenge: options.challenge };
+  try { webauthnChallenges.purge.run(); } catch (_) {}
+  webauthnChallenges.insert.run(options.challenge, 'auth', null);   // 存库，不再依赖 session
   res.json(options);
 });
 
 router.post('/login-verify', async (req, res) => {
-  const sess = req.session.passkeyAuth;
-  if (!sess) return res.status(400).json({ error: '登录会话已过期，请重试' });
   const resp = req.body.credential;
   if (!resp || !resp.id) return res.status(400).json({ error: '无效的 Passkey 响应' });
 
@@ -130,17 +139,28 @@ router.post('/login-verify', async (req, res) => {
   if (user.status === 'disabled') return res.status(403).json({ error: '账号已停用，请联系管理员' });
 
   const { rpID, origin } = rpConfig(req);
+  // 浏览器签的那串 challenge 必须是刚在 /login-options 下发过的（存库，无 session 依赖 → 恢复/重启/换密钥/多实例都不丢）
+  let usedChallenge = null;
+  const expectChallenge = ch => {
+    const hit = webauthnChallenges.get.get(ch, 'auth');
+    if (hit) { usedChallenge = ch; return true; }
+    return false;
+  };
   let verification;
   try {
     verification = await verifyAuthenticationResponse({
       response: resp,
-      expectedChallenge: sess.challenge,
+      expectedChallenge: expectChallenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
       credential: toLibCredential(row),
     });
-  } catch (e) { return res.status(400).json({ error: 'Passkey 校验失败：' + e.message }); }
-  delete req.session.passkeyAuth;
+  } catch (e) {
+    if (usedChallenge) try { webauthnChallenges.del.run(usedChallenge); } catch (_) {}
+    const msg = usedChallenge ? e.message : '登录会话已过期，请重试';
+    return res.status(400).json({ error: 'Passkey 校验失败：' + msg });
+  }
+  if (usedChallenge) try { webauthnChallenges.del.run(usedChallenge); } catch (_) {}   // 一次性消费，防重放
   if (!verification.verified) return res.status(401).json({ error: 'Passkey 校验未通过' });
 
   // 更新签名计数器（防重放）

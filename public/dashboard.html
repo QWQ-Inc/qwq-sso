@@ -198,6 +198,23 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC'
 .rn-box .rn-info{flex:1;font-size:12px;color:var(--txm);}
 .rn-box .rn-name{font-size:13px;font-weight:700;color:var(--tx);}
 
+/* 用户管理页细化（v3.5.139）：统计条收紧 + 7 日趋势默认折叠，减少首屏噪音 */
+#page-adm-users .stat-grid{margin-bottom:12px;}
+#page-adm-users .stat-card{padding:11px 14px;}
+#page-adm-users .user-trend{margin-bottom:16px;}
+#page-adm-users .user-trend>summary{cursor:pointer;list-style:none;padding:11px 16px;font-size:13px;font-weight:600;color:var(--tx);}
+#page-adm-users .user-trend>summary::-webkit-details-marker{display:none;}
+#page-adm-users .user-trend>summary::after{content:'展开 ▸';float:right;font-size:11px;font-weight:400;color:var(--txd);}
+#page-adm-users .user-trend[open]>summary{border-bottom:1px solid var(--bd);}
+#page-adm-users .user-trend[open]>summary::after{content:'收起 ▾';}
+/* 账号详情：次要分区可折叠（基本信息 / 实名 / 组织 / 登录方式保持展开）*/
+.detail-section.ud-fold>summary{cursor:pointer;list-style:none;}
+.detail-section.ud-fold>summary::-webkit-details-marker{display:none;}
+.detail-section.ud-fold>summary h4{margin-bottom:0;}
+.detail-section.ud-fold>summary h4::after{content:'▸';float:right;font-size:9px;font-weight:400;color:var(--txd);}
+.detail-section.ud-fold[open]>summary h4{margin-bottom:8px;}
+.detail-section.ud-fold[open]>summary h4::after{content:'▾';}
+
 /* Tabs */
 .tabs{display:flex;border-bottom:2px solid var(--bd);margin-bottom:16px;}
 .tab{padding:8px 16px;font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--txm);transition:all .15s;}
@@ -859,6 +876,29 @@ function _devApi(method, path, body) {
     return ok({ success:true });
   }
   if (method === 'POST' && path === '/user/profile') return ok({ success:true });
+  // 配置体检（v3.5.139）演示：ok / stale(需重启) / partial(丢字段) / empty 四态各示例一项
+  if (path === '/admin/config-health' && method === 'GET') return ok({ success:true, health: {
+    summary: { ok:3, stale:2, partial:1, empty:5, needs_restart:true },
+    groups: [
+      { group:'核心密钥', items:[
+        { id:'secrets', label:'JWT / 会话密钥', optional:false, note:'缺失会导致登录态集体失效', status:'ok', missing:[] },
+        { id:'base_url', label:'站点地址 BASE_URL', optional:true, note:'留空＝按请求域名自动探测，不算缺失', status:'empty', missing:[{keys:['BASE_URL'],in_db:false}] },
+      ]},
+      { group:'消息分发（短信 / 邮件验证码）', items:[
+        { id:'msg_hub', label:'QWQ Message 分发中心', optional:false, note:'缺任一项→验证码只打印到后台日志、不真实下发', status:'stale', missing:[{keys:['QWQ_MESSAGE_URL'],in_db:true},{keys:['QWQ_MESSAGE_KEY'],in_db:true}] },
+        { id:'msg_sms', label:'短信通道组', optional:true, note:'', status:'ok', missing:[] },
+        { id:'msg_email', label:'邮件通道组', optional:true, note:'', status:'empty', missing:[{keys:['QWQ_MESSAGE_EMAIL_GROUP'],in_db:false}] },
+      ]},
+      { group:'三方登录（本站默认凭证）', items:[
+        { id:'oauth_wecom', label:'企业微信', optional:true, note:'', status:'partial', missing:[{keys:['WECOM_CORP_ID'],in_db:false}] },
+        { id:'oauth_wechat', label:'微信公众号', optional:true, note:'', status:'ok', missing:[] },
+        { id:'oauth_feishu', label:'飞书', optional:true, note:'', status:'stale', missing:[{keys:['FEISHU_APP_ID'],in_db:true},{keys:['FEISHU_APP_SECRET'],in_db:true}] },
+      ]},
+      { group:'实名认证（KYC）', items:[
+        { id:'kyc_alipay', label:'支付宝', optional:true, note:'', status:'empty', missing:[{keys:['ALIPAY_APP_ID'],in_db:false},{keys:['ALIPAY_PRIVATE_KEY'],in_db:false}] },
+      ]},
+    ],
+  }});
   if (method === 'POST' && path === '/user/contact/send-code') return ok({ success:true, dev:true, expires:600 });
   if (method === 'POST' && path === '/user/contact/verify') {
     if (body && body.type && body.value) { db.myUser[body.type] = body.value; }
@@ -2247,21 +2287,13 @@ async function loadMe() {
           </div>
         </div>
 
-        <!-- 每日新增趋势 -->
-        <div class="card" style="margin-bottom:16px;">
-          <div class="card-header"><h3>近 7 日新增用户</h3></div>
+        <!-- 每日新增趋势（默认折叠，减少首屏噪音；v3.5.139）-->
+        <details class="card user-trend">
+          <summary>近 7 日新增用户</summary>
           <div class="card-body">
-            <div class="chart-bars">
-              <div class="bar-col"><div class="bar" style="height:45px;"></div><div class="bar-label">17日</div></div>
-              <div class="bar-col"><div class="bar" style="height:60px;"></div><div class="bar-label">18日</div></div>
-              <div class="bar-col"><div class="bar" style="height:30px;"></div><div class="bar-label">19日</div></div>
-              <div class="bar-col"><div class="bar" style="height:70px;background:var(--ac2);"></div><div class="bar-label">20日</div></div>
-              <div class="bar-col"><div class="bar" style="height:55px;"></div><div class="bar-label">21日</div></div>
-              <div class="bar-col"><div class="bar" style="height:48px;"></div><div class="bar-label">22日</div></div>
-              <div class="bar-col"><div class="bar" style="height:38px;"></div><div class="bar-label">23日</div></div>
-            </div>
+            <div class="chart-bars"></div>
           </div>
-        </div>
+        </details>
 
         <!-- 用户账号详情 -->
         <div class="card">
@@ -3147,6 +3179,16 @@ async function loadMe() {
               <br>• <b>不含</b>在 Zeabur 等平台面板里直接设的环境变量（运行时它们优先，也不在库里）——只配在面板、没进「系统配置」的密钥，恢复到新环境后需重设一遍。
             </div>
           </div>
+        </div>
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3>配置体检</h3>
+            <button class="btn" style="font-size:11px;" onclick="loadConfigHealth()"><span data-ic="sync"></span> 重新体检</button>
+          </div>
+          <div style="padding:0 20px 8px;font-size:12px;color:var(--txd);line-height:1.8;">
+            逐项核对各凭据是否<b>真正在本进程生效</b>（而不仅仅存在库里）。<b>导入全站数据后建议看一眼</b>：显示「库里有、未生效」= 重启一次即可；「半配置」= 丢了字段要补填；只在平台 / 容器面板里设、没进「系统配置」的凭据，恢复到新环境需重设。
+          </div>
+          <div id="confighealth-box" style="padding:0 20px 16px;">加载中…</div>
         </div>
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -4260,7 +4302,7 @@ function goto(page) {
   if(page === 'adm-limited') loadLimitedAdmins();
   if(page === 'adm-deletions') { loadDeletions(); loadMerges(); }
   if(page === 'adm-anomalies') loadAnomalies();
-  if(page === 'adm-backups') loadBackups();
+  if(page === 'adm-backups') { loadBackups(); loadConfigHealth(); }
   if(page === 'adm-sms-channels') loadSmsChannels();
   if(page === 'memo') loadMemos();
   if(page === 'adm-memo') loadAdmMemos();
@@ -6104,7 +6146,6 @@ function renderUserDetailFromData(u) {
     <div class="detail-section"><h4>基本信息</h4>
       <div class="kv-grid">
         <div class="kv"><div class="k">显示名</div><div class="v">${esc(u.name||'—')}</div></div>
-        <div class="kv"><div class="k">真实姓名 <span style="color:var(--txd);font-weight:400;">（以实名认证为准）</span></div><div class="v">${u.kyc_verified ? esc(u.kyc_name||'—') + ' <span class="badge ok" style="font-size:10px;">已实名</span>' : '<span style="color:var(--txd);">未实名</span>'}</div></div>
         <div class="kv"><div class="k">用户编号</div><div class="v">${uidOf(u)}</div></div>
         <div class="kv"><div class="k">状态</div><div class="v">${statusBadge}</div></div>
         <div class="kv"><div class="k">积分</div><div class="v">${u.points} pts</div></div>
@@ -6124,18 +6165,18 @@ function renderUserDetailFromData(u) {
       </div>
       ${_udBindingsHtml(u)}
     </div>
-    ${(u.ext_accounts||[]).length ? `<div class="detail-section"><h4>外部通讯录账号 <span style="font-size:10px;color:var(--txd);font-weight:400;">（应用内姓名来自外部系统，仅供参考；真实姓名以实名认证为准）</span></h4>${_udExtHtml(u)}</div>` : ''}
-    <div class="detail-section"><h4>授权应用</h4>
+    ${(u.ext_accounts||[]).length ? `<details class="detail-section ud-fold"><summary><h4>外部通讯录账号 <span style="font-size:10px;color:var(--txd);font-weight:400;">（应用内姓名来自外部系统，仅供参考；真实姓名以实名认证为准）</span></h4></summary>${_udExtHtml(u)}</details>` : ''}
+    <details class="detail-section ud-fold"><summary><h4>授权应用</h4></summary>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         ${(u.apps||[]).map(a=>`<span class="badge grey">${a.name}</span>`).join('')||'<span style="font-size:12px;color:var(--txd);">暂无</span>'}
       </div>
-    </div>
-    <div class="detail-section"><h4>分组 / 标签 <span style="font-size:10px;color:var(--txd);font-weight:400;">（组织维度，与等级无关）</span></h4>
+    </details>
+    <details class="detail-section ud-fold"><summary><h4>分组 / 标签 <span style="font-size:10px;color:var(--txd);font-weight:400;">（组织维度，与等级无关）</span></h4></summary>
       <div id="ud-gt-${u.id}" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
-    </div>
-    <div class="detail-section"><h4>联系方式 <span style="font-size:10px;color:var(--txd);font-weight:400;">（多手机/邮箱，企业微信登录会灌入）</span></h4>
+    </details>
+    <details class="detail-section ud-fold"><summary><h4>联系方式 <span style="font-size:10px;color:var(--txd);font-weight:400;">（多手机/邮箱，企业微信登录会灌入）</span></h4></summary>
       <div id="ud-contacts-${u.id}" style="font-size:12px;color:var(--txd);"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
-    </div>
+    </details>
     <div id="ud-sib-${u.id}"></div>
     <div id="ud-del-${u.id}"></div>
     <div id="ud-mg-${u.id}"></div>
@@ -6273,6 +6314,51 @@ async function admDeleteKyc(uid) {
 }
 
 // ── 数据备份（v3.5.46）──
+// ── 配置体检（v3.5.139）──
+const _CH_ST = {
+  ok:      { mark: '✓', color: 'var(--ok,#0a0)',   text: '生效' },
+  stale:   { mark: '⚠', color: 'var(--warn,#c93)', text: '库里有、未生效' },
+  partial: { mark: '✗', color: 'var(--err,#c33)',  text: '半配置' },
+  empty:   { mark: '—', color: 'var(--txd)',        text: '未配置' },
+};
+function renderConfigHealth(h) {
+  const box = document.getElementById('confighealth-box'); if (!box) return;
+  if (!h) { box.innerHTML = '<div style="color:var(--err);">体检失败（需要超级管理员权限）</div>'; return; }
+  const s = h.summary || {};
+  let banner;
+  if (s.needs_restart)
+    banner = `<div style="padding:10px 12px;border-radius:3px;background:rgba(204,153,0,.1);border:1px solid var(--warn,#c93);color:var(--txt);line-height:1.8;">⚠️ 有 <b>${s.stale}</b> 项凭据<b>库里有、但本进程没生效</b> —— 重启一次服务即可生效（导入全站数据后常见）。</div>`;
+  else if ((s.partial || 0) > 0)
+    banner = `<div style="padding:10px 12px;border-radius:3px;background:rgba(204,51,51,.08);border:1px solid var(--err,#c33);color:var(--txt);line-height:1.8;">✗ 有 <b>${s.partial}</b> 项只配了一半（丢了字段），请到「系统配置」补填。</div>`;
+  else
+    banner = `<div style="padding:10px 12px;border-radius:3px;background:rgba(0,160,80,.08);border:1px solid var(--ok,#0a0);color:var(--txt);line-height:1.8;">✓ 关键凭据均已生效（${s.ok} 项生效、${s.empty} 项未使用）。</div>`;
+  const rows = (h.groups || []).map(g => {
+    const items = g.items.map(it => {
+      const st = _CH_ST[it.status] || _CH_ST.empty;
+      const miss = (it.missing || []).map(m => (m.keys || []).join(' / ')).filter(Boolean);
+      let detail = '';
+      if (it.status === 'stale') detail = '重启后生效';
+      else if (it.status === 'partial') detail = '缺：' + miss.join('、');
+      else if (it.status === 'empty') detail = it.optional ? '未使用' : ('缺：' + miss.join('、'));
+      if (it.note && (it.status === 'stale' || it.status === 'partial' || (it.status === 'empty' && !it.optional)))
+        detail += (detail ? ' · ' : '') + it.note;
+      return `<div style="display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid var(--bd);">
+        <span style="color:${st.color};font-weight:700;width:14px;text-align:center;flex:none;">${st.mark}</span>
+        <span style="min-width:150px;flex:none;">${esc(it.label)}</span>
+        <span style="color:${st.color};font-size:12px;flex:none;">${st.text}</span>
+        <span style="color:var(--txd);font-size:11px;">${detail ? esc(detail) : ''}</span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-top:14px;"><div style="font-weight:600;font-size:12px;color:var(--txm,var(--txd));margin-bottom:4px;">${esc(g.group)}</div>${items}</div>`;
+  }).join('');
+  box.innerHTML = banner + rows;
+}
+async function loadConfigHealth() {
+  const box = document.getElementById('confighealth-box'); if (box) box.innerHTML = '加载中…';
+  const { ok, data } = await api('GET', '/admin/config-health');
+  renderConfigHealth(ok ? data.health : null);
+}
+
 let _backups = [];
 const _fmtSize = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
 async function loadBackups() {

@@ -4,6 +4,29 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.139
+
+修复「导入全站数据后凭据失效 + Passkey 失效」+ 新增「配置体检」+ 细化用户管理 / 账号详情。
+
+- **修复 Passkey 导入后用不了（`Unexpected authentication response challenge`，一个浏览器校验失败、一个点不动）。**
+  Passkey 的一次性 challenge 以前存在 express-session（内存 MemoryStore + `SESSION_SECRET` 签名的 cookie）里——
+  恢复/重启会清空内存、换 `SESSION_SECRET` 会让旧 cookie 失效、多实例之间也不共享，于是「下发 challenge」和「校验 challenge」
+  对不上。现在改为**存库**（新表 `webauthn_challenges`，和 `oauth_states` / `otp_store` 同款短时一次性令牌，10 分钟过期），
+  校验时用「浏览器实际签的那串 challenge 是否是我们刚下发过的」来判断（`@simplewebauthn` 的函数式 `expectedChallenge`），
+  一次性消费防重放、注册 challenge 绑定本人。无 session 依赖 → 恢复/重启/换密钥/多实例都不丢。
+- **修复一个真实 bug：导入全站数据后，企业微信企业 ID、消息分发密钥等凭据要再重启一次才生效。**
+  根因是启动顺序：`index.js` 的 `loadEnvFromDb()` 在 `require('./db')`【之前】就把环境变量读进 `process.env`，
+  而换库（`applyPendingRestore`）发生在 `require('./db')` 时——于是读到的是旧库 / 全新库的配置，导入库里的凭据没进进程。
+  症状：管理端「系统配置」显示凭据都在（直接读库），但企业微信登录报「企业 ID 丢了」(`wecom_not_configured`)、
+  发短信静默走回「只打印不下发」(`message.isConfigured()` 读 `process.env` 为空)。现在换库后会立即把导入库的
+  `env_config` 重新注入本进程（覆盖旧值、但绝不覆盖平台/容器环境变量；旧库独有、导入库没有的键则清掉），无需二次重启。
+- **新增「配置体检」**（数据备份页，仅超管）：逐项对比「库里 env_config」与「本进程真正生效的 `process.env`」，
+  标出 ✓ 生效 / ⚠ 库里有·未生效（重启后即可）/ ✗ 半配置（丢字段，需补填）/ — 未配置。覆盖核心密钥、消息分发、
+  13 个三方登录、5 家实名认证。导入后看一眼就知道哪些凭据没回来，不必逐个功能试才发现。只回布尔与键名，绝不下发密钥明文。
+- **细化用户管理 / 账号详情（太繁杂）**：用户管理页统计卡收紧、「近 7 日新增」趋势图改为默认折叠（减少首屏噪音）；
+  账号详情去掉与「实名认证」区重复的「真实姓名」行，并把次要分区（授权应用 / 分组·标签 / 联系方式 / 外部通讯录）
+  收进默认折叠的分区，常用分区（基本信息 / 实名 / 所属组织 / 登录方式）保持展开，长长的一竖条清爽很多。纯前端，功能不变。
+
 ## v3.5.137 — 控制台界面风格切换：新增「清新」风格（StackEnigma / Zeabur 设计系统，Apache-2.0）
 
 给控制台（`dashboard.html`）加可切换的界面风格。风格 1「经典」= 现有方正风（默认）；风格 2「清新」= 基于 Zeabur 开源设计系统的 StackEnigma 外观（草绿主色、Geist 字体、12px 圆角卡片、上下渐变按钮、侧栏当前项抬起白胶囊、柔和阴影）。实现为 `html[data-skin="se"]` 作用域换肤：dashboard 已高度 token 化，主体靠在该选择器下重映射 `--sf/--bd/--ac/--r-*/--sh-*` 等 token，再给按钮渐变、侧栏胶囊、字体做签名级 class 覆盖——完全不影响风格 1。切换器在账号菜单里（经典 | 清新），写 `localStorage.sso_skin`，首帧前应用、刷新不闪。另按反馈调整：圆角收紧一档（卡片 10 / 控件 5 / 徽章 4，不再整圆）、页内按钮放大到 34px、section tabs（`.tabs`）由下划线式改为分段条（灰底轨道 + 当前项抬起白胶囊）。清新风格另带**深色模式**（StackEnigma 深蓝底 + 蓝主色），切换器加「配色：浅色/深色/跟随系统」一行（仅清新风格显示）；`data-theme` 只在清新风格下写、经典风格始终浅色不受影响。本版仅控制台；登录页等后续再做。署名见 `THIRD-PARTY-NOTICES.md`。
