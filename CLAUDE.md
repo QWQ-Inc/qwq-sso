@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.139**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.141**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,32 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.141 系统配置页控件细化：裸文本框按语义升级为开关 / 下拉 / 数字框（用户反馈）
+
+三级版本（纯前端，仅 `public/dashboard.html`）。用户（系统配置页截图）：「这些可选项实际上都可以改成开关或者下拉式选项。」——`REGISTER_*_ENABLED`、`PASSWORD_CHANGE_ENABLED` 等布尔项、`UID_MODE`(sequential/random) 这类枚举都是裸文本框，用户要手敲值、容易填错。
+
+### 做法（集中注解表 + 渲染分支，不逐行改大数组）
+- 在 `ENV_GROUPS` 定义后加三张「控件类型」注解表（`ENV_TOGGLES`/`ENV_SELECTS`/`ENV_NUMBERS`），一次 `forEach` 给对应 var 打上 `v.control`（toggle/select/number）。**密钥(`v.secret`)一律跳过**——保持文本 + 打码，三道防线不动。
+- **开关(14 个)**：`.toggle` 组件（复用等级权限那套，line 569 的 `.toggle input` 保护规则还在，全局自绘 checkbox 不会把它变方块）。`defaultOn` 区分 fail-open（默认开：`REGISTRATION_ENABLED`/各 `REGISTER_*`/`PASSWORD_*`/`DEVICES_SELF_ENABLED`/`LOGINDATE_EXPORT`，存 off 关）与 fail-closed（默认关：`WATERMARK_ENABLED`/`WATERMARK_BURN`/`SELFHOST_UPDATE(_RESTART)`/`KYC_ALLOW_DELETE`，存 on 开）；`KYC_ENABLED` 用 true/false。`envToggleOn(v)` 按 `_ENV_OFF_WORDS`/`_ENV_ON_WORDS`（与后端 `_featOff` + 各 on-word 正则一致）判当前态，空值按 `defaultOn`。翻转 → `setEnvToggle` 写 `onVal`/`offVal`（默认 'on'/'off'，后端都能解析）+ 实时状态文字。
+- **下拉(5 个)**：`UID_MODE`(sequential/random)、`EMAIL_DOMAIN_MODE`(off/whitelist/blacklist)、`NODE_ENV`(空/production/development)、`VOLC_KYC_MODE`、`ALIYUN_KYC_MODE`。空值选中各自 `def`（与后端默认一致）。
+- **数字框(25 个)**：各 TTL / 天数 / 位数 / 页数 / px / 透明度(step 0.01)/角度等 → `<input type=number>` 带 min/max/step。
+- ⚠️ **刻意保留文本**：自由/混合语义字段——`WATERMARK_SCOPE`(逗号页面列表或 all)、`INAPP_AUTO_LOGIN`(all/off/逗号列表)、`WATERMARK_COLOR`(#RGB~#RRGGBBAA 带 alpha，`type=color` 会丢 alpha)、`MICROSOFT_TENANT`(common 或任意租户 id)、`ALIPAY_KYC_BIZ_CODE`、`DEFAULT_PHONE_CC`、`UID_PREFIX` 等。
+- **保存护栏**：`saveAllEnv` 非 secret 字段原本每次都提交当前值。加 `if (v.control && !v.dirty) return;`——开关/下拉/数字框**没被用户改动就不提交**，避免把「显示的默认值」（如 UID_MODE 空库显示 sequential）当新值写回；文本/密钥行为不变。toggle 无 `envinput-` 元素 → saveAllEnv 读 `v.value`（`setEnvToggle` 经 `onEnvInput` 已写入 + dirty）。
+- ⚠️ 测试：dev 浏览器实测（静态服务 public/ + 注入 `_dev_session` 超管，`/admin/env` dev-mock 返回空库）——121 行里 14 开关 / 5 下拉 / 25 数字框 / 77 文本，默认态全对（fail-open 开、fail-closed 关、下拉 def、数字框 min/max 就位、密钥仍文本+打码）；翻 `REGISTRATION_ENABLED`→off、`WATERMARK_ENABLED`→on、改 `UID_MODE`→random、`UID_LENGTH`→8，截获 saveAllEnv 的 POST 只含这 4 项且存值正确（off/on/random/8），未改动的控件一个不提交、密钥全不提交；控制台无新增报错（仅既有 `renderUserDeletionSection`/`renderUserSiblings` dev-mock 缺失，与本版无关）；截图确认开关/下拉/数字框三种控件样式协调。见 [[ui-design-preference]]。
+
+## v3.5.140 管理端菜单收进 7 个可折叠分组（26 个平铺 tab → 分组导航）（用户反馈）
+
+三级版本（纯前端，仅 `public/dashboard.html`）。用户：「管理端有很多功能点其实可以整合，没必要那么多 tab，而且跳转来去很繁杂。」管理端菜单已堆到 **26 个平铺项**，一屏放不下、找功能靠扫、相关功能分散。
+
+### 做法（低风险换肤式分组，零功能改动）
+- **把 26 个按钮收进 7 个可折叠分组**，按钮的 `id="ni-adm-*"` / `onclick="goto('adm-*')"` **一个不动** —— 所以 `goto` 分发、权限门（`SUPERADMIN_ONLY`/`ORGADMIN_PAGES`/`LIMITED_ADMIN_PAGES`/`canMemoAdmin`）、标题映射、`_setNavLock` 锁定、`bootToLastPage` 恢复全部照常生效，纯导航外壳改造、可回退。
+- 7 组：**身份与组织**（用户/分组标签/组织/等级）、**账号治理**（注销删除/异常账号/权限授权/限权管理员）、**应用与接入**（应用/API 调用/调用日志/插件 + `nav-plugin-panels` 容器）、**门禁与设备**（门禁/设备/身份核验）、**运营内容**（商城/公告/备忘录/登录协议）、**日志与审计**（登录日志/审计存证）、**系统设置**（系统配置/短信通道/数据备份/域名验证文件/关于更新）。数据备份、域名验证文件仍 `display:none`（经系统配置侧栏跳转），归入系统设置组但不显。
+- **折叠逻辑**（`updateNavGroups`/`toggleNavGroup`，localStorage 键 `sso_nav_open`）：首屏只展开**当前页所在组**，其余收起；点组头展开/收起并持久化；`goto`/`showLockedPage` 设 active 后调 `updateNavGroups()`，**当前页所在组始终自动展开**（`hasActive || 已持久化`），相关兄弟页一键可达。
+- **角色隐空组**：`_setNavLock` 用 `opacity` 不是 `display:none`，所以空判按 `style.display` 判断准确；组织/限权管理员把非白名单按钮 `display:none` 后，`updateNavGroups` 把**组内按钮全隐的组整组收起**（如组织管理员只剩「门禁与设备」「日志与审计」两组）。接在 `updateRestrictedNavItems` 末尾调用。
+- CSS：`.nav-group`/`.nav-group-header`（大写小标题 + 前导图标 + 右侧 chevron，`.open` 时 chevron 旋转 90°）/`.nav-group-body`（`.open` 才 `display:block`），全用 token，清新皮肤自动适配。
+- ⚠️ 测试：dev 浏览器实测（静态服务 public/ + 注入 `_dev_session` 超管）—— 7 组渲染、首屏只展开当前组、点组头展开+持久化 `["g-gov"]`、跨组导航（进审计存证）自动展开 g-log 且手动展开的 g-gov 保留、模拟组织管理员只剩 2 组其余自动隐藏、截图外观整洁；控制台无新增报错（仅既有 `renderUserDeletionSection`/`renderUserSiblings` dev-mock 缺失，与本版无关）。
+- ⚠️ 本版只做**分组收纳**（所有页面原样保留），没有把页面真合并成带内部 tab 的少数「超级页」—— 那涉及改 `goto` 分发/标题映射/权限数组/各 load 函数/`bootToLastPage`，风险大，按需再逐簇（如日志审计簇、账号治理簇）单独做。见 [[ui-design-preference]]。
 
 ## v3.5.139 修导入后凭据失效（换库未重注入 env）+ Passkey 失效（challenge 存库）+ 配置体检 + 用户管理/账号详情细化（用户反馈）
 
