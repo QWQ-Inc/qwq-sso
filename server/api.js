@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, twofa, loginApprovals, realtimeCodes, totpVault, printers, printJobs, printRules, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
+const { db, nextUidSeq, users, oauth, oauthProviders, oauthSubjects, orgMembers, dirSources, orgFolders, verifyFiles, appOrgs, appIcons, appFolders, appVisibleToUser, appVisibleInSession, memos, memoAtt, access, devices, deviceCommands, mdmProfiles, deviceProfiles, contacts, departments, smsChannels, verify, otp, logs, apps, idp, redirectPolicies, twofa, loginApprovals, realtimeCodes, totpVault, printers, printJobs, printRules, webauthn, announcements, documents, apiKeys, env, points, limitedAdmins } = require('./db');
 const mdm = require('./mdm');
 const mdmApple = require('./mdm-apple');
 const plist = require('./plist');
@@ -18,6 +18,7 @@ const ipp = require('./ipp');
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
 const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, appExpiresIn } = require('./auth');
 const totp = require('./twofa');
+const { methodCategory } = require('./redirect-policy');   // 登录方式→凭证分类（登录跳转策略 match_auth 用）
 const { subjectGateError } = require('./org-policy');
 // 短信与邮件统一走 QWQ Message 分发中心（v3.3.3 起不再直连服务商）
 const { sendSmsCode, sendEmailCode, sendEmail, isConfigured: hasMessageHub } = require('./message');
@@ -352,7 +353,7 @@ function finishLogin(res, user, req, method, extra = {}) {
   logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method, ip: req.ip, ua });
   // 插件钩子（v3.5.135）：登录成功副作用 + 改写 SSO 令牌负载
   try { require('./plugins').runAction('login.success', { user, method, ip: req.ip, req }); } catch (_) {}
-  let _payload = { uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) };
+  let _payload = { uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, lm: methodCategory(method), ...(org ? { org, org_scoped: orgScoped } : {}) };
   try { const p = require('./plugins').runFilter('login.token', _payload, { user, method }); if (p && typeof p === 'object') _payload = p; } catch (_) {}
   const token = signToken(_payload, { expiresIn: appExpiresIn(req) });
   return res.json({ success: true, token, user: safeUser(user), mustSetup2fa: mustSetup2fa(user), org, org_scoped: orgScoped });
@@ -398,6 +399,80 @@ router.patch('/admin/sms-channels/:id', requireAdmin(2), (req, res) => {
 });
 router.delete('/admin/sms-channels/:id', requireAdmin(2), (req, res) => {
   smsChannels.remove.run(req.params.id);
+  res.json({ success: true });
+});
+
+// ── 登录跳转策略（v3.5.142）：第三方「用 QWQ SSO 登录」校验后怎么跳回应用 ──
+// 读 Lv.3 / 写 Lv.2；安全敏感（reauth 强确认由这里配），前端放在仅超管可见的菜单。
+const REDIR_MODES     = ['direct', 'countdown', 'consent', 'reauth'];
+const REDIR_SCENARIOS = ['any', 'first', 'returning', 'idp'];
+const REDIR_AUTHS     = ['any', 'password', 'code', 'oauth', 'passkey', 'other'];
+const REDIR_REAUTH    = ['password', 'twofa'];
+function redirPolicyView(p) {
+  return {
+    id: p.id, name: p.name, enabled: !!p.enabled, priority: p.priority,
+    match_app: p.match_app || '', match_subject: p.match_subject || '',
+    match_scenario: p.match_scenario || 'any', match_auth: p.match_auth || 'any',
+    mode: p.mode, countdown: p.countdown, reauth_methods: p.reauth_methods || 'password',
+    note: p.note || '', created_at: p.created_at,
+  };
+}
+function redirPolicyFromBody(b, old) {
+  const name = String(b?.name || '').trim();
+  if (!name) return { error: '请填写策略名称' };
+  const mode = REDIR_MODES.includes(b?.mode) ? b.mode : 'consent';
+  const scenario = REDIR_SCENARIOS.includes(b?.match_scenario) ? b.match_scenario : 'any';
+  const auth = REDIR_AUTHS.includes(b?.match_auth) ? b.match_auth : 'any';
+  const matchApp = String(b?.match_app || '').trim();
+  if (matchApp && !apps.findById.get(matchApp)) return { error: '所选应用不存在' };
+  const matchSubject = String(b?.match_subject || '').trim();
+  if (matchSubject && !oauthSubjects.get.get(matchSubject)) return { error: '所选登录主体不存在' };
+  let countdown = parseInt(b?.countdown, 10); if (Number.isNaN(countdown)) countdown = 3;
+  countdown = Math.max(0, Math.min(30, countdown));
+  let reauth = String(b?.reauth_methods || '').split(/[\s,]+/).filter(x => REDIR_REAUTH.includes(x));
+  if (!reauth.length) reauth = ['password'];
+  let priority = parseInt(b?.priority, 10); if (Number.isNaN(priority)) priority = old ? old.priority : 100;
+  return {
+    name: name.slice(0, 60), enabled: b?.enabled === false ? 0 : 1, priority,
+    match_app: matchApp || null, match_subject: matchSubject || null,
+    match_scenario: scenario, match_auth: auth, mode, countdown,
+    reauth_methods: [...new Set(reauth)].join(','), note: String(b?.note || '').slice(0, 200) || null,
+  };
+}
+router.get('/admin/redirect-policies', requireAdmin(3), (req, res) => {
+  res.json({
+    success: true,
+    data: redirectPolicies.all.all().map(redirPolicyView),
+    apps: apps.findAll.all().map(a => ({ id: a.id, name: a.name })),
+    orgs: oauthSubjects.all.all().map(s => ({ id: s.id, name: s.name })),
+    default_countdown: Math.max(0, Math.min(30, parseInt(process.env.OIDC_LAUNCH_COUNTDOWN, 10) || 3)),
+  });
+});
+router.post('/admin/redirect-policies', requireAdmin(2), (req, res) => {
+  const v = redirPolicyFromBody(req.body);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const id = uuidv4();
+  redirectPolicies.insert.run({ id, ...v });
+  audit('redirect.policy_added', { actor: actorOf(req), detail: { name: v.name, mode: v.mode } });
+  res.json({ success: true, id });
+});
+router.patch('/admin/redirect-policies/:id', requireAdmin(2), (req, res) => {
+  const old = redirectPolicies.get.get(req.params.id);
+  if (!old) return res.status(404).json({ error: '策略不存在' });
+  if (req.body && Object.keys(req.body).length === 1 && 'enabled' in req.body) {
+    redirectPolicies.setEnabled.run(req.body.enabled ? 1 : 0, old.id);
+    return res.json({ success: true });
+  }
+  const v = redirPolicyFromBody(req.body, old);
+  if (v.error) return res.status(400).json({ error: v.error });
+  redirectPolicies.update.run({ id: old.id, ...v });
+  audit('redirect.policy_updated', { actor: actorOf(req), detail: { name: v.name, mode: v.mode } });
+  res.json({ success: true });
+});
+router.delete('/admin/redirect-policies/:id', requireAdmin(2), (req, res) => {
+  const old = redirectPolicies.get.get(req.params.id);
+  redirectPolicies.remove.run(req.params.id);
+  if (old) audit('redirect.policy_removed', { actor: actorOf(req), detail: { name: old.name } });
   res.json({ success: true });
 });
 
@@ -579,7 +654,7 @@ router.post('/2fa/login-verify', (req, res) => {
   logLogin({ userId: user.id, userName: user.name, uidSeq: String(user.uid_seq), method: (data.method || '账号密码') + (viaApproval ? '+App审批' : viaRecovery ? '+恢复码' : viaRealtime ? '+实时确认码' : '+2FA'), ip: req.ip, ua: req.headers['user-agent'] });
   // org-scoped 登录（v3.5.20）：从中间态令牌把 org/org_scoped 带进正式 token
   const org = data.org || null, orgScoped = !!data.org_scoped;
-  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
+  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, lm: methodCategory(data.method), ...(org ? { org, org_scoped: orgScoped } : {}) }, { expiresIn: appExpiresIn(req) });
   const remaining = twofa.countCodes.get(user.id).n;
   res.json({ success: true, token, user: safeUser(user), recoveryCodesLeft: remaining, org, org_scoped: orgScoped });
 });

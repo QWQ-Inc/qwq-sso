@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.141**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.142**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,32 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.142 登录跳转策略：第三方登录校验后怎么跳回，按应用 / 主体 / 场景 / 凭证分类自定义（用户反馈）
+
+三级版本。用户：「登录校验跳转逻辑可以自定义，按应用、场景、凭证分类、主体等等——校验后去掉中间页直接跳 / 几秒后跳 / 确认授权后跳 / 强确认要求登录验证再跳。可以设定什么时候触发、怎么样会怎么样。你看着做。」
+
+### 模型（规则引擎，4 种模式 × 4 个匹配维度）
+- 四种跳转模式：`direct`（去中间页，校验后**直接跳 + 自动授权**）/ `countdown`（倒计时几秒中转页后自动跳，秒数可配 0~30）/ `consent`（每次都要用户在授权页点「同意」）/ `reauth`（**强确认**：先重新验证身份[密码 / 动态码]，再确认跳转）。
+- 四个匹配维度（`match_*`，留空 / any = 不限）：**应用**（client app）/ **登录主体**（组织，按用户是否该组织成员）/ **场景**（any / first 首次授权 / returning 已授权再登 / idp 从控制台发起）/ **凭证分类**（any / password / code / oauth / passkey）。规则按 `priority` 升序 + 建表时间，**第一条命中生效**；都不命中 → 保持历史默认（已授权直通倒计时 / 首次需确认），所以**不装任何规则时行为与 v3.5.141 完全一致**。
+- RP 带 `prompt=consent` 时：命中的 direct/countdown **至少升级到 consent**（RP 明确要求重新确认），reauth 保持（更强）。
+
+### 新文件 `server/redirect-policy.js`（纯函数，25 项单测全过）
+`MODES / SCENARIOS / AUTHS / REAUTH_METHODS` + `methodCategory(登录方式中文串→凭证分类)` + `evaluate(policies, ctx)→{mode,countdown,reauthMethods,policyId}`。不碰 DB / HTTP，provider.js 负责取数调用。
+
+### 凭证分类怎么流进来（token 带 `lm`）
+登录成功签 JWT 时带上 `lm`（login method 分类）：`finishLogin`（api.js，密码 / 验证码 / 组织登录，由 `methodCategory` 从中文方式串推）、2FA 二段换正式 token（api.js）、`oauth.js loginSuccess`（`lm:'oauth'`）、`passkey.js`（`lm:'passkey'`）四个签发点都加。旧 token 无 `lm` → 视为 `other`，只影响「按凭证分类」的规则（其余照常），不破坏存量会话。
+
+### 数据 / 后端（db.js + provider.js + api.js）
+- db.js 迁移区块加表 `redirect_policies(id,name,enabled,priority,match_app,match_subject,match_scenario,match_auth,mode,countdown,reauth_methods,note,created_at)` + `redirectPolicyStmts`（导出 `redirectPolicies`）；`SCHEMA_VERSION` 1→2。
+- provider.js：`evalRedirect(req,app,user,{alreadyGranted,idp,promptConsent})` 取 `redirectPolicies.enabledAll` + `orgMembers.get` 判成员 + `req.user.lm` 调引擎。`/oauth/consent-info` 多回 `redirect:{mode,countdown,reauthMethods}` + `canReauth:{password,twofa}`（兼容旧前端仍回 `alreadyGranted/countdown`）。新 `/oauth/reauth`（requireAuth）：校验密码（bcrypt）/ 动态码（totp.verifyToken），通过发 5 分钟一次性 `reauth_token`（stage=oidc_reauth + 绑 uid + cid）。
+- ⚠️ **安全闸门在服务端**：`/oauth/consent` 签码前**重新**评估策略，命中 reauth 则必须带有效 `reauth_token`（jwt 校验 stage/uid/cid），缺失 / 伪造 → 403 `reauth_required`——前端绕不过（直接 POST consent 也拦）。direct/countdown/consent 的差异只是前端呈现 + 是否自动授权（与「已授权直通」同信任级，由管理员配）。
+- api.js 管理端 CRUD `/admin/redirect-policies`（读 Lv.3 / 写 Lv.2）：枚举校验 mode/scenario/auth、countdown 夹 0~30、match_app / match_subject 必须存在；审计 `redirect.policy_added/updated/removed`。
+
+### 前端（authorize.html + dashboard.html）
+- `authorize.html` 重构决策段：按 `d.redirect.mode` 渲染——direct 立即 submit（无 UI）/ countdown 倒计时页 / consent 确认页 / reauth 先出重新验证表单（按 `canReauth` + 策略可用方式显示密码 / 动态码框）→ 验证拿 `reauth_token` → 进确认页，提交带 token；consent POST 收到 403 reauth_required 会退回重新验证。consent-info 查询 + consent 提交都带上 `state`（判 idp）与 `prompt`。
+- `dashboard.html`「应用与接入」组加「登录跳转」菜单（`adm-redirect`，**仅超管**可见，纳入 SUPERADMIN_ONLY）：策略列表（模式徽章 + 条件摘要 + 启停 / 编辑 / 删除）+ 新增 / 编辑弹窗（名称 / 优先级 / 状态 / 应用 / 主体 / 场景 / 凭证下拉 + 跳转方式，countdown 显数字框、reauth 显方式勾选）。AUDIT_EVENT_LABEL + dev mock 同步。
+- ⚠️ 测试：引擎 25 项单测全过（methodCategory、默认行为、按应用 / 场景 / 主体 / 凭证匹配、优先级 + 禁用跳过、prompt 升级不降 reauth、countdown 夹紧、reauth 方式解析）；server 全量 `node --check` + dashboard / authorize 内联 JS 解析 0 错误。dev 浏览器实测登录跳转页：两条种子策略渲染、弹窗下拉（任意 + 应用 / 主体）、mode 切换显隐 countdown / reauth 行、新增强确认策略入列、停用变灰 + 「已停用」+ 按钮翻「启用」、截图外观协调、控制台无新增报错。真实 OIDC 授权链路（express + 真实第三方）本机未端到端，靠引擎单测 + consent/reauth 为既有 OIDC 流程的薄增量（复用 requireAuth / bcrypt / totp.verifyToken / jwt）覆盖。见 [[ui-design-preference]]。
 
 ## v3.5.141 系统配置页控件细化：裸文本框按语义升级为开关 / 下拉 / 数字框（用户反馈）
 

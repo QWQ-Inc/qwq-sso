@@ -172,7 +172,7 @@ router.post('/login-verify', async (req, res) => {
     logs.insert.run({ id: randomUUID(), user_id: user.id, user_name: user.name, uid_seq: String(user.uid_seq),
       method: 'Passkey', app_name: '本系统', ip: null, user_agent: req.headers['user-agent'] || null, status: 'success', fail_reason: null });
   } catch (_) {}
-  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level }, { expiresIn: appExpiresIn(req) });
+  const token = signToken({ uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, lm: 'passkey' }, { expiresIn: appExpiresIn(req) });
   const { password_hash, twofa_secret, ...safe } = user;
   res.json({ success: true, token, user: safe });
 });

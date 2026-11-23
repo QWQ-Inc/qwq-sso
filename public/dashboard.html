@@ -1323,6 +1323,18 @@ function _devApi(method, path, body) {
   if (vfv && method === 'PUT') return ok({ success:true });
   if (path === '/verify/scan' && method === 'POST') return ok({ success:true, ok:true, card:{ name_masked:'许*', uid:'#00002', subject:'示例集团', group:'正式员工', fields:[{label:'生日',value:'1998-07'},{label:'别名',value:'小*学'}] } });
 
+  // 登录跳转策略（v3.5.142）演示
+  if (!db._redirPolicies) db._redirPolicies = [
+    { id:'rp1', name:'信任应用·直跳', enabled:true, priority:10, match_app:'app1', match_subject:'', match_scenario:'returning', match_auth:'any', mode:'direct', countdown:0, reauth_methods:'password', note:'内部门户，已授权直接进' },
+    { id:'rp2', name:'敏感应用·强确认', enabled:true, priority:20, match_app:'', match_subject:'org1', match_scenario:'any', match_auth:'any', mode:'reauth', countdown:3, reauth_methods:'password,twofa', note:'财务组登录任何应用都要重新验证' },
+  ];
+  if (path === '/admin/redirect-policies' && method === 'GET') return ok({ success:true, data:db._redirPolicies,
+    apps:[{id:'app1',name:'内部门户'},{id:'app2',name:'报表系统'}], orgs:[{id:'org1',name:'示例集团'},{id:'org2',name:'财务组'}], default_countdown:3 });
+  if (path === '/admin/redirect-policies' && method === 'POST') { const p={ id:'rp'+Date.now(), enabled:true, countdown:3, reauth_methods:'password', match_scenario:'any', match_auth:'any', mode:'consent', priority:100, ...body }; db._redirPolicies.push(p); return ok({ success:true, id:p.id }); }
+  let rpm = path.match(/^\/admin\/redirect-policies\/([^/]+)$/);
+  if (rpm && method === 'PATCH') { const p=db._redirPolicies.find(x=>x.id===rpm[1]); if(p) Object.assign(p, body); return ok({ success:true }); }
+  if (rpm && method === 'DELETE') { db._redirPolicies=db._redirPolicies.filter(x=>x.id!==rpm[1]); return ok({ success:true }); }
+
   // 等级管理（纯前端，不走 api）
   return ok({ success:true, data:null });
 }
@@ -1686,6 +1698,10 @@ async function loadMe() {
           <button class="nav-item" onclick="goto('adm-api-logs')" id="ni-adm-api-logs">
             <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h12M4 10h8M4 14h10"/></svg>
             调用日志
+          </button>
+          <button class="nav-item" onclick="goto('adm-redirect')" id="ni-adm-redirect">
+            <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 10h9M10 6l4 4-4 4M14 4h2v12h-2"/></svg>
+            登录跳转
           </button>
           <button class="nav-item" onclick="goto('adm-plugins')" id="ni-adm-plugins">
             <svg class="ni" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 2 4 11h5l-1 7 7-9h-5z"/></svg>
@@ -3420,6 +3436,75 @@ async function loadMe() {
       </div>
 
       <!-- ▸ 管理端：插件 -->
+      <div class="page" id="page-adm-redirect">
+        <div class="card">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <h3><span data-ic="bolt"></span> 登录跳转策略</h3>
+            <button class="btn primary" onclick="openRedirectModal()">+ 新增策略</button>
+          </div>
+          <div class="card-body" style="font-size:13px;color:var(--txd);line-height:1.9;">
+            第三方「用 QWQ SSO 登录」校验通过后怎么跳回应用，按<b>应用 / 登录主体 / 场景 / 凭证分类</b>命中规则决定：
+            <br>· <b>直跳</b>：去掉中间页，校验后直接跳（信任应用，自动授权）
+            <br>· <b>倒计时</b>：显示几秒中转页后自动跳
+            <br>· <b>需确认</b>：每次都要用户在授权页点「同意」
+            <br>· <b>强确认</b>：先重新验证身份（密码 / 动态码）再确认跳转
+            <br>规则按优先级从小到大匹配，第一条命中生效；都不命中 → 默认（已授权直通 / 首次需确认）。
+            <div id="redir-box" style="margin-top:14px;"><span class="ld"><span class="ld-spin"></span>加载中</span></div>
+          </div>
+        </div>
+      </div>
+      <!-- 登录跳转策略 弹窗 -->
+      <div class="modal-mask" id="redir-modal">
+        <div class="modal" style="width:min(96vw,640px);max-width:96vw;box-sizing:border-box;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+            <h3 id="redir-mtitle">新增策略</h3>
+            <button class="btn" style="padding:2px 10px;" onclick="document.getElementById('redir-modal').classList.remove('show')">×</button>
+          </div>
+          <div class="card-body" style="font-size:13px;">
+            <input type="hidden" id="rp-id">
+            <div class="form-row" style="margin-bottom:10px;">
+              <label>策略名称</label>
+              <input id="rp-name" placeholder="如：内部门户直跳" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+              <div class="form-row"><label>优先级（小的先匹配）</label><input id="rp-priority" type="number" value="100" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"></div>
+              <div class="form-row"><label>状态</label><select id="rp-enabled" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"><option value="1">启用</option><option value="0">停用</option></select></div>
+            </div>
+            <div style="font-size:11px;color:var(--txm);margin:6px 0 8px;letter-spacing:1px;">触发条件（任意 = 不限）</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+              <div class="form-row"><label>应用</label><select id="rp-app" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"></select></div>
+              <div class="form-row"><label>登录主体（组织）</label><select id="rp-subject" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"></select></div>
+              <div class="form-row"><label>场景</label><select id="rp-scenario" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"><option value="any">任意场景</option><option value="first">首次授权</option><option value="returning">已授权再登</option><option value="idp">从控制台发起</option></select></div>
+              <div class="form-row"><label>凭证分类</label><select id="rp-auth" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"><option value="any">任意凭证</option><option value="password">账号密码</option><option value="code">验证码</option><option value="oauth">第三方登录</option><option value="passkey">Passkey</option></select></div>
+            </div>
+            <div style="font-size:11px;color:var(--txm);margin:6px 0 8px;letter-spacing:1px;">命中后怎么跳</div>
+            <div class="form-row" style="margin-bottom:10px;">
+              <label>跳转方式</label>
+              <select id="rp-mode" onchange="redirModeChanged()" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;"><option value="direct">直跳（去中间页，自动授权）</option><option value="countdown">倒计时后自动跳</option><option value="consent">需用户确认</option><option value="reauth">强确认（重新验证身份）</option></select>
+            </div>
+            <div class="form-row" id="rp-countdown-row" style="margin-bottom:10px;display:none;">
+              <label>倒计时秒数（0~30，0=不等直接跳）</label>
+              <input id="rp-countdown" type="number" min="0" max="30" value="3" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;">
+            </div>
+            <div class="form-row" id="rp-reauth-row" style="margin-bottom:10px;display:none;">
+              <label>强确认可用方式</label>
+              <div style="display:flex;gap:18px;padding:6px 0;">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;"><input type="checkbox" id="rp-re-pw" checked> 登录密码</label>
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;"><input type="checkbox" id="rp-re-tf"> 两步验证动态码</label>
+              </div>
+              <div style="font-size:11px;color:var(--txd);">用户账号须已设对应方式才可用；都不可用时该应用会提示联系管理员。</div>
+            </div>
+            <div class="form-row" style="margin-bottom:14px;">
+              <label>备注（可选）</label>
+              <input id="rp-note" placeholder="" style="height:34px;padding:0 10px;background:var(--sf2);border:1px solid var(--bd);border-radius:2px;font-size:13px;width:100%;outline:none;">
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button class="btn" onclick="document.getElementById('redir-modal').classList.remove('show')">取消</button>
+              <button class="btn primary" onclick="saveRedirectPolicy()">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="page" id="page-adm-plugins">
         <div class="card">
           <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -4058,7 +4143,7 @@ let checkedIn = false;
 let adminRole = 'superadmin';
 
 // 仅超级管理员可访问的页面
-const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups', 'adm-plugins', 'plugin-panel'];
+const SUPERADMIN_ONLY = ['adm-levels', 'adm-env', 'adm-verify-files', 'adm-grants', 'adm-limited', 'adm-backups', 'adm-plugins', 'plugin-panel', 'adm-redirect'];
 // 限权管理员（v3.5.74）可进的管理页：应用管理 + 组织管理（具体写范围由后端再拦）
 const LIMITED_ADMIN_PAGES = ['adm-apps', 'adm-oauth'];
 // 组织管理员（v3.5.76）可进的管理页：组织维度的菜单（用户/组织/设备/门禁/日志），平台级菜单隐藏
@@ -4399,7 +4484,7 @@ function goto(page) {
   // 更新标题
   const titles = {
     'home':'首页','apps':'应用管理','account':'账号设定','shop':'积分商城','public':'公共账号','memo':'备忘录','access':'门禁','orgadmin':'我的组织','verify':'身份核验','devices':'我的设备','adm-memo':'备忘录','adm-access':'门禁管理','adm-verify':'身份核验',
-    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新','adm-plugins':'插件','plugin-panel':'插件面板'
+    'adm-users':'用户管理','adm-apps':'应用管理','adm-oauth':'组织管理','adm-groups':'分组标签','adm-logs':'登录日志','adm-levels':'等级管理','adm-env':'系统配置','adm-api':'API 调用','adm-shop':'商城管理','adm-api-logs':'API 调用日志','adm-audit':'审计存证','adm-devices':'设备管理','adm-announce':'公告管理','adm-docs':'登录协议','adm-verify-files':'域名验证文件','adm-grants':'权限授权','adm-limited':'限权管理员','adm-deletions':'注销与删除','adm-anomalies':'异常账号','adm-backups':'数据备份','adm-sms-channels':'短信区号通道','adm-about':'关于 / 更新','adm-plugins':'插件','plugin-panel':'插件面板','adm-redirect':'登录跳转'
   };
   document.getElementById('page-title').textContent = titles[page] || page;
 
@@ -4442,6 +4527,7 @@ function goto(page) {
   if(page === 'adm-about') loadVersionInfo();
   if(page === 'adm-plugins') loadPlugins();
   if(page === 'plugin-panel') renderPluginPanel();
+  if(page === 'adm-redirect') loadRedirectPolicies();
 
   // 记住当前菜单，刷新后由 bootToLastPage 恢复
   try { localStorage.setItem('sso_last_page', page); } catch (_) {}
@@ -8702,6 +8788,7 @@ const AUDIT_EVENT_LABEL = {
   'kyc.reverify_requested':'发起二次核验', 'kyc.realname_deleted':'清除实名信息',
   'points.adjusted':'调整积分', 'user.disabled':'停用账号', 'user.enabled':'启用账号',
   'oidc.authorized':'OIDC 授权',
+  'redirect.policy_added':'新增登录跳转策略', 'redirect.policy_updated':'修改登录跳转策略', 'redirect.policy_removed':'删除登录跳转策略',
   'access.granted':'门禁通行', 'access.denied':'门禁拒绝',
   'access.face_enrolled':'录入人脸', 'access.face_deleted':'删除人脸',
   'access.pass_issued':'签发访客码', 'access.pass_revoked':'撤销访客码',
@@ -10843,6 +10930,114 @@ async function toggleGatePort() {
   if (!ok) { cb.checked = !closed; return showToast(data.error || '操作失败', 'err'); }
   if (_gateState) _gateState.port_closed = data.port_closed; showToast(data.message || '已保存', 'ok');
 }
+// ── 登录跳转策略（v3.5.142）──
+let _redirData = { data: [], apps: [], orgs: [], default_countdown: 3 };
+const _RP_MODE = { direct:['直跳','var(--ok)'], countdown:['倒计时','var(--ac)'], consent:['需确认','var(--txm)'], reauth:['强确认','var(--err)'] };
+const _RP_SCN  = { any:'任意场景', first:'首次授权', returning:'已授权再登', idp:'控制台发起' };
+const _RP_AUTH = { any:'任意凭证', password:'账号密码', code:'验证码', oauth:'第三方登录', passkey:'Passkey', other:'其它' };
+function _rpName(list, id, fallback){ const m = (list||[]).find(x => x.id === id); return m ? m.name : (id ? fallback : ''); }
+async function loadRedirectPolicies() {
+  const box = document.getElementById('redir-box');
+  const r = await api('GET', '/admin/redirect-policies');
+  if (!r.ok) { box.innerHTML = '<div style="color:var(--err)">加载失败</div>'; return; }
+  _redirData = r.data;
+  renderRedirectPolicies(r.data.data || []);
+}
+function renderRedirectPolicies(list) {
+  const box = document.getElementById('redir-box');
+  if (!list.length) { box.innerHTML = emptyState('还没有登录跳转策略，当前按默认行为（已授权直通 / 首次需确认）', 'bolt'); return; }
+  box.innerHTML = list.map(p => {
+    const md = _RP_MODE[p.mode] || [p.mode, 'var(--txm)'];
+    const conds = [];
+    if (p.match_app) conds.push('应用：' + esc(_rpName(_redirData.apps, p.match_app, p.match_app)));
+    if (p.match_subject) conds.push('主体：' + esc(_rpName(_redirData.orgs, p.match_subject, p.match_subject)));
+    conds.push(esc(_RP_SCN[p.match_scenario] || p.match_scenario));
+    if (p.match_auth && p.match_auth !== 'any') conds.push(esc(_RP_AUTH[p.match_auth] || p.match_auth));
+    const extra = p.mode === 'countdown' ? ` · ${p.countdown}s`
+      : p.mode === 'reauth' ? ' · ' + (p.reauth_methods || '').split(',').map(x => x === 'twofa' ? '动态码' : '密码').join('/') : '';
+    const nm = esc(p.name).replace(/'/g, '\\u0027');
+    return `<div class="card" style="margin-bottom:10px;padding:12px 14px;${p.enabled ? '' : 'opacity:.55;'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div style="font-weight:600;">${esc(p.name)}
+          <span style="font-size:11px;font-weight:500;padding:1px 7px;border-radius:3px;border:1px solid ${md[1]};color:${md[1]};margin-left:6px;">${md[0]}${esc(extra)}</span>
+          ${p.enabled ? '' : '<span style="font-size:11px;color:var(--txd);margin-left:6px;">已停用</span>'}
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn" style="padding:3px 9px;" onclick="toggleRedirectPolicy('${p.id}',${p.enabled ? 0 : 1})">${p.enabled ? '停用' : '启用'}</button>
+          <button class="btn" style="padding:3px 9px;" onclick="openRedirectModal('${p.id}')">编辑</button>
+          <button class="btn" style="padding:3px 9px;color:var(--err);" onclick="delRedirectPolicy('${p.id}','${nm}')">删除</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--txd);margin-top:6px;">优先级 ${p.priority} · 条件：${conds.join(' · ')}${p.note ? ' · ' + esc(p.note) : ''}</div>
+    </div>`;
+  }).join('');
+}
+function _rpSet(id, v){ const el = document.getElementById(id); if (el) el.value = v; }
+function openRedirectModal(id) {
+  const apps = _redirData.apps || [], orgs = _redirData.orgs || [];
+  document.getElementById('rp-app').innerHTML = '<option value="">任意应用</option>' + apps.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  document.getElementById('rp-subject').innerHTML = '<option value="">任意主体</option>' + orgs.map(o => `<option value="${esc(o.id)}">${esc(o.name)}</option>`).join('');
+  const p = id ? (_redirData.data || []).find(x => x.id === id) : null;
+  document.getElementById('redir-mtitle').textContent = p ? '编辑策略' : '新增策略';
+  _rpSet('rp-id', p ? p.id : '');
+  _rpSet('rp-name', p ? p.name : '');
+  _rpSet('rp-priority', p ? p.priority : 100);
+  _rpSet('rp-enabled', p ? (p.enabled ? '1' : '0') : '1');
+  _rpSet('rp-app', p ? (p.match_app || '') : '');
+  _rpSet('rp-subject', p ? (p.match_subject || '') : '');
+  _rpSet('rp-scenario', p ? p.match_scenario : 'any');
+  _rpSet('rp-auth', p ? p.match_auth : 'any');
+  _rpSet('rp-mode', p ? p.mode : 'consent');
+  _rpSet('rp-countdown', p ? (p.countdown ?? 3) : (_redirData.default_countdown ?? 3));
+  const rm = (p ? (p.reauth_methods || 'password') : 'password').split(',');
+  document.getElementById('rp-re-pw').checked = rm.includes('password') || rm.every(x => !x);
+  document.getElementById('rp-re-tf').checked = rm.includes('twofa');
+  _rpSet('rp-note', p ? (p.note || '') : '');
+  redirModeChanged();
+  document.getElementById('redir-modal').classList.add('show');
+}
+function redirModeChanged() {
+  const m = document.getElementById('rp-mode').value;
+  document.getElementById('rp-countdown-row').style.display = m === 'countdown' ? '' : 'none';
+  document.getElementById('rp-reauth-row').style.display = m === 'reauth' ? '' : 'none';
+}
+async function saveRedirectPolicy() {
+  const name = document.getElementById('rp-name').value.trim();
+  if (!name) { showToast('请填写策略名称'); return; }
+  const id = document.getElementById('rp-id').value;
+  const re = [];
+  if (document.getElementById('rp-re-pw').checked) re.push('password');
+  if (document.getElementById('rp-re-tf').checked) re.push('twofa');
+  const body = {
+    name,
+    priority: parseInt(document.getElementById('rp-priority').value, 10) || 100,
+    enabled: document.getElementById('rp-enabled').value === '1',
+    match_app: document.getElementById('rp-app').value,
+    match_subject: document.getElementById('rp-subject').value,
+    match_scenario: document.getElementById('rp-scenario').value,
+    match_auth: document.getElementById('rp-auth').value,
+    mode: document.getElementById('rp-mode').value,
+    countdown: parseInt(document.getElementById('rp-countdown').value, 10),
+    reauth_methods: (re.length ? re : ['password']).join(','),
+    note: document.getElementById('rp-note').value.trim(),
+  };
+  const r = await api(id ? 'PATCH' : 'POST', '/admin/redirect-policies' + (id ? '/' + id : ''), body);
+  if (!r.ok) { showToast(r.data.error || '保存失败'); return; }
+  document.getElementById('redir-modal').classList.remove('show');
+  showToast('已保存'); loadRedirectPolicies();
+}
+async function toggleRedirectPolicy(id, en) {
+  const r = await api('PATCH', '/admin/redirect-policies/' + id, { enabled: !!en });
+  if (!r.ok) { showToast(r.data.error || '操作失败'); return; }
+  loadRedirectPolicies();
+}
+async function delRedirectPolicy(id, name) {
+  if (!await uiConfirm(`删除登录跳转策略「${name}」？`)) return;
+  const r = await api('DELETE', '/admin/redirect-policies/' + id);
+  if (!r.ok) { showToast(r.data.error || '删除失败'); return; }
+  showToast('已删除'); loadRedirectPolicies();
+}
+
 // ── 插件系统（v3.5.135）──
 let _plugins = [];
 async function loadPlugins() {

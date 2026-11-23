@@ -51,8 +51,14 @@
 const P = new URLSearchParams(location.search);
 const card = document.getElementById('card');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const isImg = s => /^https?:\/\//i.test(s || '') || /^\/(?!\/)/.test(s || '');   // 站内相对路径 = 上传的图片图标（v3.5.28）
+const promptConsent = P.get('prompt') === 'consent';
 
 function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
+function appAva(d) { return `<div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
+  isImg(d.app.icon_url || d.app.icon) ? `<img src="${esc(d.app.icon_url || d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>`; }
+function userAva(d) { return `<div class="ava" style="background:#E8E8ED">${
+  isImg(d.user.avatar) ? `<img src="${esc(d.user.avatar)}" alt="">` : esc((d.user.name || 'U').slice(0,1))}</div>`; }
 
 (async function init() {
   const token = localStorage.getItem('sso_token');
@@ -64,7 +70,8 @@ function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
 
   let d;
   try {
-    const q = new URLSearchParams({ client_id: P.get('client_id') || '', scope: P.get('scope') || '' });
+    const q = new URLSearchParams({ client_id: P.get('client_id') || '', scope: P.get('scope') || '',
+      state: P.get('state') || '', prompt: P.get('prompt') || '' });
     const r = await fetch('/oauth/consent-info?' + q, { headers: { Authorization: 'Bearer ' + token } });
     if (r.status === 401) {
       localStorage.removeItem('sso_token');
@@ -75,15 +82,11 @@ function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
     if (!r.ok) return fail(d.error || '加载失败');
   } catch (e) { return fail('网络错误，请重试'); }
 
-  const isImg = s => /^https?:\/\//i.test(s || '') || /^\/(?!\/)/.test(s || '');   // 站内相对路径 = 上传的图片图标（v3.5.28）
-  const appAva = () => `<div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
-    isImg(d.app.icon_url || d.app.icon) ? `<img src="${esc(d.app.icon_url || d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>`;
-
   // 应用要求的必传信息用户缺失（如必传邮箱但没绑）→ 拦下来引导绑定，不能继续
   if (d.missingRequired && d.missingRequired.length) {
     const items = d.missingRequired.map(m => m.label).join('、');
     card.innerHTML = `
-      <div class="heads">${appAva()}</div>
+      <div class="heads">${appAva(d)}</div>
       <h1>${esc(d.app.name)} 需要你的${esc(items)}</h1>
       <div class="sub">该应用把「${esc(items)}」设为登录必需项，你的账号还没有绑定，无法完成登录。</div>
       <div style="background:rgba(255,149,0,.08);color:#B26A00;padding:12px 14px;border-radius:11px;font-size:12.5px;line-height:1.7;margin-bottom:18px;">
@@ -98,40 +101,88 @@ function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
     return;
   }
 
-  // 之前已授权过且本次没申请新权限，且第三方没强制要求重新确认 → 免打扰，但给个倒计时中转页
-  if (d.alreadyGranted && P.get('prompt') !== 'consent') {
-    let left = Number.isFinite(d.countdown) ? d.countdown : 3;
-    if (left <= 0) return submit(true, null, token);   // 秒数设为 0 → 不倒计时，直接跳
+  // 登录跳转策略（v3.5.142）：direct 直跳 / countdown 倒计时 / consent 确认 / reauth 强确认
+  const R = d.redirect || { mode: d.alreadyGranted ? 'countdown' : 'consent', countdown: d.countdown, reauthMethods: ['password'] };
 
-    const render = () => {
-      card.innerHTML = `
-        <div class="heads">${appAva()}<div class="link">···</div>${
-          `<div class="ava" style="background:#E8E8ED">${isImg(d.user.avatar) ? `<img src="${esc(d.user.avatar)}" alt="">` : esc((d.user.name || 'U').slice(0,1))}</div>`}</div>
-        <h1>正在登录 ${esc(d.app.name)}</h1>
-        <div class="sub">你已授权过该应用，将在 <b id="cd">${left}</b> 秒后自动跳转登录</div>
-        <div class="btns"><button class="ok" id="now">立即继续</button></div>
-        <div class="foot">如果这不是你发起的登录，请关闭此页面</div>`;
-      const nowBtn = document.getElementById('now');
-      if (nowBtn) nowBtn.onclick = () => { clearInterval(timer); submit(true, null, token); };
-    };
-    render();
-    const timer = setInterval(() => {
-      left--;
-      const cd = document.getElementById('cd');
-      if (cd) cd.textContent = left;
-      if (left <= 0) { clearInterval(timer); submit(true, null, token); }
-    }, 1000);
+  if (R.mode === 'direct' && !promptConsent) { submit(d, true, null, token, null); return; }
+  if (R.mode === 'countdown' && !promptConsent) { showCountdown(d, R, token); return; }
+  if (R.mode === 'reauth') { showReauth(d, R, token); return; }
+  showConsent(d, token, null);
+})();
+
+// 倒计时中转页：几秒后自动跳
+function showCountdown(d, R, token) {
+  let left = Number.isFinite(R.countdown) ? R.countdown : 3;
+  if (left <= 0) return submit(d, true, null, token, null);
+  const render = () => {
+    card.innerHTML = `
+      <div class="heads">${appAva(d)}<div class="link">···</div>${userAva(d)}</div>
+      <h1>正在登录 ${esc(d.app.name)}</h1>
+      <div class="sub">将在 <b id="cd">${left}</b> 秒后自动跳转登录</div>
+      <div class="btns"><button class="ok" id="now">立即继续</button></div>
+      <div class="foot">如果这不是你发起的登录，请关闭此页面</div>`;
+    const nowBtn = document.getElementById('now');
+    if (nowBtn) nowBtn.onclick = () => { clearInterval(timer); submit(d, true, null, token, null); };
+  };
+  render();
+  const timer = setInterval(() => {
+    left--;
+    const cd = document.getElementById('cd');
+    if (cd) cd.textContent = left;
+    if (left <= 0) { clearInterval(timer); submit(d, true, null, token, null); }
+  }, 1000);
+}
+
+// 强确认：先重新验证身份（密码 / 动态码），拿到 reauth_token 后再进确认页
+function showReauth(d, R, token) {
+  const methods = R.reauthMethods || ['password'];
+  const can = d.canReauth || { password: true, twofa: false };
+  const wantPw = methods.includes('password') && can.password;
+  const wantTf = methods.includes('twofa') && can.twofa;
+  if (!wantPw && !wantTf) {
+    card.innerHTML = `<div class="err">该应用要求重新验证身份，但你的账号未设置可用的登录密码或两步验证，无法完成强确认。请联系管理员。</div>`;
     return;
   }
-
   card.innerHTML = `
-    <div class="heads">
-      <div class="ava" style="background:${esc(d.app.icon_bg || '#F0F0F0')}">${
-        isImg(d.app.icon_url || d.app.icon) ? `<img src="${esc(d.app.icon_url || d.app.icon)}" alt="">` : esc(d.app.icon || '📦')}</div>
-      <div class="link">···</div>
-      <div class="ava" style="background:#E8E8ED">${
-        isImg(d.user.avatar) ? `<img src="${esc(d.user.avatar)}" alt="">` : esc((d.user.name || 'U').slice(0,1))}</div>
+    <div class="heads">${appAva(d)}</div>
+    <h1>登录 ${esc(d.app.name)} 需要再次验证</h1>
+    <div class="sub">出于安全要求，请重新验证你的身份后继续</div>
+    ${wantPw ? `<div class="sec-title">登录密码</div>
+      <input id="ra-pw" type="password" autocomplete="current-password" placeholder="请输入登录密码"
+        style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;font-size:14px;margin-bottom:${wantTf?'10px':'0'};background:var(--card);color:var(--tx);">` : ''}
+    ${wantTf ? `<div class="sec-title">动态验证码</div>
+      <input id="ra-code" inputmode="numeric" autocomplete="one-time-code" placeholder="两步验证 6 位动态码"
+        style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;font-size:14px;background:var(--card);color:var(--tx);">` : ''}
+    <div id="ra-err" class="err" style="display:none;margin-top:12px;"></div>
+    <div class="btns">
+      <button class="no" id="ra-cancel">取消</button>
+      <button class="ok" id="ra-go">验证并继续</button>
     </div>
+    <div class="foot">验证通过后将进入授权确认</div>`;
+  document.getElementById('ra-cancel').onclick = () => submit(d, false, [], token, null);
+  document.getElementById('ra-go').onclick = async () => {
+    const btn = document.getElementById('ra-go');
+    const errEl = document.getElementById('ra-err');
+    const pw = document.getElementById('ra-pw')?.value || '';
+    const code = document.getElementById('ra-code')?.value || '';
+    if (!pw && !code) { errEl.style.display = 'block'; errEl.textContent = '请输入密码或动态验证码'; return; }
+    btn.disabled = true; btn.textContent = '验证中…'; errEl.style.display = 'none';
+    try {
+      const r = await fetch('/oauth/reauth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ client_id: P.get('client_id'), password: pw, code }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.reauth_token) { btn.disabled = false; btn.textContent = '验证并继续'; errEl.style.display = 'block'; errEl.textContent = j.error || '验证失败'; return; }
+      showConsent(d, token, j.reauth_token);   // 验证通过 → 进确认页，提交时带 reauth_token
+    } catch (e) { btn.disabled = false; btn.textContent = '验证并继续'; errEl.style.display = 'block'; errEl.textContent = '网络错误，请重试'; }
+  };
+}
+
+// 授权确认页
+function showConsent(d, token, reauthToken) {
+  card.innerHTML = `
+    <div class="heads">${appAva(d)}<div class="link">···</div>${userAva(d)}</div>
     <h1>${esc(d.app.name)} 请求访问你的账号</h1>
     <div class="sub">你正以 ${esc(d.user.name || '未命名')}（#${esc(d.user.uid)}）的身份授权</div>
     <div class="sec-title">该应用将获得以下权限</div>
@@ -158,12 +209,12 @@ function fail(msg) { card.innerHTML = `<div class="err">${esc(msg)}</div>`; }
 
   document.getElementById('allow').onclick = () => {
     const picked = [...box.querySelectorAll('input:checked')].map(i => i.value);
-    submit(true, picked, token);
+    submit(d, true, picked, token, reauthToken);
   };
-  document.getElementById('deny').onclick = () => submit(false, [], token);
-})();
+  document.getElementById('deny').onclick = () => submit(d, false, [], token, reauthToken);
+}
 
-async function submit(approve, picked, token) {
+async function submit(d, approve, picked, token, reauthToken) {
   const btn = document.getElementById('allow');
   if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
   try {
@@ -178,12 +229,18 @@ async function submit(approve, picked, token) {
         nonce:        P.get('nonce') || '',
         code_challenge:        P.get('code_challenge') || '',
         code_challenge_method: P.get('code_challenge_method') || '',
+        prompt:       P.get('prompt') || '',
+        reauth_token: reauthToken || '',
         approve,
       }),
     });
-    const d = await r.json();
-    if (!r.ok) return fail(d.error || '授权失败');
-    location.replace(d.redirect);
+    const resp = await r.json();
+    if (r.status === 403 && resp.reauth_required) {
+      // 服务端要求强确认（例如直接 POST 绕过前端）→ 回到重新验证
+      return showReauth(d, d.redirect || { reauthMethods: ['password'] }, token);
+    }
+    if (!r.ok) return fail(resp.error || '授权失败');
+    location.replace(resp.redirect);
   } catch (e) { fail('网络错误，请重试'); }
 }
 </script>

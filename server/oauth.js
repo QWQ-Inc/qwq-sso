@@ -341,7 +341,7 @@ function loginSuccess(res, user) {
 
   // 插件钩子（v3.5.136）：第三方登录成功副作用 + 改写 SSO 令牌负载
   try { plugins.runAction('login.success', { user, method: '第三方 OAuth', ip: creq?.ip, req: creq }); } catch (_) {}
-  let _payload = { uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level };
+  let _payload = { uid: user.id, name: user.name, role: user.role, adminLevel: user.admin_level, lm: 'oauth' };
   try { const p = plugins.runFilter('login.token', _payload, { user, method: '第三方 OAuth' }); if (p && typeof p === 'object') _payload = p; } catch (_) {}
   const token = signToken(_payload);
   // 中间页拿 token 存进 localStorage 后再跳到 next；有 next 时它会跳过倒计时直接回授权页

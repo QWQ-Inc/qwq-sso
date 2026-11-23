@@ -13,11 +13,16 @@
 const express = require('express');
 const crypto  = require('crypto');
 const jwt     = require('jsonwebtoken');
-const { db, idp, users, apps, groups, tags, appVisibleToUser, appVisibleInSession, access } = require('./db');
+const bcrypt  = require('bcryptjs');
+const { db, idp, users, apps, groups, tags, orgMembers, redirectPolicies, appVisibleToUser, appVisibleInSession, access } = require('./db');
 const { audit } = require('./audit');
 const { requireAuth } = require('./auth');
 const accessCore = require('./access');
 const oidcKeys = require('./oidc-keys');
+const totp = require('./twofa');
+const redirectPolicy = require('./redirect-policy');   // 登录跳转策略引擎（v3.5.142，纯函数）
+
+const JWT_SECRET = () => process.env.JWT_SECRET || 'dev-secret-CHANGE-IN-PRODUCTION';
 
 const router = express.Router();
 
@@ -116,6 +121,22 @@ function launchCountdown() {
   const n = parseInt(process.env.OIDC_LAUNCH_COUNTDOWN, 10);
   if (Number.isNaN(n)) return 3;
   return Math.max(0, Math.min(30, n));
+}
+
+/** 评估本次「校验通过后怎么跳回应用」的模式（登录跳转策略 v3.5.142）。
+ *  按应用 / 主体(组织) / 场景 / 凭证分类匹配管理员配的规则；无规则命中 → 历史默认。 */
+function evalRedirect(req, app, user, { alreadyGranted, idp: idpFlag, promptConsent }) {
+  let policies = [];
+  try { policies = redirectPolicies.enabledAll.all(); } catch (_) {}
+  return redirectPolicy.evaluate(policies, {
+    appId: app.id,
+    isMemberOf: sid => { try { return !!orgMembers.get.get(sid, user.id); } catch (_) { return false; } },
+    alreadyGranted: !!alreadyGranted,
+    idp: !!idpFlag,
+    auth: (req.user && req.user.lm) || 'other',
+    promptConsent: !!promptConsent,
+    defaultCountdown: launchCountdown(),
+  });
 }
 
 /** redirect_uri 必须与应用登记的完全一致（支持逗号分隔多个） */
@@ -235,6 +256,12 @@ router.get('/oauth/consent-info', requireAuth, (req, res) => {
   // 必传字段里，用户实际缺失的（如必传邮箱但没绑）→ 前端拦下引导绑定
   const missing = missingRequired(user, required);
 
+  const alreadyGranted = !missing.length && asked.every(s => granted.includes(s));
+  const idpFlag = String(req.query.state || '').startsWith('idp_');
+  const promptConsent = req.query.prompt === 'consent';
+  // 登录跳转策略（v3.5.142）：按应用 / 主体 / 场景 / 凭证分类决定 direct/countdown/consent/reauth
+  const redirect = evalRedirect(req, app, user, { alreadyGranted, idp: idpFlag, promptConsent });
+
   res.json({
     success: true,
     app:  { name: app.name, icon: app.icon, icon_bg: app.icon_bg, icon_url: app.icon_url || '', description: app.description },
@@ -248,10 +275,32 @@ router.get('/oauth/consent-info', requireAuth, (req, res) => {
     // 缺失的必传字段：非空则前端展示「请先绑定」拦截页，不允许授权
     missingRequired: missing,
     // 之前授权过且本次（含必传）没有新权限、也不缺必传数据 → 前端可走免打扰直通
-    alreadyGranted: !missing.length && asked.every(s => granted.includes(s)),
-    // 已授权直通时的中转页倒计时秒数（管理员可配，0=不倒计时直接跳）
+    alreadyGranted,
+    // 已授权直通时的中转页倒计时秒数（管理员可配，0=不倒计时直接跳）—— 兼容旧前端
     countdown: launchCountdown(),
+    // 本次应走的跳转模式 + 参数（前端据此渲染 direct/countdown/consent/reauth）
+    redirect,
+    // reauth 模式下该用户能用哪种方式重新验证（用于渲染表单，避免无密码/无2FA账号走进死路）
+    canReauth: { password: !!user.password_hash, twofa: !!user.twofa_enabled },
   });
+});
+
+// ── 强确认：命中 reauth 策略的应用，授权前先重新验证身份（密码 / 动态码）──
+// 通过后发一枚 5 分钟一次性 reauth_token，/oauth/consent 对该应用校验它才放行。
+router.post('/oauth/reauth', requireAuth, (req, res) => {
+  const { client_id, password, code } = req.body || {};
+  const app = idp.findAppByClientId.get(client_id || '');
+  if (!app) return res.status(400).json({ error: 'client_id 无效' });
+  const user = users.findById.get(req.user.uid);
+  if (!user) return res.status(401).json({ error: '用户不存在' });
+
+  let ok = false;
+  if (code && user.twofa_enabled && user.twofa_secret) ok = totp.verifyToken(user.twofa_secret, String(code).trim());
+  if (!ok && password && user.password_hash) { try { ok = bcrypt.compareSync(String(password), user.password_hash); } catch (_) {} }
+  if (!ok) return res.status(401).json({ error: '身份验证失败，请检查' + (user.twofa_enabled ? '密码或动态验证码' : '登录密码') });
+
+  const reauth_token = jwt.sign({ uid: user.id, stage: 'oidc_reauth', cid: app.client_id }, JWT_SECRET(), { expiresIn: '5m' });
+  res.json({ success: true, reauth_token });
 });
 
 // ── 用户点「同意」：签发授权码 ──
@@ -283,6 +332,24 @@ router.post('/oauth/consent', requireAuth, (req, res) => {
   const missing = missingRequired(user, required);
   if (missing.length) {
     return res.status(409).json({ error: '缺少该应用要求的必传信息：' + missing.map(m => m.label).join('、') + '，请先在账号设定里绑定后再登录', missingRequired: missing });
+  }
+
+  // 登录跳转策略（v3.5.142）：命中 reauth 的，必须带有效的 reauth_token（服务端强制，前端绕不过）
+  const asked0 = [...new Set([...parseScope(scope), ...required])];
+  const granted0 = (idp.grantedScope.get(user.id, app.id)?.scope || '').split(' ').filter(Boolean);
+  const alreadyGranted0 = asked0.every(s => granted0.includes(s));
+  const pol = evalRedirect(req, app, user, {
+    alreadyGranted: alreadyGranted0,
+    idp: String(state || '').startsWith('idp_'),
+    promptConsent: req.body.prompt === 'consent',
+  });
+  if (pol.mode === 'reauth') {
+    let good = false;
+    try {
+      const p = jwt.verify(req.body.reauth_token || '', JWT_SECRET());
+      good = p && p.stage === 'oidc_reauth' && p.uid === user.id && p.cid === app.client_id;
+    } catch (_) {}
+    if (!good) return res.status(403).json({ error: '该应用要求重新验证身份后才能登录', reauth_required: true });
   }
 
   // 以用户实际勾选的为准，但强制并入必传 scope；parseScope 丢弃未知 scope 并补 openid

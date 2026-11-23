@@ -239,6 +239,13 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS twofa_recovery_codes (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, code_hash TEXT NOT NULL,
   used INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`); } catch(_) {}
+// 登录跳转策略（v3.5.142）：第三方「用 QWQ SSO 登录」校验后怎么跳回（direct/countdown/consent/reauth），按应用 / 主体 / 场景 / 凭证分类匹配
+try { db.exec(`CREATE TABLE IF NOT EXISTS redirect_policies (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, priority INTEGER NOT NULL DEFAULT 100,
+  match_app TEXT, match_subject TEXT, match_scenario TEXT NOT NULL DEFAULT 'any', match_auth TEXT NOT NULL DEFAULT 'any',
+  mode TEXT NOT NULL DEFAULT 'consent', countdown INTEGER NOT NULL DEFAULT 3, reauth_methods TEXT NOT NULL DEFAULT 'password',
+  note TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+)`); } catch(_) {}
 // Passkey（WebAuthn 凭据）
 try { db.exec(`CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, cred_id TEXT NOT NULL UNIQUE,
@@ -1826,6 +1833,24 @@ const idpStmts = {
 };
 
 // ──────────────────────────────────────────
+// 登录跳转策略（v3.5.142）
+// ──────────────────────────────────────────
+const redirectPolicyStmts = {
+  all:        db.prepare('SELECT * FROM redirect_policies ORDER BY priority ASC, created_at ASC'),
+  enabledAll: db.prepare('SELECT * FROM redirect_policies WHERE enabled=1 ORDER BY priority ASC, created_at ASC'),
+  get:        db.prepare('SELECT * FROM redirect_policies WHERE id=?'),
+  insert:     db.prepare(`INSERT INTO redirect_policies
+    (id,name,enabled,priority,match_app,match_subject,match_scenario,match_auth,mode,countdown,reauth_methods,note)
+    VALUES (@id,@name,@enabled,@priority,@match_app,@match_subject,@match_scenario,@match_auth,@mode,@countdown,@reauth_methods,@note)`),
+  update:     db.prepare(`UPDATE redirect_policies SET
+    name=@name, enabled=@enabled, priority=@priority, match_app=@match_app, match_subject=@match_subject,
+    match_scenario=@match_scenario, match_auth=@match_auth, mode=@mode, countdown=@countdown,
+    reauth_methods=@reauth_methods, note=@note WHERE id=@id`),
+  setEnabled: db.prepare('UPDATE redirect_policies SET enabled=? WHERE id=?'),
+  remove:     db.prepare('DELETE FROM redirect_policies WHERE id=?'),
+};
+
+// ──────────────────────────────────────────
 // API Keys
 // ──────────────────────────────────────────
 const apiKeyStmts = {
@@ -2145,7 +2170,7 @@ const limitedAdminStmts = {
 // 单调递增的库结构版本：每次新增表 / 列（上面的 CREATE / ALTER 迁移）时同步 +1。
 // 写进 SQLite 的 PRAGMA user_version，导出备份时随库字节一起带走；导入时据此判断
 // 备份相对当前代码是「更旧（升级/恢复，安全）/ 同版 / 更新（降级，新功能数据本版本用不上）」。
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 try { db.pragma('user_version = ' + SCHEMA_VERSION); } catch (_) {}
 
 // 当前运行库的表与列清单（导入时比对用：备份里有、当前 schema 没有的表/列 = 本版本认不得、用不上的数据）
@@ -2194,6 +2219,7 @@ module.exports = {
   logs: logStmts,
   apps: appStmts,
   idp: idpStmts,
+  redirectPolicies: redirectPolicyStmts,
   twofa: twofaStmts,
   loginApprovals: loginApprovalStmts,
   realtimeCodes: realtimeCodeStmts,
