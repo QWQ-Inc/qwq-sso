@@ -16,7 +16,7 @@ const wmBurn = require('./watermark-burn');
 wmBurn.prefetchFont();   // 开了「导出加水印」就在启动时把中文字体备好
 const ipp = require('./ipp');
 const { PLATFORMS: OAUTH_META } = require('./oauth-meta');
-const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, appExpiresIn } = require('./auth');
+const { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, appExpiresIn, apiKeyRotateDue } = require('./auth');
 const totp = require('./twofa');
 const { methodCategory } = require('./redirect-policy');   // 登录方式→凭证分类（登录跳转策略 match_auth 用）
 const { subjectGateError } = require('./org-policy');
@@ -6992,27 +6992,65 @@ router.get('/admin/logs', requireAdmin(3, { orgAdmin: true }), (req, res) => {
   res.json({ success: true, logs: logs.findAll.all() });
 });
 
-router.get('/admin/api-keys', requireAdmin(1), (req, res) => { res.json({ success: true, keys: apiKeys.findAll.all() }); });
-router.post('/admin/api-keys', requireAdmin(2), (req, res) => {
-  const { name, scopes = [], key_type = 'live', trusted_ips = '' } = req.body;
-  if (!name) return res.status(400).json({ error: '密钥名称必填' });
-  // v3.5.75.2：删除实名（users:kyc）是特殊高危权限——A2（运营管理员）创建的密钥不能直接授予，需 A1 创建/批准
-  if (Array.isArray(scopes) && scopes.includes('users:kyc') && (req.user.adminLevel || 9) > 1) {
-    return res.status(403).json({ error: '删除实名（users:kyc）属于特殊权限，需要超级管理员（A1）创建该密钥' });
-  }
+// 轮换周期（天）：0=不要求；其余夹在 1~3650
+function safeRotateDays(v) { const n = parseInt(v, 10); if (!Number.isFinite(n) || n <= 0) return 0; return Math.max(1, Math.min(3650, n)); }
+// 下一次轮换到期时刻（ISO，供前端显示倒计时）；0 天则 null
+function rotateDueAt(key) {
+  const d = parseInt(key.rotate_days, 10); if (!d || d <= 0) return null;
+  const raw = String(key.created_at || ''); const ms = Date.parse(/[TZ]/.test(raw) ? raw : raw.replace(' ', 'T') + 'Z');
+  return Number.isNaN(ms) ? null : new Date(ms + d * 86400000).toISOString();
+}
 
+router.get('/admin/api-keys', requireAdmin(1), (req, res) => {
+  const keys = apiKeys.findAll.all().map(k => ({ ...k, rotate_due: k.status === 'active' && apiKeyRotateDue(k), due_at: rotateDueAt(k) }));
+  const rotate_due_count = keys.filter(k => k.rotate_due).length;
+  res.json({ success: true, keys, summary: { rotate_due_count } });
+});
+
+// 新建密钥（可带轮换策略）。抽成共用函数，供新建 + 轮换复用
+function issueApiKey({ name, scopes, key_type, trusted_ips, rotate_days, rotate_enforce, created_by, rotated_from }) {
   const prefix = key_type === 'test' ? 'sk_test_' : 'sk_live_';
   const token  = prefix + crypto.randomBytes(20).toString('hex');
   const hash   = crypto.createHash('sha256').update(token).digest('hex');
   const id     = uuidv4();
+  const ips    = key_type === 'test' ? '*' : (String(trusted_ips || '').trim() || '');
+  const plain  = key_type === 'test' ? token : null;   // 测试密钥明文保存供随时查看；实际密钥只存哈希
+  db.prepare("INSERT INTO api_keys (id,name,token_hash,token_prefix,scopes,status,created_by,key_type,trusted_ips,token_plain,rotate_days,rotate_enforce,rotated_from) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, name, hash, token.slice(0, key_type === 'test' ? 15 : 18), JSON.stringify(scopes), 'active', created_by, key_type, ips, plain,
+         safeRotateDays(rotate_days), rotate_enforce ? 1 : 0, rotated_from || null);
+  return { id, token };
+}
 
-  const ips = key_type === 'test' ? '*' : (trusted_ips?.trim() || '');
-  // 测试密钥明文保存供随时查看；实际密钥只存哈希，绝不明文落库
-  const plain = key_type === 'test' ? token : null;
+router.post('/admin/api-keys', requireAdmin(2), (req, res) => {
+  const { name, scopes = [], key_type = 'live', trusted_ips = '', rotate_days = 0, rotate_enforce = false } = req.body;
+  if (!name) return res.status(400).json({ error: '密钥名称必填' });
+  if (!Array.isArray(scopes) || !scopes.length) return res.status(400).json({ error: '请至少选择一项权限' });
+  // v3.5.75.2：删除实名（users:kyc）是特殊高危权限——A2（运营管理员）创建的密钥不能直接授予，需 A1 创建/批准
+  if (scopes.includes('users:kyc') && (req.user.adminLevel || 9) > 1) {
+    return res.status(403).json({ error: '删除实名（users:kyc）属于特殊权限，需要超级管理员（A1）创建该密钥' });
+  }
+  const { id, token } = issueApiKey({ name, scopes, key_type, trusted_ips, rotate_days, rotate_enforce, created_by: req.user.uid });
+  try { audit('apikey.created', { actor: actorOf(req), detail: { name, key_type, scopes, rotate_days: safeRotateDays(rotate_days) } }); } catch (_) {}
+  res.json({ success: true, token, key_type });
+});
 
-  db.prepare("INSERT INTO api_keys (id,name,token_hash,token_prefix,scopes,status,created_by,key_type,trusted_ips,token_plain) VALUES (?,?,?,?,?,?,?,?,?,?)")
-    .run(id, name, hash, token.slice(0, key_type === 'test' ? 15 : 18), JSON.stringify(scopes), 'active', req.user.uid, key_type, ips, plain);
-
+// 一键轮换（v3.5.143）：生成同名、同权限、同可信 IP、同轮换策略的新密钥，旧密钥立即撤销（历史保留）
+router.post('/admin/api-keys/:id/rotate', requireAdmin(2), (req, res) => {
+  const old = db.prepare("SELECT * FROM api_keys WHERE id=?").get(req.params.id);
+  if (!old) return res.status(404).json({ error: '密钥不存在' });
+  if (old.status !== 'active') return res.status(400).json({ error: '该密钥已撤销，无法轮换' });
+  let scopes = []; try { scopes = JSON.parse(old.scopes || '[]'); } catch (_) {}
+  // 轮换保留原权限；若含 users:kyc 则同样要求 A1
+  if (scopes.includes('users:kyc') && (req.user.adminLevel || 9) > 1) {
+    return res.status(403).json({ error: '该密钥含删除实名（users:kyc）特殊权限，需超级管理员（A1）轮换' });
+  }
+  const key_type = old.key_type === 'test' ? 'test' : 'live';
+  const { id, token } = issueApiKey({
+    name: old.name, scopes, key_type, trusted_ips: old.trusted_ips,
+    rotate_days: old.rotate_days, rotate_enforce: old.rotate_enforce, created_by: req.user.uid, rotated_from: old.id,
+  });
+  apiKeys.revoke.run(old.id);   // 旧密钥立即失效
+  try { audit('apikey.rotated', { actor: actorOf(req), detail: { name: old.name, key_type, from: old.token_prefix } }); } catch (_) {}
   res.json({ success: true, token, key_type });
 });
 
@@ -7022,11 +7060,21 @@ router.patch('/admin/api-keys/:id/trusted-ips', requireAdmin(1), (req, res) => {
   res.json({ success: true });
 });
 
+// 改轮换策略（v3.5.143）：不换密钥值、只改周期 / 强制开关
+router.patch('/admin/api-keys/:id/rotate-policy', requireAdmin(2), (req, res) => {
+  const key = db.prepare("SELECT * FROM api_keys WHERE id=?").get(req.params.id);
+  if (!key) return res.status(404).json({ error: '密钥不存在' });
+  db.prepare("UPDATE api_keys SET rotate_days=?, rotate_enforce=? WHERE id=?")
+    .run(safeRotateDays(req.body?.rotate_days), req.body?.rotate_enforce ? 1 : 0, key.id);
+  res.json({ success: true });
+});
+
 // 撤销密钥（软删除，历史永久保留，无论测试或实际密钥）
 router.delete('/admin/api-keys/:id', requireAdmin(1), (req, res) => {
   const key = db.prepare("SELECT * FROM api_keys WHERE id=?").get(req.params.id);
   if (!key) return res.status(404).json({ error: '密钥不存在' });
   apiKeys.revoke.run(req.params.id);
+  try { audit('apikey.revoked', { actor: actorOf(req), detail: { name: key.name, key_type: key.key_type } }); } catch (_) {}
   res.json({ success: true });
 });
 

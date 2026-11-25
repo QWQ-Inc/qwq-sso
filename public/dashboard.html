@@ -1191,11 +1191,32 @@ function _devApi(method, path, body) {
   ] });
   if (path.startsWith('/admin/documents/') && method === 'PUT') return ok({ success:true, document:{ key:path.split('/').pop(), title:body.title, content:body.content, link:body.link||'', updated_at:new Date().toISOString() } });
 
-  if (path === '/admin/api-keys') return ok({ success:true, keys:[
-    { id:'k1', name:'演示密钥', token_prefix:'sk-live-dev-xxx…', scopes:'["users:read","auth:verify"]', status:'active', last_used_at:new Date().toISOString(), created_at:new Date().toISOString() }
-  ]});
-  if (method === 'POST'   && path === '/admin/api-keys') return ok({ success:true, token:'sk-live-demo-'+Math.random().toString(36).slice(2) });
-  if (method === 'DELETE' && path.startsWith('/admin/api-keys/')) return ok({ success:true });
+  if (path === '/admin/api-keys' && method === 'GET') {
+    if (!db._apiKeys) db._apiKeys = [
+      { id:'k1', name:'HR 对账', token_prefix:'sk_live_dev_a…', scopes:'["users:read","auth:verify","kyc:read"]', status:'active', last_used_at:new Date().toISOString(), created_at:new Date(Date.now()-120*86400000).toISOString(), key_type:'live', trusted_ips:'1.2.3.4', rotate_days:90, rotate_enforce:0, rotated_from:null },
+      { id:'k2', name:'门禁终端', token_prefix:'sk_test_dev_b…', token_plain:'sk_test_dev_b1c2d3', scopes:'["access:verify","access:read"]', status:'active', last_used_at:null, created_at:new Date().toISOString(), key_type:'test', trusted_ips:'*', rotate_days:0, rotate_enforce:0, rotated_from:null },
+    ];
+    const _due = k => k.status==='active' && +k.rotate_days>0 && (Date.now()-Date.parse(k.created_at))>=k.rotate_days*86400000;
+    const keys = db._apiKeys.map(k => ({ ...k, rotate_due:_due(k), due_at:+k.rotate_days?new Date(Date.parse(k.created_at)+k.rotate_days*86400000).toISOString():null }));
+    return ok({ success:true, keys, summary:{ rotate_due_count: keys.filter(k=>k.rotate_due).length } });
+  }
+  if (method === 'POST' && path === '/admin/api-keys') {
+    const tok = (body.key_type==='test'?'sk_test_':'sk_live_')+'demo'+Math.random().toString(36).slice(2,12);
+    db._apiKeys = db._apiKeys || [];
+    db._apiKeys.unshift({ id:'k'+Date.now(), name:body.name, token_prefix:tok.slice(0,15)+'…', token_plain:body.key_type==='test'?tok:null, scopes:JSON.stringify(body.scopes||[]), status:'active', last_used_at:null, created_at:new Date().toISOString(), key_type:body.key_type||'live', trusted_ips:body.key_type==='test'?'*':(body.trusted_ips||''), rotate_days:body.rotate_days||0, rotate_enforce:body.rotate_enforce?1:0, rotated_from:null });
+    return ok({ success:true, token:tok, key_type:body.key_type||'live' });
+  }
+  let akr = path.match(/^\/admin\/api-keys\/([^/]+)\/rotate$/);
+  if (akr && method === 'POST') {
+    const old = (db._apiKeys||[]).find(k=>k.id===akr[1]); if(!old) return err('密钥不存在',404);
+    const tok = (old.key_type==='test'?'sk_test_':'sk_live_')+'rot'+Math.random().toString(36).slice(2,12);
+    old.status='revoked';
+    db._apiKeys.unshift({ ...old, id:'k'+Date.now(), token_prefix:tok.slice(0,15)+'…', token_plain:old.key_type==='test'?tok:null, status:'active', last_used_at:null, created_at:new Date().toISOString(), rotated_from:old.id });
+    return ok({ success:true, token:tok, key_type:old.key_type });
+  }
+  let akp = path.match(/^\/admin\/api-keys\/([^/]+)\/rotate-policy$/);
+  if (akp && method === 'PATCH') { const k=(db._apiKeys||[]).find(x=>x.id===akp[1]); if(k){k.rotate_days=body.rotate_days||0;k.rotate_enforce=body.rotate_enforce?1:0;} return ok({ success:true }); }
+  if (method === 'DELETE' && path.startsWith('/admin/api-keys/')) { const k=(db._apiKeys||[]).find(x=>x.id===path.split('/').pop()); if(k)k.status='revoked'; return ok({ success:true }); }
 
   if (path === '/admin/env') return ok({ success:true, env:{} });
   if (method === 'POST' && path === '/admin/env') return ok({ success:true });
@@ -2534,6 +2555,7 @@ async function loadMe() {
 
         <!-- ── 密钥管理 ── -->
         <div id="api-tab-keys">
+          <div id="api-key-rotate-banner" style="display:none;margin-bottom:12px;padding:9px 13px;background:rgba(255,149,0,.1);border:1px solid var(--warn,#FF9500);border-radius:3px;font-size:12.5px;color:#B26A00;font-weight:600;"></div>
           <div class="card">
             <div class="card-body" style="padding:0">
               <table class="tbl">
@@ -5098,6 +5120,19 @@ const ALL_SCOPES = [
   { key:'realtime:verify',label:'实时确认码',    desc:'GET /v1/users/{uid}/realtime-code（状态）、POST .../verify（校验 App 实时确认码）' },
 ];
 
+// 用途预设（v3.5.143）：一键把常见对接场景的 scope 勾上，不用逐项挑。users:kyc（删除实名）刻意不进任何预设，须单独勾、仅 A1 可建
+const KEY_PRESETS = [
+  { key:'user_read',   label:'账号校验 / 只读（HR 对账）', scopes:['auth:verify','users:read','kyc:read'] },
+  { key:'user_write',  label:'账号管理（读 + 停用启用）',  scopes:['users:read','users:write','kyc:read'] },
+  { key:'shop_ops',    label:'积分商城运营',               scopes:['points:read','points:write','shop:read','shop:write'] },
+  { key:'access_term', label:'门禁终端（扫码 / 刷卡）',     scopes:['access:verify','access:read'] },
+  { key:'device_sync', label:'设备台账同步',               scopes:['device:read'] },
+  { key:'kyc_verify',  label:'实名核验接入',               scopes:['kyc:read','kyc:session','kyc:verify'] },
+  { key:'org_sync',    label:'组织通讯录同步',             scopes:['org:sync','users:read'] },
+  { key:'audit_read',  label:'审计 / 日志只读',            scopes:['audit:read','logs:read'] },
+  { key:'all_read',    label:'全部只读',                   scopes:ALL_SCOPES.map(s=>s.key).filter(k=>/:(read|verify)$/.test(k)) },
+];
+
 const API_DOCS = [
   {
     method:'GET', path:'/v1/auth/verify', summary:'验证用户 Token',
@@ -5314,6 +5349,13 @@ function openApiModal() {
       <div style="font-size:11px;color:var(--txd);margin-top:3px;">未配置可信 IP 的密钥无法调用任何接口。</div>
     </div>
     <div class="form-row">
+      <label>按用途快速选择 <span style="font-size:11px;color:var(--txd);font-weight:400;">（选一个预设自动勾上对应权限，之后仍可手动增减）</span></label>
+      <select id="new-key-preset" onchange="applyKeyPreset(this.value)">
+        <option value="">— 自定义 / 手动勾选 —</option>
+        ${KEY_PRESETS.map(p=>`<option value="${p.key}">${p.label}（${p.scopes.length} 项）</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row">
       <label>权限范围（可多选）</label>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;border:1px solid var(--bd);border-radius:2px;overflow:hidden;">
         ${ALL_SCOPES.map(s=>`
@@ -5322,6 +5364,20 @@ function openApiModal() {
           <div><div style="font-weight:600;color:var(--tx);">${s.label}</div><div style="color:var(--txd);font-size:11px;">${s.desc}</div></div>
         </label>`).join('')}
       </div>
+    </div>
+    <div class="form-row">
+      <label>轮换周期 <span style="font-size:11px;color:var(--txd);font-weight:400;">（到期提醒你换新密钥，降低长期泄露风险）</span></label>
+      <select id="new-key-rotate">
+        <option value="0">不要求轮换</option>
+        <option value="30">每 30 天</option>
+        <option value="60">每 60 天</option>
+        <option value="90" selected>每 90 天（推荐）</option>
+        <option value="180">每 180 天</option>
+        <option value="365">每 365 天</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;font-weight:400;cursor:pointer;">
+        <input type="checkbox" id="new-key-enforce"> 到期后<b>拒绝调用</b>（强制轮换；不勾则仅在管理端提醒、调用照常）
+      </label>
     </div>
     <div style="font-size:11px;color:var(--txd);padding:8px 10px;background:var(--sf2);border-radius:2px;border:1px solid var(--bd);">
       ⚠️ 密钥仅在创建时完整显示一次，请立即保存至安全位置。测试密钥撤销后直接删除，不保留记录。
@@ -8789,6 +8845,7 @@ const AUDIT_EVENT_LABEL = {
   'points.adjusted':'调整积分', 'user.disabled':'停用账号', 'user.enabled':'启用账号',
   'oidc.authorized':'OIDC 授权',
   'redirect.policy_added':'新增登录跳转策略', 'redirect.policy_updated':'修改登录跳转策略', 'redirect.policy_removed':'删除登录跳转策略',
+  'apikey.created':'创建 API 密钥', 'apikey.rotated':'轮换 API 密钥', 'apikey.revoked':'撤销 API 密钥',
   'access.granted':'门禁通行', 'access.denied':'门禁拒绝',
   'access.face_enrolled':'录入人脸', 'access.face_deleted':'删除人脸',
   'access.pass_issued':'签发访客码', 'access.pass_revoked':'撤销访客码',
@@ -12729,6 +12786,12 @@ async function renderApiKeys() {
   const tbody = document.getElementById('api-keys-tbody');
   if (!tbody) return;
   let keys = data?.keys || [];
+  const dueCount = data?.summary?.rotate_due_count || 0;
+  const dueBanner = document.getElementById('api-key-rotate-banner');
+  if (dueBanner) {
+    dueBanner.style.display = dueCount ? '' : 'none';
+    if (dueCount) dueBanner.textContent = `⚠️ 有 ${dueCount} 把密钥已到轮换期限，建议尽快「轮换」更换新密钥`;
+  }
   if (!_showRevoked) keys = keys.filter(k => k.status === 'active');
   if (!keys.length) {
     tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--txd);padding:20px;">暂无 API 密钥历史记录</td></tr>`;
@@ -12738,9 +12801,15 @@ async function renderApiKeys() {
     const scopes  = JSON.parse(k.scopes || '[]');
     const isTest  = k.key_type === 'test' || k.token_prefix?.startsWith('sk_test');
     const hasIps  = k.trusted_ips && k.trusted_ips !== '*';
+    const rot     = +k.rotate_days ? `每 ${k.rotate_days} 天${+k.rotate_enforce ? '·强制' : ''}` : '不要求';
     return `<tr style="${k.status!=='active'?'opacity:.55;':''}">
       <td style="font-weight:600;">${k.name}
         <span class="badge ${isTest?'grey':'ac'}" style="font-size:9px;margin-left:4px;">${isTest?'测试':'实际'}</span>
+        ${k.rotated_from?'<span class="badge grey" style="font-size:9px;margin-left:3px;" title="由上一把密钥轮换而来">轮换新密钥</span>':''}
+        <div style="font-size:10px;color:${k.rotate_due?'var(--err)':'var(--txd)'};font-weight:400;margin-top:2px;">
+          轮换：${rot}${k.rotate_due?' · <b>已到期</b>':(k.due_at&&k.status==='active'?' · 到期 '+fmtTime(k.due_at):'')}
+          ${k.status==='active'?`<button class="btn" style="font-size:9px;padding:0 5px;margin-left:3px;" onclick="editRotatePolicy('${k.id}',${+k.rotate_days||0},${+k.rotate_enforce||0})">改</button>`:''}
+        </div>
       </td>
       <td>${isTest && k.token_plain
           ? `<code style="font-size:11px;background:var(--bg);padding:2px 8px;border-radius:2px;word-break:break-all;">${k.token_plain}</code>
@@ -12755,7 +12824,7 @@ async function renderApiKeys() {
       </td>
       <td style="font-size:12px;color:var(--txm);">${fmtTime(k.last_used_at)||'从未调用'}</td>
       <td>${k.status==='active'?'<span class="badge ok">活跃</span>':'<span class="badge err">已撤销</span>'}</td>
-      <td>${k.status==='active'?`<button class="btn" style="font-size:11px;padding:3px 8px;" onclick="revokeKey('${k.id}')">撤销</button>`:'—'}</td>
+      <td>${k.status==='active'?`<button class="btn ${k.rotate_due?'primary':''}" style="font-size:11px;padding:3px 8px;margin-right:4px;" onclick="rotateKey('${k.id}','${esc(k.name)}')">轮换</button><button class="btn" style="font-size:11px;padding:3px 8px;" onclick="revokeKey('${k.id}')">撤销</button>`:'—'}</td>
     </tr>`;
   }).join('');
 }
@@ -12781,15 +12850,55 @@ async function revokeKey(id) {
   if (ok) { renderApiKeys(); showToast('⚠️ 密钥已撤销'); }
 }
 
+// 一键轮换：生成同权限同策略的新密钥、旧密钥立即失效，弹窗展示新值
+async function rotateKey(id, name) {
+  if (!await uiConfirm(`轮换密钥「${name}」？\n\n会生成一把权限 / 可信 IP / 轮换周期完全相同的新密钥，旧密钥立即失效。请在接入方替换成新值后再确认。`)) return;
+  const { ok, data } = await api('POST', `/admin/api-keys/${id}/rotate`);
+  if (!ok) { showToast('⚠️ ' + (data.error || '轮换失败')); return; }
+  const isTest = data.key_type === 'test';
+  document.getElementById('api-modal-title').textContent = '✓ 已轮换 · 新密钥';
+  document.getElementById('api-modal-body').innerHTML = `
+    <div style="font-size:13px;color:var(--txm);margin-bottom:8px;">旧密钥已失效。${isTest?'测试密钥随时可在列表查看完整值。':'请立即复制并在接入方替换，此后不会再完整显示：'}</div>
+    <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;background:var(--sf2);border:1px solid var(--ac3);border-radius:2px;">
+      <code style="flex:1;font-size:13px;font-family:monospace;font-weight:700;color:${isTest?'var(--txm)':'var(--ac)'};word-break:break-all;">${data.token}</code>
+      <button class="btn primary" style="flex-shrink:0;" onclick="copyText('${data.token}')">复制</button>
+    </div>`;
+  document.getElementById('api-modal-footer').innerHTML = `<button class="btn primary" onclick="closeApiModal();renderApiKeys()">完成</button>`;
+  document.getElementById('api-modal').classList.add('show');
+}
+
+// 改轮换策略（不换密钥值）
+async function editRotatePolicy(id, days, enforce) {
+  const v = await uiPrompt('轮换周期（天，0=不要求）：', String(days || 0));
+  if (v === null) return;
+  const nd = Math.max(0, Math.min(3650, parseInt(v, 10) || 0));
+  let ef = enforce;
+  if (nd > 0) ef = await uiConfirm('到期后是否「拒绝调用」（强制轮换）？\n\n确定=强制；取消=仅提醒、调用照常。') ? 1 : 0;
+  const { ok, data } = await api('PATCH', `/admin/api-keys/${id}/rotate-policy`, { rotate_days: nd, rotate_enforce: !!ef });
+  if (ok) { showToast('✓ 轮换策略已更新'); renderApiKeys(); }
+  else showToast('⚠️ ' + (data.error || '更新失败'));
+}
+
+// 用途预设：勾上该预设的 scope（不清其它已勾项，叠加更友好）
+function applyKeyPreset(presetKey) {
+  const p = KEY_PRESETS.find(x => x.key === presetKey);
+  if (!p) return;
+  document.querySelectorAll('#api-modal-body .form-row input[type=checkbox]').forEach(cb => {
+    if (p.scopes.includes(cb.value)) cb.checked = true;
+  });
+}
+
 async function saveApiKey() {
   const name      = document.getElementById('new-key-name')?.value.trim();
   const keyType   = document.getElementById('new-key-type')?.value || 'live';
   const trustedIps = document.getElementById('new-key-ips')?.value.trim();
-  const checked   = [...document.querySelectorAll('#api-modal-body input[type=checkbox]:checked')].map(c => c.value);
+  const rotateDays = parseInt(document.getElementById('new-key-rotate')?.value || '0', 10) || 0;
+  const enforce   = !!document.getElementById('new-key-enforce')?.checked;
+  const checked   = [...document.querySelectorAll('#api-modal-body .form-row input[type=checkbox]:checked')].map(c => c.value).filter(v => ALL_SCOPES.some(s => s.key === v));
   if (!name) { showToast('⚠️ 请填写密钥名称'); return; }
   if (!checked.length) { showToast('⚠️ 请至少选择一项权限'); return; }
   if (keyType === 'live' && !trustedIps) { showToast('⚠️ 实际密钥必须配置可信 IP'); return; }
-  const { ok, data } = await api('POST', '/admin/api-keys', { name, scopes: checked, key_type: keyType, trusted_ips: trustedIps });
+  const { ok, data } = await api('POST', '/admin/api-keys', { name, scopes: checked, key_type: keyType, trusted_ips: trustedIps, rotate_days: rotateDays, rotate_enforce: enforce });
   if (!ok) { showToast('⚠️ ' + (data.error || '创建失败')); return; }
   const isTest = keyType === 'test';
   document.getElementById('api-modal-title').textContent = '✓ 密钥已创建';

@@ -155,6 +155,16 @@ function ipMatches(clientIp, entry) {
 }
 function ipAllowed(clientIp, list) { return list.some(e => ipMatches(clientIp, e)); }
 
+// 凭据轮换（v3.5.143）：按 rotate_days 周期判断某 API Key 是否已到/超过轮换期限（基于 created_at；每次轮换生成全新 key，created_at 重置）
+function apiKeyRotateDue(key, now = Date.now()) {
+  const days = parseInt(key && key.rotate_days, 10);
+  if (!days || days <= 0) return false;
+  const raw = String(key.created_at || '');
+  const ms = Date.parse(/[TZ]/.test(raw) ? raw : raw.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(ms)) return false;
+  return (now - ms) >= days * 86400000;
+}
+
 function requireApiKey(scope) {
   return async (req, res, next) => {
     const auth = req.headers.authorization;
@@ -173,6 +183,11 @@ function requireApiKey(scope) {
     const { apiKeys } = require('./db');
     const key = apiKeys.findByHash.get(hash, 'active');
     if (!key) return res.status(401).json({ error: 'API Key 无效或已撤销' });
+
+    // 凭据轮换强制（v3.5.143）：开了「到期后拒绝调用」且已超过轮换期限 → 拒绝，提示去管理端轮换
+    if (key.rotate_enforce && apiKeyRotateDue(key)) {
+      return res.status(403).json({ error: '该 API Key 已超过轮换期限，请在管理端轮换后重试', rotate_required: true });
+    }
 
     // 可信 IP 检查：
     // - 实际密钥：必须配置可信 IP 且在范围内
@@ -207,4 +222,4 @@ function requireApiKey(scope) {
   };
 }
 
-module.exports = { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, ipMatches, ipAllowed, appExpiresIn };
+module.exports = { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, ipMatches, ipAllowed, appExpiresIn, apiKeyRotateDue };

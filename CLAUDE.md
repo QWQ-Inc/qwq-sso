@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.142**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.143**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,18 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.143 API 凭据：用途预设一键签发 + 轮换周期策略 + 到期提醒 + 一键轮换（用户反馈）
+
+三级版本。用户：「可以加入应用回调凭据快速添加、授权某应用快速拿到某权限的凭据、定期要求轮换。」落到**开放 API 密钥**（`api_keys`，本就带 scope + 可信 IP 的那套凭据）上，补齐「快速授权某权限」+「定期轮换」。
+
+### 做法
+- **数据(db.js 迁移区块)**：`api_keys` 加 `rotate_days`(轮换周期天数,0=不要求)/`rotate_enforce`(0=仅提醒,1=到期后拒绝调用)/`rotated_from`(上一把 key id,轮换链)。`SCHEMA_VERSION` 2→3。
+- **轮换判定(auth.js)**：`apiKeyRotateDue(key, now)`（纯函数,导出）= `rotate_days>0 && now-created_at >= days*86400000`（基于 created_at;每次轮换生成全新 key、created_at 重置;SQLite 空格日期按 UTC 解析;坏日期不误判）。`requireApiKey` 在「密钥有效」之后加一道门：`rotate_enforce && 到期` → **403 `{error, rotate_required:true}`**（强制轮换,前端绕不过);不强制则照常调用、只在管理端提醒。
+- **接口(api.js)**：`issueApiKey({...})` 抽出共用（新建 + 轮换复用,同一套 token 生成 / 明文策略）。`POST /admin/api-keys` 收 `rotate_days`/`rotate_enforce`（`safeRotateDays` 夹 0~3650;users:kyc 仍 A1-only）。新 `POST /admin/api-keys/:id/rotate`（A2;生成同名 / 同权限 / 同可信 IP / 同轮换策略的新密钥 + `rotated_from`,旧密钥**立即撤销**[历史保留];含 users:kyc 要 A1;审计 `apikey.rotated`）。新 `PATCH /admin/api-keys/:id/rotate-policy`（只改周期 / 强制开关,不换密钥值）。`GET /admin/api-keys` 每把回 `rotate_due`(bool)+`due_at`(ISO)+顶层 `summary.rotate_due_count`。create/revoke 补审计 `apikey.created`/`apikey.revoked`。
+- **前端(dashboard.html)**：`KEY_PRESETS`(9 个用途预设:账号只读 HR 对账 / 账号管理 / 积分商城运营 / 门禁终端 / 设备台账 / 实名核验 / 组织同步 / 审计日志 / 全部只读)——新建弹窗「按用途快速选择」下拉 `applyKeyPreset` 一键勾上对应 scope（**users:kyc 刻意不进任何预设**,须单独勾、仅 A1）。弹窗加「轮换周期」下拉（不要求/30/60/90推荐/180/365 天）+「到期后拒绝调用」勾选。列表每把密钥名下显示「轮换：每 N 天[·强制] · 到期 X / 已到期」+「改」(editRotatePolicy)、操作列加「轮换」按钮（到期时变主色、`rotateKey` 二次确认 → 弹新密钥）、顶部到期提醒横幅（`#api-key-rotate-banner`,由 summary 驱动,无到期自动隐藏）。AUDIT_EVENT_LABEL + dev mock（`db._apiKeys` 持久 + rotate/rotate-policy 端点）同步。
+- ⚠️ **范围取舍**：用户也提到「应用回调凭据快速添加」「拿到管理员凭据」——OIDC 应用的 client_id/secret + 四端点 + 发起示例 + 重新生成密钥（`appCredentialsHtml`,v3.3.3.6）本就有;「管理员凭据」没做成一键全权密钥（安全,无 admin 大权限 scope,高危的 users:kyc 保持 A1 单独授予）。OIDC client_secret 的「轮换周期提醒」本版未接（它已有一键重新生成,后续按需加 due 徽章即可）。
+- ⚠️ 测试：`apikey-rotate-test.js` 复刻 `apiKeyRotateDue`/`safeRotateDays`/`rotateDueAt` 17 项全过（days=0/缺失永不到期、边界满 N 天即到期、SQLite 空格日期格式、坏日期不误判、夹紧 0~3650、due_at=created+days）。server(auth/api/db) `node --check` + dashboard 内联 JS 4 块解析 0 错误。dev 浏览器实测 API 调用页：到期横幅「1 把需轮换」、列表轮换策略 + 已到期标红、预设「门禁终端」一键勾上 access:verify/read、新建带「每 60 天·强制」入列、一键轮换 → 旧撤销 + 新密钥「轮换新密钥」chip + 弹新 token、轮换后横幅自动消失;控制台无新增报错。真实 HTTP 强制轮换链路（express + better-sqlite3）本机未端到端,靠 `apiKeyRotateDue` 单测 + requireApiKey 为既有中间件薄增量覆盖。见 [[ui-design-preference]]。
 
 ## v3.5.142 登录跳转策略：第三方登录校验后怎么跳回，按应用 / 主体 / 场景 / 凭证分类自定义（用户反馈）
 

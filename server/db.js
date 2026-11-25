@@ -419,6 +419,10 @@ try { db.exec('ALTER TABLE shop_goods ADD COLUMN transfer_fee INTEGER NOT NULL D
 try { db.exec("ALTER TABLE api_keys ADD COLUMN key_type TEXT NOT NULL DEFAULT 'live'"); } catch(_) {}
 try { db.exec("ALTER TABLE api_keys ADD COLUMN trusted_ips TEXT"); } catch(_) {}
 try { db.exec("ALTER TABLE api_keys ADD COLUMN token_plain TEXT"); } catch(_) {} // 仅测试密钥明文保存，供随时查看
+// 凭据轮换策略（v3.5.143）：rotate_days=轮换周期天数(0=不要求)；rotate_enforce=到期后拒绝调用(0=仅提醒)；rotated_from=上一把 key id（轮换链）
+try { db.exec('ALTER TABLE api_keys ADD COLUMN rotate_days INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec('ALTER TABLE api_keys ADD COLUMN rotate_enforce INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec('ALTER TABLE api_keys ADD COLUMN rotated_from TEXT'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN is_blind_box INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN open_instantly INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN category TEXT'); } catch(_) {}   // 商品分类（v3.4.43）
@@ -2170,7 +2174,7 @@ const limitedAdminStmts = {
 // 单调递增的库结构版本：每次新增表 / 列（上面的 CREATE / ALTER 迁移）时同步 +1。
 // 写进 SQLite 的 PRAGMA user_version，导出备份时随库字节一起带走；导入时据此判断
 // 备份相对当前代码是「更旧（升级/恢复，安全）/ 同版 / 更新（降级，新功能数据本版本用不上）」。
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 try { db.pragma('user_version = ' + SCHEMA_VERSION); } catch (_) {}
 
 // 当前运行库的表与列清单（导入时比对用：备份里有、当前 schema 没有的表/列 = 本版本认不得、用不上的数据）
