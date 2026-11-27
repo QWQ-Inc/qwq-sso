@@ -4,6 +4,13 @@
 > 推送 tag 时 `.github/workflows/release.yml` 会自动在 GitHub 为该 tag 建 Release，
 > 并把这里对应版本的小节作为 Release 说明。详尽的架构/踩坑说明见 `CLAUDE.md`。
 
+## v3.5.144.1
+
+新增应用弹窗补上「ID Token 签名算法」选项。
+
+- 之前只有**编辑**应用时才能选 HS256 / RS256，新建弹窗漏了——集群登录（kube-apiserver 等只认 RS256 + JWKS）得先建再编辑，容易漏。
+- 现在新建应用时就能直接选 RS256。后端本就支持，纯前端补齐。
+
 ## v3.5.144
 
 API 密钥：新增「签名调用」模式 —— 比 IP 白名单更强的防泄露手段。

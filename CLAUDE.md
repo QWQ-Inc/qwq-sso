@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.144**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.144.1**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,14 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.144.1 新增应用弹窗补「ID Token 签名算法」选项（用户反馈·接入方诉求）
+
+四级补丁（纯前端）。接入方（Super Enigma / 平台 IAM，集群登录）反馈：QWQ SSO「新增应用」弹窗没有「ID Token 签名算法」下拉，只有**编辑**应用时才有——于是集群登录（kube-apiserver 等只认 RS256 + JWKS 的验证方）必须先建应用、再进编辑改成 RS256，容易漏。
+- 🐛 根因：v3.5.107 加 `id_token_alg` 时，后端 `POST /admin/apps`（新建）**早就读 `req.body.id_token_alg`**（api.js:6830 `safeTokenAlg`），但前端只在编辑弹窗放了 `ae-alg` 下拉、新建弹窗漏了。纯前端缺口。
+- 修（`dashboard.html`）：`openNewAppModal` 的表单在 Back-Channel Logout 行下加 `na-alg` 下拉（HS256 默认 / RS256，文案同编辑弹窗：RS256 公钥见 `/oauth/jwks`、给只认非对称签名 + JWKS 的验证方、集群登录建议 RS256）；`submitNewApp` 收 `na-alg` 并把 `id_token_alg` 放进 POST body。后端零改动。
+- ⚠️ 测试：dashboard 内联 JS 4 块解析 0 错误；dev 浏览器实测——新建应用弹窗出现签名算法下拉（默认选中 HS256）、选 RS256 后 submitNewApp 的 POST body 带 `id_token_alg:'RS256'`。
+- ⚠️ 该截图里其余诉求都是**平台侧**的事、QWQ SSO 已支持、本仓库无需改：账号撤销回调（deprovision webhook，v3.5.11）、Back-Channel Logout 发送端（v3.5.107 logout_token，平台只需实现接收端）、必传字段（required_scopes，v3.4.1）、授权 / 换令牌 / 用户信息端点自动发现（`/.well-known/openid-configuration`）。见 [[ui-design-preference]]。
 
 ## v3.5.144 API 凭据：签名调用（HMAC 请求签名，密钥不上线 + 防重放）（用户反馈）
 

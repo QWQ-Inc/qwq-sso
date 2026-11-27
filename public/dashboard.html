@@ -15315,6 +15315,7 @@ function openNewAppModal() {
           <div class="form-row full"><label>发起地址（可选）</label><input type="text" id="na-launch" placeholder="留空则由 SSO 用回调地址拼授权链接打开" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label>账号撤销回调（可选，SSO 主动推停用/删除给应用）</label><input type="text" id="na-deprov" placeholder="https://yourapp.com/sso/deprovision" style="font-family:monospace;font-size:12px;"/></div>
           <div class="form-row full"><label>Back-Channel Logout 地址（可选，OIDC 标准登出通知）</label><input type="text" id="na-bcl" placeholder="https://yourapp.com/oidc/backchannel-logout" style="font-family:monospace;font-size:12px;"/></div>
+          <div class="form-row full"><label>ID Token 签名算法（HS256 = 用 client_secret，现成 OIDC 库都支持；RS256 = 用平台私钥，公钥见 /oauth/jwks，给 kube-apiserver 等只认非对称签名 + JWKS 的验证方，集群登录建议 RS256）</label><select id="na-alg"><option value="HS256" selected>HS256（默认）</option><option value="RS256">RS256</option></select></div>
           <div class="form-row full"><label>必传字段（用户授权时不可取消，openid 天然必传）</label>${reqScopeBoxes('na', '')}</div>
           <div class="form-row"><label>用户端可见</label>
             <select id="na-visible"><option value="1">是（在应用市场展示）</option><option value="0">否（管理员可见）</option></select>
@@ -15343,8 +15344,9 @@ async function submitNewApp() {
   const visible = document.getElementById('na-visible')?.value === '1';
   const status  = document.getElementById('na-status')?.value;
   const category = document.getElementById('na-category')?.value.trim() || '';
+  const alg     = document.getElementById('na-alg')?.value === 'RS256' ? 'RS256' : 'HS256';
   if (!name || !cb) { showToast('⚠️ 应用名称和回调地址为必填'); return; }
-  const { ok, data } = await api('POST', '/admin/apps', { name, icon, description: desc, category, callback_url: cb, launch_url: launch, deprovision_url: deprov, backchannel_logout_uri: bcl, required_scopes: collectReqScopes('na'), visible, status });
+  const { ok, data } = await api('POST', '/admin/apps', { name, icon, description: desc, category, callback_url: cb, launch_url: launch, deprovision_url: deprov, backchannel_logout_uri: bcl, id_token_alg: alg, required_scopes: collectReqScopes('na'), visible, status });
   if (!ok) { showToast('⚠️ ' + (data.error||'创建失败')); return; }
   renderAdmApps();
   showToast('✓ 应用创建成功');
