@@ -1202,20 +1202,26 @@ function _devApi(method, path, body) {
   }
   if (method === 'POST' && path === '/admin/api-keys') {
     const tok = (body.key_type==='test'?'sk_test_':'sk_live_')+'demo'+Math.random().toString(36).slice(2,12);
+    const sm = [1,2].includes(+body.sign_mode)?+body.sign_mode:0, ss = sm?('sks_demo'+Math.random().toString(36).slice(2,30)):null;
     db._apiKeys = db._apiKeys || [];
-    db._apiKeys.unshift({ id:'k'+Date.now(), name:body.name, token_prefix:tok.slice(0,15)+'…', token_plain:body.key_type==='test'?tok:null, scopes:JSON.stringify(body.scopes||[]), status:'active', last_used_at:null, created_at:new Date().toISOString(), key_type:body.key_type||'live', trusted_ips:body.key_type==='test'?'*':(body.trusted_ips||''), rotate_days:body.rotate_days||0, rotate_enforce:body.rotate_enforce?1:0, rotated_from:null });
-    return ok({ success:true, token:tok, key_type:body.key_type||'live' });
+    const id='k'+Date.now();
+    db._apiKeys.unshift({ id, name:body.name, token_prefix:tok.slice(0,15)+'…', token_plain:body.key_type==='test'?tok:null, scopes:JSON.stringify(body.scopes||[]), status:'active', last_used_at:null, created_at:new Date().toISOString(), key_type:body.key_type||'live', trusted_ips:body.key_type==='test'?'*':(body.trusted_ips||''), rotate_days:body.rotate_days||0, rotate_enforce:body.rotate_enforce?1:0, rotated_from:null, sign_mode:sm, sign_secret:ss });
+    return ok({ success:true, token:tok, key_type:body.key_type||'live', key_id:id, sign_mode:sm, sign_secret:ss });
   }
   let akr = path.match(/^\/admin\/api-keys\/([^/]+)\/rotate$/);
   if (akr && method === 'POST') {
     const old = (db._apiKeys||[]).find(k=>k.id===akr[1]); if(!old) return err('密钥不存在',404);
     const tok = (old.key_type==='test'?'sk_test_':'sk_live_')+'rot'+Math.random().toString(36).slice(2,12);
+    const ss = old.sign_mode?('sks_rot'+Math.random().toString(36).slice(2,30)):null;
     old.status='revoked';
-    db._apiKeys.unshift({ ...old, id:'k'+Date.now(), token_prefix:tok.slice(0,15)+'…', token_plain:old.key_type==='test'?tok:null, status:'active', last_used_at:null, created_at:new Date().toISOString(), rotated_from:old.id });
-    return ok({ success:true, token:tok, key_type:old.key_type });
+    const id='k'+Date.now();
+    db._apiKeys.unshift({ ...old, id, token_prefix:tok.slice(0,15)+'…', token_plain:old.key_type==='test'?tok:null, status:'active', last_used_at:null, created_at:new Date().toISOString(), rotated_from:old.id, sign_secret:ss });
+    return ok({ success:true, token:tok, key_type:old.key_type, key_id:id, sign_mode:old.sign_mode||0, sign_secret:ss });
   }
   let akp = path.match(/^\/admin\/api-keys\/([^/]+)\/rotate-policy$/);
   if (akp && method === 'PATCH') { const k=(db._apiKeys||[]).find(x=>x.id===akp[1]); if(k){k.rotate_days=body.rotate_days||0;k.rotate_enforce=body.rotate_enforce?1:0;} return ok({ success:true }); }
+  let aks = path.match(/^\/admin\/api-keys\/([^/]+)\/sign-policy$/);
+  if (aks && method === 'PATCH') { const k=(db._apiKeys||[]).find(x=>x.id===aks[1]); if(!k) return err('密钥不存在',404); const m=[1,2].includes(+body.sign_mode)?+body.sign_mode:0; if(m===0)k.sign_secret=null; else if(!k.sign_secret||body.regenerate)k.sign_secret='sks_new'+Math.random().toString(36).slice(2,30); k.sign_mode=m; return ok({ success:true, sign_mode:m, key_id:k.id, sign_secret:k.sign_secret }); }
   if (method === 'DELETE' && path.startsWith('/admin/api-keys/')) { const k=(db._apiKeys||[]).find(x=>x.id===path.split('/').pop()); if(k)k.status='revoked'; return ok({ success:true }); }
 
   if (path === '/admin/env') return ok({ success:true, env:{} });
@@ -5379,6 +5385,17 @@ function openApiModal() {
         <input type="checkbox" id="new-key-enforce"> 到期后<b>拒绝调用</b>（强制轮换；不勾则仅在管理端提醒、调用照常）
       </label>
     </div>
+    <div class="form-row">
+      <label>调用方式 <span style="font-size:11px;color:var(--txd);font-weight:400;">（比 IP 白名单更强的防泄露手段）</span></label>
+      <select id="new-key-sign">
+        <option value="0" selected>普通 Bearer（在请求头带密钥，默认）</option>
+        <option value="1">允许签名调用（Bearer 或签名都可）</option>
+        <option value="2">强制签名调用（密钥不上线，只认逐请求签名）</option>
+      </select>
+      <div style="font-size:11px;color:var(--txd);margin-top:3px;line-height:1.6;">
+        <b>签名调用</b>：每次请求用签名密钥对「方法+路径+时间戳+随机数+请求体」算 HMAC-SHA256，密钥本身<b>永不随请求发送</b>，签名也<b>无法重放</b>（时间戳窗口 + nonce 一次性）。开启后创建时会给出签名密钥 + 示例。强制模式下泄露的日志/代理缓存都拿不到可复用的凭据。
+      </div>
+    </div>
     <div style="font-size:11px;color:var(--txd);padding:8px 10px;background:var(--sf2);border-radius:2px;border:1px solid var(--bd);">
       ⚠️ 密钥仅在创建时完整显示一次，请立即保存至安全位置。测试密钥撤销后直接删除，不保留记录。
     </div>`;
@@ -8845,7 +8862,7 @@ const AUDIT_EVENT_LABEL = {
   'points.adjusted':'调整积分', 'user.disabled':'停用账号', 'user.enabled':'启用账号',
   'oidc.authorized':'OIDC 授权',
   'redirect.policy_added':'新增登录跳转策略', 'redirect.policy_updated':'修改登录跳转策略', 'redirect.policy_removed':'删除登录跳转策略',
-  'apikey.created':'创建 API 密钥', 'apikey.rotated':'轮换 API 密钥', 'apikey.revoked':'撤销 API 密钥',
+  'apikey.created':'创建 API 密钥', 'apikey.rotated':'轮换 API 密钥', 'apikey.revoked':'撤销 API 密钥', 'apikey.sign_policy':'修改签名策略',
   'access.granted':'门禁通行', 'access.denied':'门禁拒绝',
   'access.face_enrolled':'录入人脸', 'access.face_deleted':'删除人脸',
   'access.pass_issued':'签发访客码', 'access.pass_revoked':'撤销访客码',
@@ -12810,6 +12827,11 @@ async function renderApiKeys() {
           轮换：${rot}${k.rotate_due?' · <b>已到期</b>':(k.due_at&&k.status==='active'?' · 到期 '+fmtTime(k.due_at):'')}
           ${k.status==='active'?`<button class="btn" style="font-size:9px;padding:0 5px;margin-left:3px;" onclick="editRotatePolicy('${k.id}',${+k.rotate_days||0},${+k.rotate_enforce||0})">改</button>`:''}
         </div>
+        <div style="font-size:10px;color:var(--txd);font-weight:400;margin-top:2px;">
+          签名：${+k.sign_mode===2?'<b style="color:var(--ac);">强制签名</b>':(+k.sign_mode===1?'允许签名':'仅 Bearer')}
+          ${+k.sign_mode>0&&k.sign_secret?`<button class="btn" style="font-size:9px;padding:0 5px;margin-left:3px;" onclick="revealSignSecret('${k.id}','${esc(k.name)}')">签名密钥</button>`:''}
+          ${k.status==='active'?`<button class="btn" style="font-size:9px;padding:0 5px;margin-left:3px;" onclick="editSignPolicy('${k.id}','${esc(k.name)}',${+k.sign_mode||0})">策略</button>`:''}
+        </div>
       </td>
       <td>${isTest && k.token_plain
           ? `<code style="font-size:11px;background:var(--bg);padding:2px 8px;border-radius:2px;word-break:break-all;">${k.token_plain}</code>
@@ -12862,8 +12884,37 @@ async function rotateKey(id, name) {
     <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;background:var(--sf2);border:1px solid var(--ac3);border-radius:2px;">
       <code style="flex:1;font-size:13px;font-family:monospace;font-weight:700;color:${isTest?'var(--txm)':'var(--ac)'};word-break:break-all;">${data.token}</code>
       <button class="btn primary" style="flex-shrink:0;" onclick="copyText('${data.token}')">复制</button>
-    </div>`;
+    </div>${signSecretBlock(data)}`;
   document.getElementById('api-modal-footer').innerHTML = `<button class="btn primary" onclick="closeApiModal();renderApiKeys()">完成</button>`;
+  document.getElementById('api-modal').classList.add('show');
+}
+
+// 改签名策略（v3.5.144）：开启 / 关闭 / 重设签名调用
+async function editSignPolicy(id, name, curMode) {
+  const choice = await uiPrompt(`签名调用策略「${name}」\n\n0 = 普通 Bearer（关闭签名）\n1 = 允许签名（Bearer 或签名都可）\n2 = 强制签名（密钥不上线，只认逐请求签名）\n\n输入 0 / 1 / 2：`, String(curMode || 0));
+  if (choice === null) return;
+  const mode = [0, 1, 2].includes(parseInt(choice, 10)) ? parseInt(choice, 10) : 0;
+  let regen = false;
+  if (mode > 0 && curMode > 0) regen = await uiConfirm('是否同时<b>重设签名密钥</b>（旧签名密钥立即失效，需把新密钥换给接入方）？\n\n确定=重设；取消=沿用现有签名密钥。', { danger: true });
+  const { ok, data } = await api('PATCH', `/admin/api-keys/${id}/sign-policy`, { sign_mode: mode, regenerate: regen });
+  if (!ok) { showToast('⚠️ ' + (data.error || '更新失败')); return; }
+  if (data.sign_secret) {
+    document.getElementById('api-modal-title').textContent = '✓ 签名已启用 · 签名密钥';
+    document.getElementById('api-modal-body').innerHTML = `<div style="font-size:13px;color:var(--txm);margin-bottom:4px;">签名密钥（请复制并换给接入方）：</div>${signSecretBlock({ ...data, token: '' })}`;
+    document.getElementById('api-modal-footer').innerHTML = `<button class="btn primary" onclick="closeApiModal();renderApiKeys()">完成</button>`;
+    document.getElementById('api-modal').classList.add('show');
+  } else { showToast('✓ 签名策略已更新'); }
+  renderApiKeys();
+}
+
+// 查看某密钥的签名密钥（管理端已下发，直接展示 + 示例）
+async function revealSignSecret(id, name) {
+  const { ok, data } = await api('GET', '/admin/api-keys');
+  const k = ok && (data?.keys || []).find(x => x.id === id);
+  if (!k || !k.sign_secret) { showToast('⚠️ 未找到签名密钥'); return; }
+  document.getElementById('api-modal-title').textContent = '🔑 签名密钥 · ' + name;
+  document.getElementById('api-modal-body').innerHTML = signSecretBlock({ sign_mode: k.sign_mode, sign_secret: k.sign_secret, key_id: k.id });
+  document.getElementById('api-modal-footer').innerHTML = `<button class="btn primary" onclick="closeApiModal()">关闭</button>`;
   document.getElementById('api-modal').classList.add('show');
 }
 
@@ -12894,11 +12945,12 @@ async function saveApiKey() {
   const trustedIps = document.getElementById('new-key-ips')?.value.trim();
   const rotateDays = parseInt(document.getElementById('new-key-rotate')?.value || '0', 10) || 0;
   const enforce   = !!document.getElementById('new-key-enforce')?.checked;
+  const signMode  = parseInt(document.getElementById('new-key-sign')?.value || '0', 10) || 0;
   const checked   = [...document.querySelectorAll('#api-modal-body .form-row input[type=checkbox]:checked')].map(c => c.value).filter(v => ALL_SCOPES.some(s => s.key === v));
   if (!name) { showToast('⚠️ 请填写密钥名称'); return; }
   if (!checked.length) { showToast('⚠️ 请至少选择一项权限'); return; }
   if (keyType === 'live' && !trustedIps) { showToast('⚠️ 实际密钥必须配置可信 IP'); return; }
-  const { ok, data } = await api('POST', '/admin/api-keys', { name, scopes: checked, key_type: keyType, trusted_ips: trustedIps, rotate_days: rotateDays, rotate_enforce: enforce });
+  const { ok, data } = await api('POST', '/admin/api-keys', { name, scopes: checked, key_type: keyType, trusted_ips: trustedIps, rotate_days: rotateDays, rotate_enforce: enforce, sign_mode: signMode });
   if (!ok) { showToast('⚠️ ' + (data.error || '创建失败')); return; }
   const isTest = keyType === 'test';
   document.getElementById('api-modal-title').textContent = '✓ 密钥已创建';
@@ -12907,8 +12959,28 @@ async function saveApiKey() {
     <div style="display:flex;align-items:center;gap:8px;padding:12px 14px;background:var(--sf2);border:1px solid var(--ac3);border-radius:2px;">
       <code style="flex:1;font-size:13px;font-family:monospace;font-weight:700;color:${isTest?'var(--txm)':'var(--ac)'};word-break:break-all;">${data.token}</code>
       <button class="btn primary" style="flex-shrink:0;" onclick="copyText('${data.token}')">复制</button>
-    </div>`;
+    </div>${signSecretBlock(data)}`;
   document.getElementById('api-modal-footer').innerHTML = `<button class="btn primary" onclick="closeApiModal();renderApiKeys()">完成</button>`;
+}
+
+// 签名调用：展示签名密钥 + 调用方式（创建 / 轮换 / 重设签名后用）
+function signSecretBlock(data) {
+  if (!data || !data.sign_mode || !data.sign_secret) return '';
+  const force = data.sign_mode === 2;
+  return `
+    <div style="margin-top:12px;padding:11px 13px;background:var(--sf2);border:1px solid var(--ac3);border-radius:3px;">
+      <div style="font-size:12.5px;font-weight:600;color:var(--tx);margin-bottom:6px;">🔑 签名密钥（${force?'强制签名·不再使用 Bearer':'签名调用'}）</div>
+      <div style="font-size:11px;color:var(--txd);margin-bottom:6px;">它<b>不随请求发送</b>，只用来对每次请求算签名。服务端已留存以校验，请妥善保管；泄露请立即在列表「签名策略」里重设。</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <code style="flex:1;font-size:12px;font-family:monospace;word-break:break-all;">${data.sign_secret}</code>
+        <button class="btn" style="flex-shrink:0;" onclick="copyText('${data.sign_secret}')">复制</button>
+      </div>
+      <div style="font-size:11px;color:var(--txd);margin-top:9px;line-height:1.7;">
+        <b>调用方式</b>（公开 key id：<code>${data.key_id||''}</code>）—— 每次请求带这几个头：<br>
+        <code style="font-size:10.5px;">X-QWQ-Key</code>=key id · <code style="font-size:10.5px;">X-QWQ-Timestamp</code>=毫秒时间戳 · <code style="font-size:10.5px;">X-QWQ-Nonce</code>=随机串(8~128位) · <code style="font-size:10.5px;">X-QWQ-Signature</code>=HMAC-SHA256(签名密钥, 待签串)<br>
+        待签串按行拼接：<code style="font-size:10.5px;">方法\\n路径(含?query)\\n时间戳\\nNonce\\nsha256(请求体)</code>（GET 请求体按空串算，路径从 <code style="font-size:10.5px;">/api/v1/...</code> 起）。详见接入文档。
+      </div>
+    </div>`;
 }
 
 // ── 管理端：环境变量 ──

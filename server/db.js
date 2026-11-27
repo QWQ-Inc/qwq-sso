@@ -423,6 +423,12 @@ try { db.exec("ALTER TABLE api_keys ADD COLUMN token_plain TEXT"); } catch(_) {}
 try { db.exec('ALTER TABLE api_keys ADD COLUMN rotate_days INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 try { db.exec('ALTER TABLE api_keys ADD COLUMN rotate_enforce INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 try { db.exec('ALTER TABLE api_keys ADD COLUMN rotated_from TEXT'); } catch(_) {}
+// 签名调用（v3.5.144）：sign_mode 0=仅 Bearer（默认）| 1=允许签名 | 2=强制签名（不收 Bearer）。
+// sign_secret 是用于 HMAC 签名的密钥（服务端必须留存才能校验，故可恢复；开启签名时生成，轮换 / 重设时更换）。
+try { db.exec('ALTER TABLE api_keys ADD COLUMN sign_mode INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
+try { db.exec('ALTER TABLE api_keys ADD COLUMN sign_secret TEXT'); } catch(_) {}
+// 签名调用的一次性 nonce（防重放）：PK = '<keyId>:<nonce>'，expire_at 过了就清。
+try { db.exec('CREATE TABLE IF NOT EXISTS apikey_sig_nonces (nonce TEXT PRIMARY KEY, expire_at INTEGER NOT NULL)'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN is_blind_box INTEGER NOT NULL DEFAULT 0'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN open_instantly INTEGER NOT NULL DEFAULT 1'); } catch(_) {}
 try { db.exec('ALTER TABLE shop_goods ADD COLUMN category TEXT'); } catch(_) {}   // 商品分类（v3.4.43）
@@ -1864,6 +1870,13 @@ const apiKeyStmts = {
     VALUES (@id,@name,@token_hash,@token_prefix,@scopes,@status,@created_by)`),
   revoke: db.prepare("UPDATE api_keys SET status='revoked' WHERE id=?"),
   touch:  db.prepare("UPDATE api_keys SET last_used_at=datetime('now') WHERE id=?"),
+  byId:   db.prepare('SELECT * FROM api_keys WHERE id=?'),   // 签名调用按公开 key id 查（v3.5.144）
+};
+
+// 签名调用 nonce（防重放，v3.5.144）
+const apiKeySigNonceStmts = {
+  seen:  db.prepare('INSERT OR IGNORE INTO apikey_sig_nonces (nonce, expire_at) VALUES (?, ?)'),  // changes=0 即已用过
+  purge: db.prepare('DELETE FROM apikey_sig_nonces WHERE expire_at < ?'),
 };
 
 // ──────────────────────────────────────────
@@ -2174,7 +2187,7 @@ const limitedAdminStmts = {
 // 单调递增的库结构版本：每次新增表 / 列（上面的 CREATE / ALTER 迁移）时同步 +1。
 // 写进 SQLite 的 PRAGMA user_version，导出备份时随库字节一起带走；导入时据此判断
 // 备份相对当前代码是「更旧（升级/恢复，安全）/ 同版 / 更新（降级，新功能数据本版本用不上）」。
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 try { db.pragma('user_version = ' + SCHEMA_VERSION); } catch (_) {}
 
 // 当前运行库的表与列清单（导入时比对用：备份里有、当前 schema 没有的表/列 = 本版本认不得、用不上的数据）
@@ -2241,6 +2254,7 @@ module.exports = {
   limitedAdmins: limitedAdminStmts,
   genUidCode,
   apiKeys: apiKeyStmts,
+  apiKeySigNonces: apiKeySigNonceStmts,
   env: envStmts,
   points: pointsStmts,
 };

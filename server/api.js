@@ -7001,37 +7001,43 @@ function rotateDueAt(key) {
   return Number.isNaN(ms) ? null : new Date(ms + d * 86400000).toISOString();
 }
 
+// 签名模式（v3.5.144）：0=仅 Bearer | 1=允许签名 | 2=强制签名
+function safeSignMode(v) { const n = parseInt(v, 10); return (n === 1 || n === 2) ? n : 0; }
+function genSignSecret() { return 'sks_' + crypto.randomBytes(32).toString('base64url'); }
+
 router.get('/admin/api-keys', requireAdmin(1), (req, res) => {
   const keys = apiKeys.findAll.all().map(k => ({ ...k, rotate_due: k.status === 'active' && apiKeyRotateDue(k), due_at: rotateDueAt(k) }));
   const rotate_due_count = keys.filter(k => k.rotate_due).length;
   res.json({ success: true, keys, summary: { rotate_due_count } });
 });
 
-// 新建密钥（可带轮换策略）。抽成共用函数，供新建 + 轮换复用
-function issueApiKey({ name, scopes, key_type, trusted_ips, rotate_days, rotate_enforce, created_by, rotated_from }) {
+// 新建密钥（可带轮换策略 + 签名模式）。抽成共用函数，供新建 + 轮换复用
+function issueApiKey({ name, scopes, key_type, trusted_ips, rotate_days, rotate_enforce, sign_mode, created_by, rotated_from }) {
   const prefix = key_type === 'test' ? 'sk_test_' : 'sk_live_';
   const token  = prefix + crypto.randomBytes(20).toString('hex');
   const hash   = crypto.createHash('sha256').update(token).digest('hex');
   const id     = uuidv4();
   const ips    = key_type === 'test' ? '*' : (String(trusted_ips || '').trim() || '');
   const plain  = key_type === 'test' ? token : null;   // 测试密钥明文保存供随时查看；实际密钥只存哈希
-  db.prepare("INSERT INTO api_keys (id,name,token_hash,token_prefix,scopes,status,created_by,key_type,trusted_ips,token_plain,rotate_days,rotate_enforce,rotated_from) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  const sm     = safeSignMode(sign_mode);
+  const secret = sm > 0 ? genSignSecret() : null;      // 开启签名才生成签名密钥（服务端须留存以校验）
+  db.prepare("INSERT INTO api_keys (id,name,token_hash,token_prefix,scopes,status,created_by,key_type,trusted_ips,token_plain,rotate_days,rotate_enforce,rotated_from,sign_mode,sign_secret) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(id, name, hash, token.slice(0, key_type === 'test' ? 15 : 18), JSON.stringify(scopes), 'active', created_by, key_type, ips, plain,
-         safeRotateDays(rotate_days), rotate_enforce ? 1 : 0, rotated_from || null);
-  return { id, token };
+         safeRotateDays(rotate_days), rotate_enforce ? 1 : 0, rotated_from || null, sm, secret);
+  return { id, token, sign_mode: sm, sign_secret: secret };
 }
 
 router.post('/admin/api-keys', requireAdmin(2), (req, res) => {
-  const { name, scopes = [], key_type = 'live', trusted_ips = '', rotate_days = 0, rotate_enforce = false } = req.body;
+  const { name, scopes = [], key_type = 'live', trusted_ips = '', rotate_days = 0, rotate_enforce = false, sign_mode = 0 } = req.body;
   if (!name) return res.status(400).json({ error: '密钥名称必填' });
   if (!Array.isArray(scopes) || !scopes.length) return res.status(400).json({ error: '请至少选择一项权限' });
   // v3.5.75.2：删除实名（users:kyc）是特殊高危权限——A2（运营管理员）创建的密钥不能直接授予，需 A1 创建/批准
   if (scopes.includes('users:kyc') && (req.user.adminLevel || 9) > 1) {
     return res.status(403).json({ error: '删除实名（users:kyc）属于特殊权限，需要超级管理员（A1）创建该密钥' });
   }
-  const { id, token } = issueApiKey({ name, scopes, key_type, trusted_ips, rotate_days, rotate_enforce, created_by: req.user.uid });
-  try { audit('apikey.created', { actor: actorOf(req), detail: { name, key_type, scopes, rotate_days: safeRotateDays(rotate_days) } }); } catch (_) {}
-  res.json({ success: true, token, key_type });
+  const r = issueApiKey({ name, scopes, key_type, trusted_ips, rotate_days, rotate_enforce, sign_mode, created_by: req.user.uid });
+  try { audit('apikey.created', { actor: actorOf(req), detail: { name, key_type, scopes, rotate_days: safeRotateDays(rotate_days), sign_mode: safeSignMode(sign_mode) } }); } catch (_) {}
+  res.json({ success: true, token: r.token, key_type, key_id: r.id, sign_mode: r.sign_mode, sign_secret: r.sign_secret });
 });
 
 // 一键轮换（v3.5.143）：生成同名、同权限、同可信 IP、同轮换策略的新密钥，旧密钥立即撤销（历史保留）
@@ -7045,13 +7051,28 @@ router.post('/admin/api-keys/:id/rotate', requireAdmin(2), (req, res) => {
     return res.status(403).json({ error: '该密钥含删除实名（users:kyc）特殊权限，需超级管理员（A1）轮换' });
   }
   const key_type = old.key_type === 'test' ? 'test' : 'live';
-  const { id, token } = issueApiKey({
+  const r = issueApiKey({
     name: old.name, scopes, key_type, trusted_ips: old.trusted_ips,
-    rotate_days: old.rotate_days, rotate_enforce: old.rotate_enforce, created_by: req.user.uid, rotated_from: old.id,
+    rotate_days: old.rotate_days, rotate_enforce: old.rotate_enforce, sign_mode: old.sign_mode, created_by: req.user.uid, rotated_from: old.id,
   });
-  apiKeys.revoke.run(old.id);   // 旧密钥立即失效
+  apiKeys.revoke.run(old.id);   // 旧密钥立即失效（签名密钥也随之更换）
   try { audit('apikey.rotated', { actor: actorOf(req), detail: { name: old.name, key_type, from: old.token_prefix } }); } catch (_) {}
-  res.json({ success: true, token, key_type });
+  res.json({ success: true, token: r.token, key_type, key_id: r.id, sign_mode: r.sign_mode, sign_secret: r.sign_secret });
+});
+
+// 改签名策略（v3.5.144）：开启 / 关闭 / 重设签名调用。不换 Bearer 值，但开启 / 重设会生成新的签名密钥。
+router.patch('/admin/api-keys/:id/sign-policy', requireAdmin(2), (req, res) => {
+  const key = apiKeys.byId.get(req.params.id);
+  if (!key) return res.status(404).json({ error: '密钥不存在' });
+  if (key.status !== 'active') return res.status(400).json({ error: '该密钥已撤销' });
+  const mode = safeSignMode(req.body?.sign_mode);
+  const regen = !!req.body?.regenerate;
+  let secret = key.sign_secret;
+  if (mode === 0) secret = null;                                 // 关闭 → 清掉签名密钥
+  else if (!secret || regen) secret = genSignSecret();          // 开启但无密钥，或要求重设 → 生成新的
+  db.prepare('UPDATE api_keys SET sign_mode=?, sign_secret=? WHERE id=?').run(mode, secret, key.id);
+  try { audit('apikey.sign_policy', { actor: actorOf(req), detail: { name: key.name, sign_mode: mode, regenerated: regen || (mode > 0 && !key.sign_secret) } }); } catch (_) {}
+  res.json({ success: true, sign_mode: mode, key_id: key.id, sign_secret: secret });
 });
 
 router.patch('/admin/api-keys/:id/trusted-ips', requireAdmin(1), (req, res) => {

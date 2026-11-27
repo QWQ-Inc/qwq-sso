@@ -165,24 +165,87 @@ function apiKeyRotateDue(key, now = Date.now()) {
   return (now - ms) >= days * 86400000;
 }
 
+// ── 签名调用（HMAC 请求签名，v3.5.144）─────────────────────────────────────
+// 比 Bearer 更强：密钥（sign_secret）本身永不上线；每次调用对「方法+路径+时间戳+nonce+请求体哈希」
+// 签名，泄露的日志 / 代理缓存里拿到的签名不能重放（时间戳窗口 + nonce 一次性）。
+// 与 deprovision webhook / 联邦 / R2 SigV4 同一原语。以下三个纯函数导出供单测与文档对齐。
+function apiKeySignBase({ method, path, timestamp, nonce, bodyHash }) {
+  return [String(method || '').toUpperCase(), String(path || ''), String(timestamp || ''), String(nonce || ''), String(bodyHash || '')].join('\n');
+}
+function apiKeySignature(secret, base) {
+  return require('crypto').createHmac('sha256', String(secret || '')).update(String(base || '')).digest('hex');
+}
+function apiKeySignTimestampOk(ts, now, windowMs) {
+  const t = parseInt(ts, 10);
+  if (!Number.isFinite(t)) return false;
+  return Math.abs(now - t) <= windowMs;
+}
+function apiKeySignWindowMs() {
+  const sec = parseInt(process.env.APIKEY_SIGN_WINDOW_SEC, 10);
+  return (Number.isFinite(sec) ? Math.max(30, Math.min(3600, sec)) : 300) * 1000;
+}
+function timingSafeHexEq(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length || !a.length) return false;
+  try { return require('crypto').timingSafeEqual(Buffer.from(a), Buffer.from(b)); } catch (_) { return false; }
+}
+// 校验一次签名请求 → { key } 或 { status, error }。不做 scope/IP/轮换判定（交给下游统一处理）。
+function verifySignedApiRequest(req) {
+  const crypto = require('crypto');
+  const { apiKeys, apiKeySigNonces } = require('./db');
+  const keyId = String(req.headers['x-qwq-key'] || '');
+  const key = keyId && apiKeys.byId.get(keyId);
+  if (!key || key.status !== 'active') return { status: 401, error: 'API Key 无效或已撤销' };
+  if (!key.sign_mode || !key.sign_secret) return { status: 403, error: '该密钥未启用签名调用' };
+  const now = Date.now(), windowMs = apiKeySignWindowMs();
+  const ts = req.headers['x-qwq-timestamp'];
+  if (!apiKeySignTimestampOk(ts, now, windowMs)) return { status: 401, error: '签名时间戳超出允许窗口（请校准客户端时钟）' };
+  const nonce = String(req.headers['x-qwq-nonce'] || '');
+  if (nonce.length < 8 || nonce.length > 128) return { status: 401, error: '签名 nonce 缺失或长度非法（8~128）' };
+  const sig = String(req.headers['x-qwq-signature'] || '');
+  const bodyHash = crypto.createHash('sha256').update(req.rawBody || '').digest('hex');
+  const qs = req.originalUrl && req.originalUrl.includes('?') ? req.originalUrl.split('?').slice(1).join('?') : '';
+  const path = (req.baseUrl || '') + req.path + (qs ? '?' + qs : '');
+  const expected = apiKeySignature(key.sign_secret, apiKeySignBase({ method: req.method, path, timestamp: ts, nonce, bodyHash }));
+  if (!timingSafeHexEq(expected, sig)) return { status: 401, error: '签名校验失败' };
+  // 防重放：nonce 按 key 隔离，一次性消费；过期清理
+  try { apiKeySigNonces.purge.run(now); } catch (_) {}
+  const r = apiKeySigNonces.seen.run(keyId + ':' + nonce, now + windowMs * 2);
+  if (r.changes === 0) return { status: 401, error: '签名 nonce 已被使用（疑似重放）' };
+  return { key };
+}
+
 function requireApiKey(scope) {
   return async (req, res, next) => {
-    const auth = req.headers.authorization;
-    if (!auth?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'API Key 缺失' });
-    }
-    const token = auth.slice(7);
-
-    if (!token.startsWith('sk_live_') && !token.startsWith('sk_test_')) {
-      return res.status(401).json({ error: 'API Key 格式无效' });
-    }
-    const isTestKey = token.startsWith('sk_test_');
-
-    const crypto = require('crypto');
-    const hash = crypto.createHash('sha256').update(token).digest('hex');
     const { apiKeys } = require('./db');
-    const key = apiKeys.findByHash.get(hash, 'active');
-    if (!key) return res.status(401).json({ error: 'API Key 无效或已撤销' });
+    let key, isTestKey;
+
+    const signedKeyId = req.headers['x-qwq-key'];
+    const signature   = req.headers['x-qwq-signature'];
+    if (signedKeyId && signature) {
+      // ── 签名调用 ──（密钥不上线，逐请求签名 + nonce 防重放）
+      const r = verifySignedApiRequest(req);
+      if (r.error) return res.status(r.status).json({ error: r.error });
+      key = r.key;
+      isTestKey = key.key_type === 'test';
+    } else {
+      // ── 普通 Bearer ──
+      const auth = req.headers.authorization;
+      if (!auth?.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'API Key 缺失' });
+      }
+      const token = auth.slice(7);
+      if (!token.startsWith('sk_live_') && !token.startsWith('sk_test_')) {
+        return res.status(401).json({ error: 'API Key 格式无效' });
+      }
+      isTestKey = token.startsWith('sk_test_');
+      const hash = require('crypto').createHash('sha256').update(token).digest('hex');
+      key = apiKeys.findByHash.get(hash, 'active');
+      if (!key) return res.status(401).json({ error: 'API Key 无效或已撤销' });
+      // 强制签名模式（sign_mode=2）：不接受普通 Bearer，必须签名调用
+      if (key.sign_mode === 2) {
+        return res.status(403).json({ error: '该密钥为强制签名模式，不接受普通 Bearer 调用，请改用签名调用', sign_required: true });
+      }
+    }
 
     // 凭据轮换强制（v3.5.143）：开了「到期后拒绝调用」且已超过轮换期限 → 拒绝，提示去管理端轮换
     if (key.rotate_enforce && apiKeyRotateDue(key)) {
@@ -222,4 +285,4 @@ function requireApiKey(scope) {
   };
 }
 
-module.exports = { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, ipMatches, ipAllowed, appExpiresIn, apiKeyRotateDue };
+module.exports = { signToken, signShortToken, verifyToken, requireAuth, requireAdmin, requireApiKey, ipMatches, ipAllowed, appExpiresIn, apiKeyRotateDue, apiKeySignBase, apiKeySignature, apiKeySignTimestampOk, apiKeySignWindowMs, verifySignedApiRequest };

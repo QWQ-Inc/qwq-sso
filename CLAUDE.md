@@ -6,7 +6,7 @@
 
 ## 项目是什么
 
-**QWQ SSO** — 统一登录系统，当前版本 **v3.5.143**。
+**QWQ SSO** — 统一登录系统，当前版本 **v3.5.144**。
 
 - 部署地址：`https://qwqsso.zeabur.app`（Zeabur 托管）
 - GitHub：`https://github.com/QWQ-Inc/qwq-sso`（远端仓库已从 `uesrbai/qwq-sso` 迁移至此，v3.4.21.1）
@@ -446,6 +446,30 @@ v3.3.0 之前**只有前者**，所以"第三方登录"实际上是"第三方读
 - ⚠️ **云端会话推不了 tag**（git 代理对 `refs/tags/*` 返回 403，只能推分支）。GITHUB_TOKEN 也不能给「workflow 文件与 main 不同」的提交建引用（没有 workflows 权限）。办法：发版提交推到 main 后，手动运行 **Actions → Backfill tags**（`.github/workflows/backfill-tags.yml`，workflow_dispatch，可用 GitHub MCP `actions_run_trigger` 触发）——按提交标题 `vX.Y.Z:` 找缺 tag 的版本：最新版打在 main HEAD；旧版本打在「该版本代码 + 当前 `.github/workflows`」的快照提交上（代码与原提交完全一致），并按 CHANGELOG 建 Release。v3.5.24~v3.5.37 就是这样补上的。所以发版提交标题必须保持 `vX.Y.Z: 描述` 格式。
 
 ---
+
+## v3.5.144 API 凭据：签名调用（HMAC 请求签名，密钥不上线 + 防重放）（用户反馈）
+
+三级版本。用户：「密钥对 IP 限制还是有待改进，加个新方式，比如客户端证书，或者一端生成另一端也生成互相换密钥？」判断后：**客户端证书(mTLS)** 在 Zeabur 反代下没法真正强制（TLS 在反代那层终结，Node 拿不到客户端证书，和 Apple Wallet 证书一类「本机验不了」同性质，不做）；**两端各生成一半互换** 安全性不比「服务端生成一把强随机、给你一次」更强（安全来自熵不来自谁生成）。真正该上的是这套代码里早有的原语（deprovision webhook / 联邦 / R2 SigV4 都是它）——**HMAC 请求签名**，作为每把密钥的可选模式。
+
+### 模型（`sign_mode` 0/1/2）
+- `0` 仅 Bearer（默认，存量密钥零变化）/ `1` 允许签名（Bearer 或签名都收）/ `2` **强制签名**（不收 Bearer，密钥永不上线）。
+- 开启签名（mode>0）时生成一把 **签名密钥 `sign_secret`**（`sks_` 前缀，base64url 32 字节）。⚠️ **它必须服务端留存才能校验**（可恢复，存 `api_keys.sign_secret`，管理端 GET 可取、同 `token_plain` 的暴露级）——这是用「密钥不上线 + 防重放」换「不再 hash-only 落库」的刻意取舍：对「日志/代理/URL 泄露 Bearer 可永久重放」的威胁是净胜；DB 被脱库才暴露 sign_secret，最高安全叠 IP + 轮换。
+- **轮换 / 重设签名策略会生成新的 sign_secret**（旧的立即失效）。
+
+### 签名机制（`server/auth.js`，三个纯函数导出供单测/文档对齐）
+- 客户端每请求带 4 个头：`X-QWQ-Key`=公开 key id（= `api_keys.id`，知道它无法伪造签名）、`X-QWQ-Timestamp`=毫秒时间戳、`X-QWQ-Nonce`=随机串(8~128 位)、`X-QWQ-Signature`=`hex(HMAC-SHA256(sign_secret, 待签串))`。
+- **待签串**按行拼接：`方法\n路径(含?query)\n时间戳\nNonce\nsha256(请求体)`。`apiKeySignBase({method,path,timestamp,nonce,bodyHash})` 生成；`apiKeySignature(secret,base)` 算 HMAC；`apiKeySignTimestampOk(ts,now,windowMs)` 判窗口。
+- **路径取 `/api/v1/...`**（机器端点在 `gate.EXEMPT` 里，永不走访问前缀，所以 `req.baseUrl(/api)+req.path` 始终是干净的 `/api/v1/...`；query 从 `req.originalUrl` 取）。GET 请求体按空串算 `sha256('')`。
+- **请求体哈希**：`index.js` 的 `express.json` 的 `verify` 扩展为对 `/api/v1/*`（`req.url.includes('/api/v1/')`，兼容前缀模式）也留一份 `req.rawBody`——签名要对原始字节算，解析后再 stringify 会对不上。
+- `requireApiKey` 顶部分流：有 `X-QWQ-Key`+`X-QWQ-Signature` → 走 `verifySignedApiRequest`（查 key by id → 校 status → 时间戳窗口[`APIKEY_SIGN_WINDOW_SEC` 默认 300，夹 30~3600] → nonce 长度 → `timingSafeEqual` 比对 HMAC → nonce 一次性消费防重放）；否则走 Bearer（且 `sign_mode===2` 时拒绝 Bearer，回 403 `sign_required:true`）。两条路之后的轮换/IP/scope 门统一照跑。
+- **防重放**：新表 `apikey_sig_nonces(nonce PK='<keyId>:<nonce>', expire_at)`（`INSERT OR IGNORE` changes=0 即已用过），`expire_at=now+窗口*2`，`purge` 清过期。nonce 按 key 隔离（两把 key 可用同 nonce）。
+
+### 数据 / 接口 / 前端
+- `db.js`：`api_keys` 加 `sign_mode`/`sign_secret`；新表 `apikey_sig_nonces`；`apiKeyStmts.byId` + `apiKeySigNonceStmts`（seen/purge，导出 `apiKeySigNonces`）。`SCHEMA_VERSION` 3→4。
+- `api.js`：`safeSignMode`/`genSignSecret`；`issueApiKey` 带 sign_mode + 生成 sign_secret（新建/轮换复用）；POST 收 `sign_mode`、回 `key_id`/`sign_mode`/`sign_secret`；rotate 沿用 old.sign_mode 并换新 sign_secret；新 `PATCH /admin/api-keys/:id/sign-policy`（开/关/重设，`regenerate` 换密钥，审计 `apikey.sign_policy`）；GET 原样回带 sign_mode/sign_secret（管理端可取、交给接入方）。
+- `dashboard.html`：新建弹窗加「调用方式」下拉（普通/允许/强制）；`signSecretBlock(data)` 展示签名密钥 + key id + 4 个头 + 待签串示例（创建/轮换/重设后都用）；列表每把密钥显示「签名：仅 Bearer/允许签名/强制签名」+「签名密钥」查看 + 「策略」编辑（`editSignPolicy`/`revealSignSecret`）；dev mock 同步 sign 字段 + sign-policy 端点；AUDIT_EVENT_LABEL 加 `apikey.sign_policy`。
+- ⚠️ 测试：`apikey-sign-test.js` 复刻签名原语 + verify 决策 20 项全过（正确签名通过、重放 nonce 拒、换 nonce 放行、篡改 body/path/method/query 失败、带 query 正确通过、错签名密钥失败、时间戳过期/未来拒、窗口边界放行、nonce 太短拒、不同 key 复用同 nonce 隔离、撤销/未启用拒、sign_mode=2 拒 Bearer）；`apikey-rotate-test.js` 17 项回归；server(auth/api/db/index) `node --check` + dashboard 内联 JS 4 块解析 0 错误。dev 浏览器实测 API 调用页：创建强制签名密钥 → 结果弹窗出签名密钥 + 头/待签串示例、列表「签名：强制签名」+ 查看/策略按钮、轮换横幅。真实 HTTP 签名链路（express + better-sqlite3）本机未端到端，靠 `verifySignedApiRequest` 的纯函数单测 + 它是 `requireApiKey` 既有中间件的薄增量覆盖；线上接真实密钥、设强制签名、用 `sks_` 密钥签一个请求验证最稳。
+- ⚠️ **OIDC 应用 client_secret 不在此列**（它另有一键重新生成）；OAuth2 client credentials 仍走 client_secret。签名调用只覆盖开放 API 密钥（`/v1/*`）。见 [[ui-design-preference]]。
 
 ## v3.5.143 API 凭据：用途预设一键签发 + 轮换周期策略 + 到期提醒 + 一键轮换（用户反馈）
 

@@ -67,7 +67,12 @@ app.set('trust proxy', true);
 // ── 基础中间件 ──
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*', credentials: true }));
 // 留一份原始请求体：飞书事件订阅的签名（X-Lark-Signature）要对原始字节算（v3.5.59）
-app.use(express.json({ verify: (req, _res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/api/public/dirsync/')) req.rawBody = buf.toString('utf8'); } }));
+// 留一份原始请求体：① 飞书事件订阅签名要对原始字节算（v3.5.59）；② 开放 API 签名调用要对请求体哈希（v3.5.144，/api/v1/*）。
+// 用 req.url 判断（含 .includes 以兼容访问前缀模式下的 /<prefix>/api/v1/...）。
+app.use(express.json({ verify: (req, _res, buf) => {
+  const u = req.url || '';
+  if ((req.originalUrl && req.originalUrl.startsWith('/api/public/dirsync/')) || u.includes('/api/v1/')) req.rawBody = buf.toString('utf8');
+} }));
 app.use(express.urlencoded({ extended: true }));
 
 // ── Session ──
@@ -160,7 +165,7 @@ function buildFooterHtml() {
     : '';
 
   // 版本信息点击跳转 GitHub（不可修改）
-  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.143</a>`;
+  const versionLink = `<a href="https://github.com/QWQ-Inc/qwq-sso" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;opacity:.7;">Powered by QWQ SSO v3.5.144</a>`;
 
   return `<footer style="text-align:center;padding:20px 20px 8px;margin-top:24px;font-size:11px;color:rgba(0,0,0,.38);border-top:1px solid rgba(0,0,0,.07);line-height:1.9;user-select:none;">
   <div style="font-weight:500;">${copyright}</div>${infoLine}

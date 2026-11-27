@@ -1,6 +1,6 @@
 # 统一登录系统 SSO — API 对接文档
 
-> 版本：v3.5.63　　最后更新：2026-10
+> 版本：v3.5.144　　最后更新：2026-11
 >
 > **开放 API（`/v1/*`）已逐接口补全**：全部 45 个 `/v1/*` 接口在第六章均有速查表（6.0）+ 分节说明。
 > 管理端 JWT 接口（第七章）为常用主干 + 新功能的管理入口概述，字段细节以 `server/api.js` 与 dashboard「API 调用」页内置文档为准。
@@ -109,6 +109,56 @@ Authorization: Bearer sk_live_xxxxxxxxxxxxxxxx...
 - 测试密钥：默认不校验来源 IP；仅当管理员主动为该测试密钥配置了具体 IP 列表时才会校验
 - **可信 IP 支持 CIDR 网段**（IPv4），逗号分隔可混填精确 IP 与网段，例如 `203.0.113.7, 10.8.0.0/16, 192.168.1.0/24`。
   弹性容器/出口 IP 会漂移的部署，填云厂商的出口网段即可，无需逐个 IP 维护。`0.0.0.0/0` 等于放行全部（不推荐）
+
+**签名调用（HMAC 请求签名，v3.5.144）—— 比 IP 白名单更强的防泄露手段**
+
+每把密钥可设 `sign_mode`：`0` 仅 Bearer（默认）/ `1` 允许签名（Bearer 或签名都收）/ `2` **强制签名**（不收 Bearer）。
+开启签名时管理端给出一把**签名密钥**（`sks_` 前缀）。签名调用时**密钥本身永不随请求发送**，且每次签名绑定时间戳窗口 + 一次性 nonce，无法重放。
+
+每次请求带 4 个头：
+
+| 头 | 值 |
+|---|---|
+| `X-QWQ-Key` | 公开 key id（创建时返回的 `key_id`） |
+| `X-QWQ-Timestamp` | 毫秒级 Unix 时间戳（须在服务端窗口内，默认 ±300 秒） |
+| `X-QWQ-Nonce` | 随机串，8~128 位（同一 key 内一次性，防重放） |
+| `X-QWQ-Signature` | `hex(HMAC-SHA256(签名密钥, 待签串))` |
+
+**待签串**按行（`\n`）拼接，共 5 行：
+
+```
+<HTTP方法大写>
+<路径，含 ?query，从 /api/v1/... 起>
+<时间戳>
+<Nonce>
+<sha256(请求体原始字节)>
+```
+
+- 路径从 `/api/v1/...` 起（开放 API 端点不经访问前缀）；GET 等无体请求的请求体哈希按空串算 `sha256("")`。
+- 强制签名模式（`sign_mode=2`）下用普通 Bearer 调用返回 `403 {sign_required:true}`。
+- 时间戳超窗、nonce 缺失/过短/已用过、签名不符，均返回 `401`。
+- 窗口秒数可用环境变量 `APIKEY_SIGN_WINDOW_SEC` 调（默认 300，夹 30~3600）。
+
+Node 签名示例：
+
+```js
+const crypto = require('crypto');
+function signedHeaders(keyId, signSecret, method, pathWithQuery, bodyStr = '') {
+  const ts = Date.now().toString();
+  const nonce = crypto.randomBytes(12).toString('hex');       // 24 位
+  const bodyHash = crypto.createHash('sha256').update(bodyStr).digest('hex');
+  const base = [method.toUpperCase(), pathWithQuery, ts, nonce, bodyHash].join('\n');
+  const sig = crypto.createHmac('sha256', signSecret).update(base).digest('hex');
+  return { 'X-QWQ-Key': keyId, 'X-QWQ-Timestamp': ts, 'X-QWQ-Nonce': nonce, 'X-QWQ-Signature': sig };
+}
+// GET /api/v1/users?level_tag=U3
+const h = signedHeaders('<key_id>', 'sks_xxx', 'GET', '/api/v1/users?level_tag=U3');
+// POST /api/v1/users/00001/points  body = JSON 字符串
+const body = JSON.stringify({ delta: 10, reason: '签到' });
+const h2 = signedHeaders('<key_id>', 'sks_xxx', 'POST', '/api/v1/users/00001/points', body);
+```
+
+> ⚠️ 签名密钥须服务端留存才能校验（以密钥不上线 + 防重放换取它不是 hash-only 落库）；最高安全可叠加可信 IP + 定期轮换。轮换 / 重设签名策略会更换签名密钥。
 
 **密钥历史与可见性**
 
